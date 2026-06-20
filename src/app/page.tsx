@@ -1,24 +1,32 @@
-import Link from "next/link";
+import type { Metadata } from "next";
+import { Fraunces, Manrope } from "next/font/google";
+import Marketing from "./_marketing/Marketing";
+
+const fraunces = Fraunces({
+  subsets: ["latin"],
+  display: "swap",
+  axes: ["SOFT", "WONK", "opsz"],
+  variable: "--font-display",
+});
+
+const manrope = Manrope({
+  subsets: ["latin"],
+  display: "swap",
+  variable: "--font-body",
+});
+
+export const metadata: Metadata = {
+  title: "AskMai — Your taste, as an agent your followers can shop.",
+  description:
+    "AskMai builds a personal AI agent for creators. It knows your real taste, recommends real products with real links, and lives in your bio. Free to join. You earn on what your audience buys.",
+};
 
 export default function Home() {
   return (
-    <main className="mx-auto max-w-md px-6 py-24 text-center">
-      <h1 className="font-serif text-4xl tracking-tight">AskMai</h1>
-      <p className="mt-3 text-muted text-sm leading-relaxed">
-        Chat with your favorite creator&apos;s AI. Get the picks they&apos;d
-        actually recommend, in their voice.
-      </p>
-      <div className="mt-10 space-y-2">
-        <p className="text-xs uppercase tracking-widest text-muted">
-          Try a creator
-        </p>
-        <Link
-          href="/cass"
-          className="inline-block rounded-full bg-ink text-bg px-5 py-2.5 text-sm font-medium"
-        >
-          /cass — Cass DiMicco
-        </Link>
-      </div>
-    </main>
+    <div
+      className={`${fraunces.variable} ${manrope.variable} askmai-landing`}
+    >
+      <Marketing />
+    </div>
   );
 }
