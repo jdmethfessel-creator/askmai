@@ -68,6 +68,14 @@ const TASTE_PROFILE = {
       "OG Instagram fashion influencer since 2014, ~1M following, worn by Hailey Bieber, Kendall Jenner, Bella Hadid, Alix Earle",
     philosophy:
       "Minimalist, intentional, only shares when she has something to say",
+    owned_brands: [
+      {
+        name: "Aureum",
+        aliases: ["Aureum Collective", "Aureum jewelry"],
+        store_url: "https://aureumcollective.com",
+        category: "accessories",
+      },
+    ],
   },
   fashion: {
     style_philosophy:

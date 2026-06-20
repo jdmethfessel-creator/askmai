@@ -31,7 +31,13 @@ export type Product = {
   image_url?: string | null;
 };
 
-export type LinkTier = "feed" | "aggregator" | "hotel" | "place" | "none";
+export type LinkTier =
+  | "feed"
+  | "owned"
+  | "aggregator"
+  | "hotel"
+  | "place"
+  | "none";
 
 export type Rec = {
   name: string;

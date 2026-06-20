@@ -53,7 +53,11 @@ export async function POST(request: Request) {
 
   const catalog = await loadCatalog(creatorId, message);
   const knownProducts = buildKnownProducts(catalog, creator.taste_profile);
-  const creatorRef = { id: creatorId, slug: creator.slug };
+  const creatorRef = {
+    id: creatorId,
+    slug: creator.slug,
+    taste_profile: creator.taste_profile,
+  };
   const budgetCeiling = extractBudgetCeiling(message);
   const systemPrompt = buildSystemPrompt(creator, catalog, budgetCeiling);
   const history = sanitizeHistory(body.history ?? []);
@@ -626,6 +630,28 @@ function sanitizeHistory(history: ChatMessage[]) {
     .map((m) => ({ role: m.role, content: m.content }));
 }
 
+function describeOwnedBrands(taste: Creator["taste_profile"]): string {
+  if (!taste || typeof taste !== "object") return "";
+  const identity = (taste as Record<string, unknown>).identity;
+  if (!identity || typeof identity !== "object") return "";
+  const brands = (identity as Record<string, unknown>).owned_brands;
+  if (!Array.isArray(brands) || brands.length === 0) return "";
+  const lines = brands
+    .filter(
+      (b): b is { name: string; aliases?: string[]; category?: string } =>
+        Boolean(b && typeof b === "object" && "name" in b)
+    )
+    .map((b) => {
+      const aliases =
+        Array.isArray(b.aliases) && b.aliases.length > 0
+          ? ` (also: ${b.aliases.join(", ")})`
+          : "";
+      const cat = b.category ? ` — category: ${b.category}` : "";
+      return `  - ${b.name}${aliases}${cat}`;
+    });
+  return lines.join("\n");
+}
+
 function buildSystemPrompt(
   c: Pick<Creator, "name" | "bio" | "voice_prompt" | "taste_profile">,
   catalog: CatalogRow[],
@@ -737,6 +763,17 @@ Rules:
 
 CATALOG (real products from ${c.name}'s feeds, with affiliate links the platform will attach):
 ${formatCatalogForPrompt(catalog)}
+
+OWNED BRANDS (HIGHEST PRIORITY — these are ${c.name}'s OWN brands):
+${describeOwnedBrands(c.taste_profile) || "  (none configured)"}
+
+Owned-brand rules:
+- When you recommend any item from an owned brand (jewelry / hoops / necklaces / etc., as applicable), you MUST emit it as a card. Owned-brand recs are the most important monetization on the page — full margin, no affiliate wrap.
+- Set "brand" to the brand's primary name exactly as listed above (e.g. "Aureum" not "Aureum Collective" — though either alias is fine, the platform normalizes).
+- Set "category" appropriately (typically the category listed next to the brand above).
+- Name the item naturally ("Gold Hoops", "Layered Gold Necklaces", "Stacking Rings"). The platform builds a search link to her store from the name, so be specific.
+- Owned brands skip the catalog/Serper pipeline entirely — the platform routes them to her store directly. You still set price as a representative number (estimate if you don't know) so the budget filter works.
+- ${c.name} wears her own brand constantly; anytime jewelry comes up in an outfit recommendation, an owned-brand card should appear.
 
 CATALOG RULES (read carefully — this is the fidelity rule):
 - When you recommend a product that EXISTS in the CATALOG, you MUST:

@@ -54,6 +54,44 @@ const FEED_BACKED_CATEGORIES = new Set([
 
 const RESTAURANT_KEYWORDS = ["restaurant", "dining", "bar", "cafe"];
 
+type OwnedBrand = {
+  name: string;
+  aliases?: string[];
+  store_url: string;
+  category?: string;
+};
+
+function findOwnedBrandMatch(
+  recBrand: string | undefined,
+  taste: unknown
+): OwnedBrand | null {
+  if (!recBrand || !taste || typeof taste !== "object") return null;
+  const identity = (taste as Record<string, unknown>).identity;
+  if (!identity || typeof identity !== "object") return null;
+  const brands = (identity as Record<string, unknown>).owned_brands;
+  if (!Array.isArray(brands)) return null;
+  const lower = recBrand.trim().toLowerCase();
+  for (const b of brands as OwnedBrand[]) {
+    if (!b || typeof b !== "object" || !b.store_url || !b.name) continue;
+    const candidates = [b.name, ...(b.aliases ?? [])]
+      .map((s) => (s ?? "").trim().toLowerCase())
+      .filter(Boolean);
+    if (candidates.some((c) => c === lower || lower.startsWith(c + " ") || lower.endsWith(" " + c))) {
+      return b;
+    }
+  }
+  return null;
+}
+
+function ownedStoreLink(brand: OwnedBrand, productName: string): string {
+  // Shopify storefronts universally support /search?q= for product-name lookup.
+  // If we don't have a usable product name, link straight to the homepage.
+  const trimmed = (productName ?? "").trim();
+  if (!trimmed) return brand.store_url;
+  const base = brand.store_url.replace(/\/+$/, "");
+  return `${base}/search?q=${encodeURIComponent(trimmed)}`;
+}
+
 /**
  * Resolves a recommendation to one of four tiers:
  *
@@ -69,11 +107,26 @@ const RESTAURANT_KEYWORDS = ["restaurant", "dining", "bar", "cafe"];
  */
 export async function resolveLink(
   rec: Rec,
-  creator: { id: string; slug: string },
+  creator: { id: string; slug: string; taste_profile?: unknown },
   meta: Record<string, unknown> = {}
 ): Promise<ResolvedLink> {
   const creatorId = creator.id;
   const sb = supabaseAdmin();
+
+  // Tier 0 (highest priority): creator-owned brand. ALWAYS card, never
+  // wrap with an affiliate network — it's her own store, full margin.
+  const owned = findOwnedBrandMatch(rec.brand, creator.taste_profile);
+  if (owned) {
+    const url = ownedStoreLink(owned, rec.name);
+    await logEvent(sb, creatorId, "owned", {
+      ...meta,
+      rec_name: rec.name,
+      brand: rec.brand,
+      store_url: owned.store_url,
+      resolved_url: url,
+    });
+    return { url, tier: "owned" };
+  }
 
   // Tier 1: feed — exact ID match only.
   if (rec.product_id) {

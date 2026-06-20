@@ -140,11 +140,27 @@ export function generateHotelLink(
   return ensureRealUrl(resolved, realFallback);
 }
 
+/**
+ * Reserve link.
+ *
+ * Was OpenTable's `?term=` search, but that defaults to NYC metro when the
+ * restaurant doesn't match anything in OpenTable's index — a Montauk spot
+ * would hit "0 restaurants match" because OpenTable searched NYC.
+ *
+ * Replaced with a Google search for "[name] [city] reservation". This:
+ *   - Always lands on a real first-result page (Google can't dead-end)
+ *   - Handles every booking platform the restaurant might use (OpenTable,
+ *     Resy, Tock, the restaurant's own site)
+ *   - Carries the actual city, so small-town restaurants resolve correctly
+ *
+ * The function name stays the same for caller convenience; behavior is now
+ * platform-agnostic reservation discovery.
+ */
 export function openTableSearchUrl(name: string, location?: string): string {
-  const term = [name?.trim(), location?.trim()].filter(Boolean).join(" ");
-  return `https://www.opentable.com/s?term=${encodeURIComponent(
-    term || name || ""
-  )}`;
+  const q = [name?.trim(), location?.trim(), "reservation"]
+    .filter(Boolean)
+    .join(" ");
+  return `https://www.google.com/search?q=${encodeURIComponent(q)}`;
 }
 
 export function googleMapsSearchUrl(
