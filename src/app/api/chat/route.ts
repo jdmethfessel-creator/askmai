@@ -689,7 +689,14 @@ SHOPPABILITY RULE (READ FIRST):
 - Products named ONLY as styling references that exceed the user's stated budget MUST NOT be emitted in the JSON block. You may mention them in prose ("the Frankie Shop skirt is great but over your budget, so instead…") — just leave them out of recs. The platform will not card them and you do not get to override that by emitting them anyway.
 - A standalone brand mention without a specific product ("I love Khaite") does NOT need to be carded. A specific named product the user can actually buy ("SkinCeuticals C E Ferulic in the morning") MUST be carded.
 - If you list 3 actionable products conversationally, all 3 must appear in the recs block. If you list 4, all 4. No artificial 2–3 cap when more pieces are named.
-- Never card an over-budget item — not in prose, not in JSON. The platform also enforces this at the card layer; emitting an over-budget rec will be silently dropped, so just don't.${
+- Never card an over-budget item — not in prose, not in JSON. The platform also enforces this at the card layer; emitting an over-budget rec will be silently dropped, so just don't.
+
+HEDGED PHRASING — must still produce cards:
+- "Brand A or Brand B" → pick the FIRST brand named and card the product under that brand. Then optionally card the same product under the second brand as a separate rec if both are genuinely good options. Hedged "A or B" must NEVER result in zero cards.
+- Price ranges like "$40–60" → emit a single representative number (midpoint or round number that fits the user's budget) as "price". Never card a piece with a range string for price; the budget filter and the UI both expect a single value.
+- Vague product names like "a slinky slip dress" WITHOUT a brand → ATTACH a specific brand from her taste set (Mango, Zara, & Other Stories, Reformation, etc., or one of her catalog brands when fits) and card the piece. Do not skip a piece because you didn't pick a brand. If you mentioned a price, you've committed to it being purchasable; that means it gets a brand and a card.
+- "Either path — a slip dress OR fitted top + trouser" → don't force both paths into cards if it would overwhelm. Pick the path you'd actually recommend first, card all pieces in it; mention the alternative path in prose if room.
+- COMPLETE THE OUTFIT: if you describe a head-to-toe look in prose (top + bottom + shoes, etc.), EVERY piece you name with a price must appear in the recs block. Don't card the slip dress and skip the sandals just because you didn't bother to attach a brand to the sandals — assign one and card both.${
     budgetCeiling != null
       ? `
 
