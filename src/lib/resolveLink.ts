@@ -7,6 +7,7 @@ import {
   menuSearchUrl,
   openTableSearchUrl,
 } from "./affiliateLinks";
+import { resolveProductLive, wrapIfInNetwork } from "./productLive";
 import type { LinkTier, Rec } from "./types";
 
 export type ResolvedLink = {
@@ -19,6 +20,19 @@ export type ResolvedLink = {
     brand: string | null;
     price: string | null;
     image_url: string | null;
+  };
+  /**
+   * Populated for tier="aggregator" when Serper resolved a live 1:1 product
+   * link. The server replaces the model's claimed price + image with these
+   * authoritative values; brandMatched indicates the link is on the brand's
+   * own canonical domain (vs. a fallback search).
+   */
+  live_product?: {
+    realPrice: string | null;
+    realImage: string | null;
+    brandMatched: boolean;
+    wrapped: boolean; // true when Skimlinks-wrapped (host in network)
+    source: string;
   };
   /**
    * Populated for tier="place" — secondary actions on the card. The primary
@@ -126,20 +140,44 @@ export async function resolveLink(
     };
   }
 
-  // Tier 2: aggregator fallback (Skimlinks)
+  // Tier 2: aggregator — live Serper resolution + Skimlinks wrap if in network.
   if (FEED_BACKED_CATEGORIES.has(category) || !category) {
-    const url = generateAggregatorLink({
-      merchantUrl: rec.merchant_url,
-      product: { name: rec.name, brand: rec.brand, category },
-      creatorSlug: creator.slug,
-    });
+    const live = await resolveProductLive(rec.brand, rec.name);
+    // If Serper returned a real URL, use it (wrap conditionally). Otherwise
+    // fall back to the existing brand-search → Skimlinks pipeline.
+    let url: string;
+    let wrapped = false;
+    if (live.realUrl) {
+      const wrap = wrapIfInNetwork(live.realUrl, creator.slug);
+      url = wrap.url;
+      wrapped = wrap.wrapped;
+    } else {
+      url = generateAggregatorLink({
+        merchantUrl: rec.merchant_url,
+        product: { name: rec.name, brand: rec.brand, category },
+        creatorSlug: creator.slug,
+      });
+    }
     await logEvent(sb, creatorId, "aggregator", {
       ...meta,
       rec_name: rec.name,
-      merchant_url_input: rec.merchant_url ?? null,
+      brand: rec.brand,
+      live_source: live.source,
+      brand_matched: live.brandMatched,
+      wrapped,
       resolved_url: url,
     });
-    return { url, tier: "aggregator" };
+    return {
+      url,
+      tier: "aggregator",
+      live_product: {
+        realPrice: live.realPrice,
+        realImage: live.realImage,
+        brandMatched: live.brandMatched,
+        wrapped,
+        source: live.source,
+      },
+    };
   }
 
   await logEvent(sb, creatorId, "none", {

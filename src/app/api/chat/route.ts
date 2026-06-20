@@ -256,15 +256,25 @@ async function enrichRecsBlock(
           product_id: resolved.matched_product_id,
         };
       }
-      // Non-feed: keep the model's name/price; strip product_id so the client
+      // Non-feed: keep the model's name; strip product_id so the client
       // doesn't display a stale reference.
       const { product_id: _ignored, ...rest } = rec;
       void _ignored;
-      const base = {
+      let base: Rec = {
         ...rest,
         affiliate_url: resolved.url,
         tier: resolved.tier,
       };
+      // Aggregator: Serper gave us authoritative price + image — override
+      // the model's guessed values so the card shows the real merchant data.
+      if (resolved.tier === "aggregator" && resolved.live_product) {
+        const lp = resolved.live_product;
+        base = {
+          ...base,
+          price: lp.realPrice ?? base.price,
+          image_url: lp.realImage ?? base.image_url,
+        };
+      }
       if (resolved.tier === "place" && resolved.place_links) {
         return {
           ...base,
@@ -599,8 +609,9 @@ GENERAL RULES:
 - About 1 reply in 3 ends with a follow-up question, only when it's actually natural to keep the thread going. The other 2 in 3 just answer and stop. Never force a question to round out a reply.
 
 CORE PRINCIPLE (read this before anything else about products):
-- This agent serves the USER's need, styled through ${c.name}'s taste. Her taste is the LENS, not the inventory. Her ShopMy feed (the CATALOG below) is NOT a list to push.
-- Constraints the user states (budget, occasion, vibe, fit) are HARD. If they say under $200, every recommended item must actually fit that ceiling. Never recommend an over-budget product and rationalize it — phrases like "slightly over," "right at the edge," "worth stretching for" are FORBIDDEN when the user has named a budget. If the catalog has nothing that fits, go OUTSIDE the catalog.
+- This agent serves the USER's need, styled through ${c.name}'s taste. Her taste is the LENS, not the inventory. Her ShopMy feed (the CATALOG below) is NOT a list to push, and her taste-profile favorites are NOT a fixed answer set.
+- Constraints the user states (budget, occasion, vibe, fit, LOCATION) are HARD. If they say under $200, every recommended item must actually fit that ceiling. If they say Miami, every place recommended must be in or right next to Miami. Never recommend something that violates a stated constraint and then rationalize it — phrases like "slightly over," "right at the edge," "worth stretching for," "my real go-to is in [other city] but…" are FORBIDDEN.
+- If the user named a budget and the catalog has nothing that fits, go OUTSIDE the catalog. If the user named a location and ${c.name}'s favorites are elsewhere, recommend other genuinely good places in THAT location. Silently skip her favorites that don't match.
 - Source products from wherever genuinely fits the request and ${c.name}'s style. Mass brands she actually likes and would talk about — Zara, & Other Stories, COS, Mango, Reformation, H&M, Aritzia, Madewell, Sezane, Everlane, Abercrombie, Free People — are FIRST-CLASS options, not fallbacks. They earn commission too (the platform wraps them through Skimlinks with her attribution).
 - When a catalog/feed product genuinely fits AND respects the user's constraints, prefer it (it's her real pick). When it doesn't, off-catalog wins. Fit beats source. Always.
 
@@ -705,6 +716,16 @@ For places, return the rec with category "dining". The platform renders a place-
     true  = sit-down restaurants (any place a normal person would book a table at — Carbone, Via Carota, an osteria, a steakhouse, a tasting-menu spot, even a busy bistro).
     false = cafes, coffee shops, bakeries, sandwich shops, ice cream, fast-casual, juice bars, walk-up bar-snack spots, beach shacks. Anything where you wouldn't "reserve a table."
 - Recommend specific named places, in her voice. The platform handles the action URLs; never invent OpenTable / Resy links.
+
+LOCATION RELEVANCE (non-negotiable — applies to ALL places: restaurants, hotels, bars, cafes):
+- When the user names a location (city, neighborhood, region, "trip to X," "weekend in Y"), EVERY place you recommend — in prose AND in the recs block — MUST be in or immediately near that location. "Near" means same metro area / walkable-or-short-drive. NOT same state. NOT same coast.
+- Concrete examples of forbidden moves:
+    * User says "Miami" → do not recommend Brazilian Court (Palm Beach), Boca, Fort Lauderdale, or Orlando spots. Miami is not Palm Beach.
+    * User says "NYC" → do not recommend Hamptons or upstate spots.
+    * User says "LA" → do not recommend San Francisco / Santa Barbara.
+- If ${c.name}'s taste-profile favorite for the category is in a DIFFERENT city than the user named, silently skip it. Do NOT mention it as a "my real go-to is in [other city]" aside — that's still surfacing a wrong-location recommendation. Pretend that favorite doesn't exist for this conversation.
+- If ${c.name} has no strong specific picks in the user's named location, give a genuinely good general recommendation for THAT location in her style and taste (e.g. she'd lean to small Italian / Mediterranean / design-forward places — find some in the city the user actually asked about). Do not redirect to a city she knows better.
+- Every place card's "location" field must include or align with the user's stated city. A Miami query → location like "Miami, FL" or "Wynwood, Miami." A Charleston query → "Charleston, SC." Never "Palm Beach" on a Miami query.
 
 For pure conversational replies (general chat, clarifying questions, opinions with no specific items to recommend), write text only and do not include the marker or any JSON.`;
 }
