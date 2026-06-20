@@ -322,7 +322,11 @@ function RecCard({ rec, accent }: { rec: Rec; accent: string }) {
               href={rec.affiliate_url}
               target="_blank"
               rel="noopener sponsored"
-              className="text-xs font-semibold tracking-wide"
+              // Feed-tier links are already affiliate-tagged (LinkSynergy /
+              // Rakuten); tell the Skimlinks DOM script to skip them.
+              className={`text-xs font-semibold tracking-wide${
+                rec.tier === "feed" ? " noskim" : ""
+              }`}
               style={{ color: accent }}
             >
               {rec.category === "travel" ? "Book →" : "Shop →"}

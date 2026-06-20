@@ -51,6 +51,7 @@ export async function POST(request: Request) {
   const creatorId = creator.id;
 
   const catalog = await loadCatalog(creatorId, message);
+  const creatorRef = { id: creatorId, slug: creator.slug };
   const systemPrompt = buildSystemPrompt(creator, catalog);
   const history = sanitizeHistory(body.history ?? []);
 
@@ -109,7 +110,7 @@ export async function POST(request: Request) {
         }
 
         if (pastMarker) {
-          const enriched = await enrichRecsBlock(buffered, creatorId);
+          const enriched = await enrichRecsBlock(buffered, creatorRef);
           controller.enqueue(
             encoder.encode(`\n${RECS_MARKER}\n${JSON.stringify(enriched)}`)
           );
@@ -132,7 +133,10 @@ export async function POST(request: Request) {
   });
 }
 
-async function enrichRecsBlock(raw: string, creatorId: string): Promise<Rec[]> {
+async function enrichRecsBlock(
+  raw: string,
+  creator: { id: string; slug: string }
+): Promise<Rec[]> {
   const cleaned = raw
     .trim()
     .replace(/^```(?:json)?/i, "")
@@ -157,11 +161,15 @@ async function enrichRecsBlock(raw: string, creatorId: string): Promise<Rec[]> {
         "location" in r && r.location ? String(r.location) : undefined,
       product_id:
         "product_id" in r && r.product_id ? String(r.product_id) : undefined,
+      merchant_url:
+        "merchant_url" in r && r.merchant_url
+          ? String(r.merchant_url)
+          : undefined,
     }));
 
   const enriched = await Promise.all(
     recs.map(async (rec) => {
-      const resolved = await resolveLink(rec, creatorId);
+      const resolved = await resolveLink(rec, creator);
       // For feed-tier results, override the model's text with the catalog row.
       // This is what guarantees the displayed product always matches the link.
       if (resolved.tier === "feed" && resolved.feed_product) {
@@ -314,6 +322,7 @@ Each recommendation object:
   "category": "fashion" | "beauty" | "accessories" | "dining" | "travel" | "lifestyle",
   "price": "string (approximate; e.g. \\"$280\\" for products, \\"$350/night\\" for hotels; omit if unknown)",
   "location": "string (only for travel/dining: 'Tulum, Mexico'; omit otherwise)",
+  "merchant_url": "string (REQUIRED for off-catalog products; OMIT for catalog items, hotels, and restaurants — see rules below)",
   "why": "string (one short line in her voice, max 15 words, no marketing language)"
 }
 
@@ -334,6 +343,13 @@ CATALOG RULES (read carefully — this is the fidelity rule):
 - When you recommend something NOT in the catalog (a cheaper alternative, or a brand/item that's not on her feed), OMIT "product_id" entirely and use natural product naming. The platform will route those through an aggregator link.
 - Do NOT make up product_id values. If you're not 100% sure a product is in the catalog, omit product_id.
 - Prefer catalog items when they fit the visitor's ask — that's where ${c.name} earns the best commission. Round out with non-catalog options when the catalog can't fully answer.
+
+MERCHANT URL FOR OFF-CATALOG PRODUCTS (Skimlinks aggregator tier):
+- For every off-catalog product rec (categories fashion / beauty / accessories / lifestyle, no product_id), include a "merchant_url" pointing to a real merchant product page.
+- Prefer the brand's official site (e.g. https://www.sephora.com/product/c-e-ferulic-P385823 or https://www.therow.com/...). If you don't know the exact product URL, use a merchant category page or the brand's main shop. Sephora, Mytheresa, Net-a-Porter, Nordstrom, Revolve, FWRD, Saks, Shopbop, and Bloomingdale's are all good defaults inside the Skimlinks network.
+- If you genuinely don't know any real URL, OMIT "merchant_url" and the platform will fall back to a Skimlinks-wrapped merchant search.
+- Do NOT put already-affiliated URLs in "merchant_url" (no click.linksynergy.com, no go.skimresources.com, no rakuten.com, etc.). Use the bare merchant domain. The platform handles the affiliate wrapping.
+- For catalog items (product_id set), hotels, restaurants, and pure conversational replies: OMIT "merchant_url" entirely.
 
 ASPIRATIONAL → BOOKABLE TRANSLATION (travel):
 ${c.name}'s favorite hotels in the taste profile are her aspirational anchors, not a fixed shopping list. When a visitor asks for a hotel and either (a) names budget constraints, (b) asks for "something similar to" one of her favorites, or (c) names a destination not in her favorites, do this:

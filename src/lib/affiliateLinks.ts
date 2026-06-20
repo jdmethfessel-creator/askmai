@@ -1,21 +1,16 @@
 /**
- * Per-tier link generators.
+ * Per-tier affiliate link generators.
  *
- * Tier order (handled by resolveLink):
  *   1. feed       creator's own products table row (real affiliate URL)
- *   2. aggregator universal fashion/beauty aggregator (Mavely or Skimlinks)
- *   3. hotel      hotel affiliate (Booking / Expedia / Travelpayouts)
- *   4. none       no link (restaurants, general lifestyle, etc.)
- *
- * Today the aggregator/hotel functions are STUBS that return a clearly-marked
- * placeholder URL, structured so real credentials can be dropped in via env
- * vars without changing call sites.
+ *   2. aggregator Skimlinks deep link wrapping a merchant URL
+ *   3. hotel      hotel affiliate (stub today)
+ *   4. none       no link (restaurants, etc.)
  */
 
 const PROVIDERS = {
   aggregator: process.env.MAVELY_API_KEY
     ? "mavely"
-    : process.env.SKIMLINKS_API_KEY
+    : process.env.SKIMLINKS_PUBLISHER_ID
     ? "skimlinks"
     : "stub",
   hotel: process.env.BOOKING_AFFILIATE_ID
@@ -27,49 +22,69 @@ const PROVIDERS = {
     : "stub",
 } as const;
 
-/**
- * Universal aggregator link for off-feed fashion/beauty products.
- * Today: returns a stub URL marked with provider=stub.
- * Later: implement Mavely Deep Link API or Skimlinks SkimLink API.
- */
-export function generateAggregatorLink(product: {
+const CATEGORY_FALLBACK_SEARCH: Record<string, (q: string) => string> = {
+  beauty: (q) => `https://www.sephora.com/search?keyword=${q}`,
+  fashion: (q) => `https://www.mytheresa.com/us/en/search?q=${q}`,
+  accessories: (q) => `https://www.mytheresa.com/us/en/search?q=${q}`,
+  lifestyle: (q) => `https://www.saksfifthavenue.com/search?q=${q}`,
+};
+
+/** Skimlinks deep-link format: go.skimresources.com/?id=…&xs=1&url=…&xcust=… */
+export function generateAggregatorLink(args: {
+  merchantUrl?: string;
+  product: { name: string; brand?: string; category?: string };
+  creatorSlug: string;
+}): string {
+  const merchantUrl =
+    sanitizeMerchantUrl(args.merchantUrl) ??
+    fallbackMerchantUrl(args.product);
+
+  if (PROVIDERS.aggregator === "skimlinks" && process.env.SKIMLINKS_PUBLISHER_ID) {
+    const id = encodeURIComponent(process.env.SKIMLINKS_PUBLISHER_ID);
+    const url = encodeURIComponent(merchantUrl);
+    const xcust = encodeURIComponent(args.creatorSlug);
+    return `https://go.skimresources.com/?id=${id}&xs=1&url=${url}&xcust=${xcust}`;
+  }
+
+  if (PROVIDERS.aggregator === "mavely" && process.env.MAVELY_PARTNER_ID) {
+    // TODO: real Mavely Deep Link API.
+    const url = encodeURIComponent(merchantUrl);
+    return `https://link.mavely.com/d?partner=${encodeURIComponent(
+      process.env.MAVELY_PARTNER_ID
+    )}&url=${url}&xcust=${encodeURIComponent(args.creatorSlug)}&provider=mavely`;
+  }
+
+  return `https://askmai.example.com/out/aggregator?url=${encodeURIComponent(
+    merchantUrl
+  )}&xcust=${encodeURIComponent(args.creatorSlug)}&provider=stub`;
+}
+
+function sanitizeMerchantUrl(u: string | undefined): string | null {
+  if (!u) return null;
+  const trimmed = u.trim();
+  if (!/^https?:\/\//i.test(trimmed)) return null;
+  // Don't allow already-affiliated links to be re-wrapped.
+  if (/click\.linksynergy\.com|go\.skimresources\.com|skimresources\.com|rakuten\.com|impact\.com|mavely\.com|shopstyle\.it/i.test(trimmed)) {
+    return null;
+  }
+  return trimmed;
+}
+
+function fallbackMerchantUrl(p: {
   name: string;
   brand?: string;
   category?: string;
 }): string {
   const q = encodeURIComponent(
-    [product.brand, product.name].filter(Boolean).join(" ")
+    [p.brand, p.name].filter(Boolean).join(" ")
   );
-
-  if (PROVIDERS.aggregator === "mavely" && process.env.MAVELY_PARTNER_ID) {
-    // TODO: replace with real Mavely Deep Link call:
-    // POST https://api.mavely.com/v1/deeplinks { partner_id, query }
-    return `https://link.mavely.com/d?partner=${encodeURIComponent(
-      process.env.MAVELY_PARTNER_ID
-    )}&q=${q}&provider=mavely`;
-  }
-
-  if (
-    PROVIDERS.aggregator === "skimlinks" &&
-    process.env.SKIMLINKS_PUBLISHER_ID
-  ) {
-    // TODO: replace with Skimlinks SkimLink API.
-    return `https://go.skimresources.com/?xs=1&id=${encodeURIComponent(
-      process.env.SKIMLINKS_PUBLISHER_ID
-    )}&xcust=askmai&url=${q}&provider=skimlinks`;
-  }
-
-  return `https://askmai.example.com/out/aggregator?q=${q}&provider=stub`;
+  const cat = (p.category ?? "").toLowerCase();
+  const builder = CATEGORY_FALLBACK_SEARCH[cat];
+  return builder
+    ? builder(q)
+    : `https://www.google.com/search?tbm=shop&q=${q}`;
 }
 
-/**
- * Hotel affiliate link. Returns null when the property isn't booking-ready
- * (no name match, vague vibe-only recommendation, etc.).
- *
- * Today: returns a stub URL marked with provider=stub when both args are
- * present; null otherwise.
- * Later: implement Booking.com / Expedia / Travelpayouts deep links.
- */
 export function generateHotelLink(
   hotelName: string,
   location?: string
@@ -80,7 +95,6 @@ export function generateHotelLink(
   const loc = location ? encodeURIComponent(location) : "";
 
   if (PROVIDERS.hotel === "booking" && process.env.BOOKING_AFFILIATE_ID) {
-    // TODO: real Booking.com partner deep link.
     return `https://www.booking.com/searchresults.html?ss=${q}${
       loc ? `+${loc}` : ""
     }&aid=${encodeURIComponent(process.env.BOOKING_AFFILIATE_ID)}&provider=booking`;

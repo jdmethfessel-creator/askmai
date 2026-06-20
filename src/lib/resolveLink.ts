@@ -32,7 +32,7 @@ const RESTAURANT_KEYWORDS = ["restaurant", "dining", "bar", "cafe"];
  * Resolves a recommendation to one of four tiers:
  *
  *   feed       — rec.product_id exists in this creator's products table
- *   aggregator — fashion/beauty/accessories with no catalog match
+ *   aggregator — fashion/beauty/accessories with no catalog match (Skimlinks)
  *   hotel      — travel category
  *   none       — dining / non-monetizable
  *
@@ -43,9 +43,10 @@ const RESTAURANT_KEYWORDS = ["restaurant", "dining", "bar", "cafe"];
  */
 export async function resolveLink(
   rec: Rec,
-  creatorId: string,
+  creator: { id: string; slug: string },
   meta: Record<string, unknown> = {}
 ): Promise<ResolvedLink> {
+  const creatorId = creator.id;
   const sb = supabaseAdmin();
 
   // Tier 1: feed — exact ID match only.
@@ -101,16 +102,17 @@ export async function resolveLink(
     return { url: null, tier: "none" };
   }
 
-  // Tier 2: aggregator fallback
+  // Tier 2: aggregator fallback (Skimlinks)
   if (FEED_BACKED_CATEGORIES.has(category) || !category) {
     const url = generateAggregatorLink({
-      name: rec.name,
-      brand: rec.brand,
-      category,
+      merchantUrl: rec.merchant_url,
+      product: { name: rec.name, brand: rec.brand, category },
+      creatorSlug: creator.slug,
     });
     await logEvent(sb, creatorId, "aggregator", {
       ...meta,
       rec_name: rec.name,
+      merchant_url_input: rec.merchant_url ?? null,
       resolved_url: url,
     });
     return { url, tier: "aggregator" };

@@ -48,6 +48,11 @@ export type Rec = {
    * real product row so what's shown always matches what's linked.
    */
   product_id?: string;
+  /**
+   * Model-provided best-guess merchant product URL for off-catalog items.
+   * Used by the aggregator tier to build a Skimlinks deep link.
+   */
+  merchant_url?: string;
   /** Set by server-side enrichment; clients should treat null as "no link". */
   affiliate_url?: string | null;
   tier?: LinkTier;
