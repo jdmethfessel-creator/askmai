@@ -178,6 +178,10 @@ async function enrichRecsBlock(
         "merchant_url" in r && r.merchant_url
           ? String(r.merchant_url)
           : undefined,
+      reservable:
+        "reservable" in r && typeof r.reservable === "boolean"
+          ? r.reservable
+          : undefined,
     }));
 
   const enriched = await Promise.all(
@@ -202,11 +206,20 @@ async function enrichRecsBlock(
       // doesn't display a stale reference.
       const { product_id: _ignored, ...rest } = rec;
       void _ignored;
-      return {
+      const base = {
         ...rest,
         affiliate_url: resolved.url,
         tier: resolved.tier,
       };
+      if (resolved.tier === "place" && resolved.place_links) {
+        return {
+          ...base,
+          reservable: resolved.place_links.reservable,
+          directions_url: resolved.place_links.directions,
+          menu_url: resolved.place_links.menu,
+        };
+      }
+      return base;
     })
   );
   return enriched;
@@ -557,7 +570,8 @@ Each recommendation object:
   "brand": "string (brand or designer; omit for restaurants/hotels)",
   "category": "fashion" | "beauty" | "accessories" | "dining" | "travel" | "lifestyle",
   "price": "string (approximate; e.g. \\"$280\\" for products, \\"$350/night\\" for hotels; omit if unknown)",
-  "location": "string (only for travel/dining: 'Tulum, Mexico'; omit otherwise)",
+  "location": "string (REQUIRED for dining (city/neighborhood, e.g. 'Tribeca, NYC' or 'Sag Harbor, NY') and travel; omit otherwise)",
+  "reservable": "boolean (REQUIRED for category='dining'. true = sit-down restaurant that takes reservations. false = cafe / coffee shop / bakery / takeout / fast-casual / bar-snack spot. Omit for non-dining recs.)",
   "merchant_url": "string (REQUIRED for off-catalog products; OMIT for catalog items, hotels, and restaurants — see rules below)",
   "why": "string (one short line in her voice, max 15 words, no marketing language)"
 }
@@ -599,7 +613,13 @@ ${c.name}'s favorite hotels in the taste profile are her aspirational anchors, n
 NEVER invent affiliate or "Book" URLs in your output — the platform appends them based on the rec name + location.
 
 DINING / RESTAURANTS:
-For restaurants, return the rec with category "dining" — the platform will render the card without a Shop/Book link, since restaurants aren't bookable through us. Still recommend specific named places, in her voice.
+For places, return the rec with category "dining". The platform renders a place-specific card with action buttons (Reserve / Directions / Menu) instead of Shop/Book.
+
+- ALWAYS include a "location" field (city or neighborhood) so search links resolve correctly.
+- ALWAYS set "reservable":
+    true  = sit-down restaurants (any place a normal person would book a table at — Carbone, Via Carota, an osteria, a steakhouse, a tasting-menu spot, even a busy bistro).
+    false = cafes, coffee shops, bakeries, sandwich shops, ice cream, fast-casual, juice bars, walk-up bar-snack spots, beach shacks. Anything where you wouldn't "reserve a table."
+- Recommend specific named places, in her voice. The platform handles the action URLs; never invent OpenTable / Resy links.
 
 For pure conversational replies (general chat, clarifying questions, opinions with no specific items to recommend), write text only and do not include the marker or any JSON.`;
 }

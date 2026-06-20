@@ -42,6 +42,12 @@ function splitResponse(raw: string): { text: string; recs?: Rec[] } {
               ? String(r.affiliate_url)
               : undefined,
           tier: r.tier as Rec["tier"],
+          reservable:
+            typeof r.reservable === "boolean" ? r.reservable : undefined,
+          directions_url: r.directions_url
+            ? String(r.directions_url)
+            : undefined,
+          menu_url: r.menu_url ? String(r.menu_url) : undefined,
         }));
       return { text, recs: recs.length > 0 ? recs : undefined };
     }
@@ -317,28 +323,75 @@ function RecCard({ rec, accent }: { rec: Rec; accent: string }) {
           <span className="text-xs font-medium">
             {rec.price ?? rec.location ?? ""}
           </span>
-          {rec.affiliate_url ? (
-            <a
-              href={rec.affiliate_url}
-              target="_blank"
-              rel="noopener sponsored"
-              // Feed-tier links are already affiliate-tagged (LinkSynergy /
-              // Rakuten); tell the Skimlinks DOM script to skip them.
-              className={`text-xs font-semibold tracking-wide${
-                rec.tier === "feed" ? " noskim" : ""
-              }`}
-              style={{ color: accent }}
-            >
-              {rec.category === "travel" ? "Book →" : "Shop →"}
-            </a>
-          ) : (
-            <span className="text-[11px] italic opacity-50">
-              {rec.category === "dining" ? "no link" : ""}
-            </span>
-          )}
+          <PrimaryAction rec={rec} accent={accent} />
         </div>
+        {rec.tier === "place" && (
+          <PlaceSecondaryLinks rec={rec} accent={accent} />
+        )}
       </div>
     </article>
+  );
+}
+
+function PrimaryAction({ rec, accent }: { rec: Rec; accent: string }) {
+  if (!rec.affiliate_url) return null;
+  const label =
+    rec.tier === "place"
+      ? rec.reservable
+        ? "Reserve →"
+        : "Directions →"
+      : rec.category === "travel"
+      ? "Book →"
+      : "Shop →";
+  return (
+    <a
+      href={rec.affiliate_url}
+      target="_blank"
+      rel="noopener sponsored"
+      // Feed-tier links are already affiliate-tagged (LinkSynergy / Rakuten);
+      // tell the Skimlinks DOM script to skip them.
+      className={`text-xs font-semibold tracking-wide${
+        rec.tier === "feed" ? " noskim" : ""
+      }`}
+      style={{ color: accent }}
+    >
+      {label}
+    </a>
+  );
+}
+
+function PlaceSecondaryLinks({
+  rec,
+  accent,
+}: {
+  rec: Rec;
+  accent: string;
+}) {
+  const links: { label: string; href: string }[] = [];
+  if (rec.menu_url) links.push({ label: "Menu", href: rec.menu_url });
+  // When Reserve is primary, also expose Directions; when Directions is
+  // primary, the secondary row stays empty (Menu only, if relevant).
+  if (rec.reservable && rec.directions_url) {
+    links.push({ label: "Directions", href: rec.directions_url });
+  }
+  if (links.length === 0) return null;
+  return (
+    <div className="mt-1.5 flex items-center gap-2 text-[11px] opacity-70">
+      {links.map((l, i) => (
+        <span key={l.label} className="inline-flex items-center gap-2">
+          <a
+            href={l.href}
+            target="_blank"
+            rel="noopener"
+            className="underline-offset-2 hover:underline"
+            style={{ color: accent }}
+          >
+            {l.label}
+          </a>
+          {i < links.length - 1 && <span aria-hidden>·</span>}
+        </span>
+      ))}
+    </div>
   );
 }
 

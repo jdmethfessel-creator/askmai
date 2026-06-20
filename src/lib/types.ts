@@ -31,7 +31,7 @@ export type Product = {
   image_url?: string | null;
 };
 
-export type LinkTier = "feed" | "aggregator" | "hotel" | "none";
+export type LinkTier = "feed" | "aggregator" | "hotel" | "place" | "none";
 
 export type Rec = {
   name: string;
@@ -53,8 +53,18 @@ export type Rec = {
    * Used by the aggregator tier to build a Skimlinks deep link.
    */
   merchant_url?: string;
+  /**
+   * For dining recs only: true when the place takes reservations (sit-down
+   * restaurants). False for cafes, takeout, bakeries, fast-casual, bar-snack
+   * spots. Server uses this to pick Reserve vs Directions as primary action.
+   */
+  reservable?: boolean;
   /** Set by server-side enrichment; clients should treat null as "no link". */
   affiliate_url?: string | null;
+  /** Set for place recs: Google Maps directions search URL. */
+  directions_url?: string;
+  /** Set for place recs: Google "X menu" search URL. */
+  menu_url?: string;
   tier?: LinkTier;
 };
 

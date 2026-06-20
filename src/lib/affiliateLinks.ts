@@ -267,6 +267,34 @@ export function generateHotelLink(
   return ensureRealUrl(resolved, realFallback);
 }
 
+/**
+ * Pure search URLs for place actions. All resolve to a real page — they're
+ * just search results, not guessed direct restaurant slugs.
+ */
+export function openTableSearchUrl(name: string, location?: string): string {
+  const term = [name?.trim(), location?.trim()].filter(Boolean).join(" ");
+  return `https://www.opentable.com/s?term=${encodeURIComponent(
+    term || name || ""
+  )}`;
+}
+
+export function googleMapsSearchUrl(
+  name: string,
+  location?: string
+): string {
+  const q = [name?.trim(), location?.trim()].filter(Boolean).join(" ");
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+    q || name || ""
+  )}`;
+}
+
+export function menuSearchUrl(name: string, location?: string): string {
+  const q = [name?.trim(), location?.trim(), "menu"]
+    .filter(Boolean)
+    .join(" ");
+  return `https://www.google.com/search?q=${encodeURIComponent(q)}`;
+}
+
 export function activeProviders() {
   return {
     aggregator: process.env.SKIMLINKS_PUBLISHER_ID

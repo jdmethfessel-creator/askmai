@@ -3,6 +3,9 @@ import { supabaseAdmin } from "./supabase";
 import {
   generateAggregatorLink,
   generateHotelLink,
+  googleMapsSearchUrl,
+  menuSearchUrl,
+  openTableSearchUrl,
 } from "./affiliateLinks";
 import type { LinkTier, Rec } from "./types";
 
@@ -16,6 +19,15 @@ export type ResolvedLink = {
     brand: string | null;
     price: string | null;
     image_url: string | null;
+  };
+  /**
+   * Populated for tier="place" — secondary actions on the card. The primary
+   * action lives on `url` (Reserve if reservable, otherwise Directions).
+   */
+  place_links?: {
+    directions: string;
+    menu: string;
+    reservable: boolean;
   };
 };
 
@@ -89,17 +101,29 @@ export async function resolveLink(
     return { url, tier };
   }
 
-  // Tier 4: dining / no-link
+  // Tier 4: place (dining and place-like recs always get at least Directions).
   if (
     category === "dining" ||
     RESTAURANT_KEYWORDS.some((k) => category.includes(k))
   ) {
-    await logEvent(sb, creatorId, "none", {
+    const directions = googleMapsSearchUrl(rec.name, rec.location);
+    const menu = menuSearchUrl(rec.name, rec.location);
+    const reservable = rec.reservable === true;
+    const primary = reservable
+      ? openTableSearchUrl(rec.name, rec.location)
+      : directions;
+    await logEvent(sb, creatorId, "place", {
       ...meta,
       rec_name: rec.name,
-      reason: "dining",
+      reservable,
+      primary_action: reservable ? "reserve" : "directions",
+      resolved_url: primary,
     });
-    return { url: null, tier: "none" };
+    return {
+      url: primary,
+      tier: "place",
+      place_links: { directions, menu, reservable },
+    };
   }
 
   // Tier 2: aggregator fallback (Skimlinks)
