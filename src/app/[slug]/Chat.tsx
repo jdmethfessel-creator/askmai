@@ -54,9 +54,11 @@ function splitResponse(raw: string): { text: string; recs?: Rec[] } {
 export default function Chat({
   slug,
   accent,
+  creatorFirstName,
 }: {
   slug: string;
   accent: string;
+  creatorFirstName: string;
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
@@ -152,30 +154,42 @@ export default function Chat({
   }
 
   return (
-    <>
+    <div
+      className="flex flex-col w-full"
+      style={{ minHeight: "min(560px, 70dvh)" }}
+    >
       <div
         ref={scrollRef}
-        className="flex-1 overflow-y-auto px-5 pb-32 max-w-xl w-full mx-auto"
+        className="flex-1 overflow-y-auto px-4 sm:px-5 pt-5 pb-4"
+        style={{ maxHeight: "min(64dvh, 620px)" }}
       >
         {messages.length === 0 ? (
-          <div className="space-y-2.5">
-            <p className="font-serif text-sm italic opacity-60 mb-2 pl-1">
+          <div>
+            <div
+              className="mr-auto max-w-[88%] rounded-3xl rounded-bl-lg px-4 py-3 text-[13.5px] leading-relaxed mb-5"
+              style={{ background: "rgba(0,0,0,0.035)" }}
+            >
+              hey! i&apos;m {creatorFirstName}&apos;s AI — ask me about my
+              closet, routine, travel, or any of my favorite finds.
+            </div>
+            <p className="font-serif text-[13px] italic opacity-55 mb-2 pl-1">
               try asking
             </p>
-            {SUGGESTIONS.map((s) => (
-              <button
-                key={s}
-                onClick={() => send(s)}
-                className="block w-full text-left text-sm rounded-2xl px-4 py-3 transition-all hover:translate-x-0.5"
-                style={{
-                  background: "var(--surface)",
-                  border: "1px solid rgba(0,0,0,0.06)",
-                  boxShadow: "0 1px 2px rgba(0,0,0,0.02)",
-                }}
-              >
-                {s}
-              </button>
-            ))}
+            <div className="space-y-2">
+              {SUGGESTIONS.map((s) => (
+                <button
+                  key={s}
+                  onClick={() => send(s)}
+                  className="block w-full text-left text-[13px] rounded-2xl px-4 py-3 transition-all hover:translate-x-0.5"
+                  style={{
+                    background: "rgba(0,0,0,0.025)",
+                    border: "1px solid rgba(0,0,0,0.05)",
+                  }}
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
           </div>
         ) : (
           <ul className="space-y-4">
@@ -188,7 +202,7 @@ export default function Chat({
                 <li key={i} className="space-y-3">
                   {m.content && (
                     <div
-                      className={`max-w-[88%] rounded-3xl px-4 py-3 text-sm leading-relaxed ${
+                      className={`max-w-[88%] rounded-3xl px-4 py-3 text-[13.5px] leading-relaxed ${
                         m.role === "user"
                           ? "ml-auto text-white rounded-br-lg"
                           : "mr-auto rounded-bl-lg"
@@ -201,10 +215,7 @@ export default function Chat({
                                 "0 1px 2px rgba(0,0,0,0.06)",
                             }
                           : {
-                              background: "var(--surface)",
-                              border: "1px solid rgba(0,0,0,0.06)",
-                              boxShadow:
-                                "0 1px 2px rgba(0,0,0,0.02)",
+                              background: "rgba(0,0,0,0.035)",
                             }
                       }
                     >
@@ -236,18 +247,16 @@ export default function Chat({
 
       <form
         onSubmit={onSubmit}
-        className="fixed bottom-0 left-0 right-0 px-5 pt-4 pb-5"
+        className="px-3 pb-3 pt-2"
         style={{
-          background:
-            "linear-gradient(to top, var(--bg) 70%, rgba(0,0,0,0))",
+          background: "var(--surface)",
+          borderTop: "1px solid rgba(0,0,0,0.05)",
         }}
       >
         <div
-          className="max-w-xl mx-auto flex items-center gap-2 rounded-full px-2 py-2"
+          className="flex items-center gap-2 rounded-full px-2 py-1.5"
           style={{
-            background: "var(--surface)",
-            border: "1px solid rgba(0,0,0,0.08)",
-            boxShadow: "0 4px 14px rgba(0,0,0,0.04)",
+            background: "rgba(0,0,0,0.035)",
           }}
         >
           <input
@@ -255,20 +264,20 @@ export default function Chat({
             onChange={(e) => setInput(e.target.value)}
             placeholder="ask anything…"
             inputMode="text"
-            className="flex-1 bg-transparent px-3 py-2 text-sm outline-none"
+            className="flex-1 bg-transparent px-3 py-2 text-[14px] outline-none"
             disabled={streaming}
           />
           <button
             type="submit"
             disabled={!input.trim() || streaming}
-            className="rounded-full px-4 py-2 text-sm font-medium text-white disabled:opacity-40"
+            className="rounded-full px-4 py-2 text-[13px] font-medium text-white disabled:opacity-40 transition-opacity"
             style={{ background: accent }}
           >
             {streaming ? "…" : "send"}
           </button>
         </div>
       </form>
-    </>
+    </div>
   );
 }
 
@@ -279,9 +288,8 @@ function RecCard({ rec, accent }: { rec: Rec; accent: string }) {
     <article
       className="rounded-2xl p-3 flex items-stretch gap-3"
       style={{
-        background: "var(--surface)",
-        border: "1px solid rgba(0,0,0,0.06)",
-        boxShadow: "0 2px 8px rgba(0,0,0,0.03)",
+        background: "rgba(0,0,0,0.025)",
+        border: "1px solid rgba(0,0,0,0.05)",
       }}
     >
       <Thumb
