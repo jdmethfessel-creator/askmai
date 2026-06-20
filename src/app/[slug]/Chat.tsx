@@ -240,7 +240,7 @@ export default function Chat({
                   {m.recs && m.recs.length > 0 && (
                     <div className="space-y-2.5 mr-auto max-w-[92%]">
                       {m.recs.map((rec, j) => (
-                        <RecCard key={j} rec={rec} accent={accent} />
+                        <RecCard key={recKey(rec, j)} rec={rec} accent={accent} />
                       ))}
                     </div>
                   )}
@@ -287,6 +287,10 @@ export default function Chat({
   );
 }
 
+function recKey(rec: Rec, fallback: number) {
+  return `${rec.tier ?? "?"}-${rec.product_id ?? ""}-${rec.name ?? ""}-${fallback}`;
+}
+
 function RecCard({ rec, accent }: { rec: Rec; accent: string }) {
   const initial = (rec.brand?.trim()?.[0] ?? rec.name.trim()[0] ?? "?")
     .toUpperCase();
@@ -302,6 +306,9 @@ function RecCard({ rec, accent }: { rec: Rec; accent: string }) {
         src={rec.image_url}
         initial={initial}
         accent={accent}
+        brand={rec.brand}
+        name={rec.name}
+        isPlace={rec.tier === "place"}
       />
       <div className="flex-1 min-w-0 flex flex-col justify-between gap-1.5">
         <div>
@@ -399,12 +406,49 @@ function Thumb({
   src,
   initial,
   accent,
+  brand,
+  name,
+  isPlace,
 }: {
   src?: string;
   initial: string;
   accent: string;
+  brand?: string;
+  name?: string;
+  /** Place cards don't need a product image; show the letter tile and skip lookup. */
+  isPlace?: boolean;
 }) {
+  const [resolvedSrc, setResolvedSrc] = useState<string | undefined>(src);
   const [failed, setFailed] = useState(false);
+
+  // Sync prop changes (e.g., feed-tier cards arriving with src already set).
+  useEffect(() => {
+    setResolvedSrc(src);
+    setFailed(false);
+  }, [src]);
+
+  // Lazy lookup for off-feed cards: no stored image_url, not a place,
+  // and we have a name to search on.
+  useEffect(() => {
+    if (resolvedSrc || isPlace || !name) return;
+    let cancelled = false;
+    const params = new URLSearchParams();
+    if (brand) params.set("brand", brand);
+    if (name) params.set("product", name);
+    fetch(`/api/product-image?${params.toString()}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: { imageUrl?: string | null } | null) => {
+        if (cancelled) return;
+        if (data?.imageUrl) setResolvedSrc(data.imageUrl);
+      })
+      .catch(() => {
+        // stay on the tile
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [resolvedSrc, isPlace, brand, name]);
+
   const tile = (
     <div
       className="h-20 w-20 sm:h-24 sm:w-24 rounded-xl flex items-center justify-center font-serif text-2xl shrink-0 text-white"
@@ -416,8 +460,8 @@ function Thumb({
       {initial}
     </div>
   );
-  if (!src || failed) return tile;
-  const proxied = `/api/img?url=${encodeURIComponent(src)}`;
+  if (!resolvedSrc || failed) return tile;
+  const proxied = `/api/img?url=${encodeURIComponent(resolvedSrc)}`;
   // eslint-disable-next-line @next/next/no-img-element
   return (
     <img
