@@ -104,10 +104,16 @@ export async function GET(request: Request) {
   const brand = u.searchParams.get("brand")?.trim() ?? "";
   const product = u.searchParams.get("product")?.trim() ?? "";
   const qParam = u.searchParams.get("q")?.trim() ?? "";
+  const type = u.searchParams.get("type")?.trim().toLowerCase() ?? "";
 
-  const query = qParam || [brand, product].filter(Boolean).join(" ").trim();
+  let query = qParam || [brand, product].filter(Boolean).join(" ").trim();
   if (!query) {
     return Response.json({ error: "missing query" }, { status: 400 });
+  }
+  if (type === "place" && !/restaurant|cafe|coffee|bar/i.test(query)) {
+    // Bias the search toward the establishment / its food rather than a
+    // logo or unrelated person of the same name.
+    query = `${query} restaurant`;
   }
 
   const imageUrl = await lookup(query);

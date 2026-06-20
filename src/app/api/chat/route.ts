@@ -53,7 +53,8 @@ export async function POST(request: Request) {
   const catalog = await loadCatalog(creatorId, message);
   const knownProducts = buildKnownProducts(catalog, creator.taste_profile);
   const creatorRef = { id: creatorId, slug: creator.slug };
-  const systemPrompt = buildSystemPrompt(creator, catalog);
+  const budgetCeiling = extractBudgetCeiling(message);
+  const systemPrompt = buildSystemPrompt(creator, catalog, budgetCeiling);
   const history = sanitizeHistory(body.history ?? []);
 
   const client = new Anthropic();
@@ -115,13 +116,14 @@ export async function POST(request: Request) {
         }
 
         const baseRecs = pastMarker
-          ? await enrichRecsBlock(buffered, creatorRef)
+          ? await enrichRecsBlock(buffered, creatorRef, budgetCeiling)
           : [];
         const finalRecs = await augmentWithMissingMentions(
           baseRecs,
           proseText,
           knownProducts,
-          creatorRef
+          creatorRef,
+          budgetCeiling
         );
         if (finalRecs.length > 0) {
           controller.enqueue(
@@ -146,9 +148,53 @@ export async function POST(request: Request) {
   });
 }
 
+/**
+ * Parses a per-item or per-outfit budget ceiling from the user's message.
+ * Returns the number of dollars as the per-item card-filter ceiling.
+ *
+ * Per-outfit phrasing ("outfit under $200") still produces a per-item filter
+ * because a single piece priced above the outfit total is, by construction,
+ * over-budget for that outfit. Conservative on purpose.
+ */
+function extractBudgetCeiling(message: string): number | null {
+  if (!message) return null;
+  const patterns = [
+    /\bunder\s+\$?(\d{2,5})\b/i,
+    /\b(?:max(?:imum)?|up to|no more than)\s+\$?(\d{2,5})\b/i,
+    /\$(\d{2,5})\s*(?:each|max|ceiling|limit|total|or less|or under)\b/i,
+    /\bbudget\s+(?:of\s+|around\s+|about\s+)?\$?(\d{2,5})\b/i,
+    /\baround\s+\$?(\d{2,5})\b/i,
+    /\b(?:keep it )?under\s+a?\s*\$?(\d{2,5})\b/i,
+  ];
+  for (const re of patterns) {
+    const m = message.match(re);
+    if (m) {
+      const n = Number(m[1]);
+      if (n >= 20 && n <= 50000) return n;
+    }
+  }
+  return null;
+}
+
+function parsePriceNumber(s: string | undefined): number | null {
+  if (!s) return null;
+  const m = String(s).match(/(\d{1,5}(?:,\d{3})*(?:\.\d+)?)/);
+  if (!m) return null;
+  const n = Number(m[1].replace(/,/g, ""));
+  return Number.isFinite(n) ? n : null;
+}
+
+function overBudget(price: string | undefined, ceiling: number | null): boolean {
+  if (ceiling == null) return false;
+  const n = parsePriceNumber(price);
+  if (n == null) return false; // unknown price — let it through, the model can be vague
+  return n > ceiling;
+}
+
 async function enrichRecsBlock(
   raw: string,
-  creator: { id: string; slug: string }
+  creator: { id: string; slug: string },
+  budgetCeiling: number | null
 ): Promise<Rec[]> {
   const cleaned = raw
     .trim()
@@ -184,8 +230,16 @@ async function enrichRecsBlock(
           : undefined,
     }));
 
+  // First budget pass: drop recs whose model-stated price already exceeds
+  // the ceiling. Place/travel categories are skipped (their prices are
+  // per-night or unrated and shouldn't be filtered by a clothing budget).
+  const preFiltered = recs.filter((r) => {
+    if (r.category === "travel" || r.category === "dining") return true;
+    return !overBudget(r.price, budgetCeiling);
+  });
+
   const enriched = await Promise.all(
-    recs.map(async (rec) => {
+    preFiltered.map(async (rec) => {
       const resolved = await resolveLink(rec, creator);
       // For feed-tier results, override the model's text with the catalog row.
       // This is what guarantees the displayed product always matches the link.
@@ -222,7 +276,14 @@ async function enrichRecsBlock(
       return base;
     })
   );
-  return enriched;
+
+  // Second budget pass: feed-tier overrides may have replaced the model's
+  // claimed price with the catalog's real price (e.g. model said $180,
+  // catalog has $220). Drop anything that's now over the ceiling.
+  return enriched.filter((r) => {
+    if (r.category === "travel" || r.category === "dining") return true;
+    return !overBudget(r.price, budgetCeiling);
+  });
 }
 
 type CatalogRow = {
@@ -353,7 +414,8 @@ async function augmentWithMissingMentions(
   enriched: Rec[],
   proseText: string,
   known: KnownProduct[],
-  creator: { id: string; slug: string }
+  creator: { id: string; slug: string },
+  budgetCeiling: number | null
 ): Promise<Rec[]> {
   if (!proseText || known.length === 0) return enriched;
   const prose = proseText.toLowerCase();
@@ -384,6 +446,17 @@ async function augmentWithMissingMentions(
       }
     }
     if (overlaps) continue;
+
+    // Budget filter: skip catalog items that exceed the user's stated
+    // ceiling. A prose mention of an over-budget piece is allowed as a
+    // reference, but it must not generate a card.
+    if (
+      k.template.category !== "travel" &&
+      k.template.category !== "dining" &&
+      overBudget(k.template.price, budgetCeiling)
+    ) {
+      continue;
+    }
 
     const synth: Rec = {
       name: k.template.name,
@@ -495,7 +568,8 @@ function sanitizeHistory(history: ChatMessage[]) {
 
 function buildSystemPrompt(
   c: Pick<Creator, "name" | "bio" | "voice_prompt" | "taste_profile">,
-  catalog: CatalogRow[]
+  catalog: CatalogRow[],
+  budgetCeiling: number | null
 ) {
   const tasteJson = c.taste_profile
     ? JSON.stringify(c.taste_profile, null, 2)
@@ -550,10 +624,21 @@ OUTFIT-BUNDLE MATH (apply BEFORE naming any piece in a budget answer):
 - This applies to feed-tier (CATALOG) pieces equally. A catalog item that breaks the bundle math gets omitted exactly like any other over-budget item — no "but it's her real pick" exception.
 
 SHOPPABILITY RULE (READ FIRST):
-- Whenever you name ANY specific purchasable product in your reply — even casually inside a sentence — you MUST also emit it in the ---RECS--- block so it renders as a shoppable card with a link.
-- "Purchasable" means a specific named product, brand+product, restaurant, or hotel a visitor could buy or book. A standalone brand mention without a specific product ("I love Khaite") does NOT need to be carded. A specific named product ("SkinCeuticals C E Ferulic in the morning") MUST be carded.
-- If you list 3 products conversationally, all 3 must appear in the recs block. If you mention 4 products, you may exceed the usual 2–3 cap — the rec block must cover every named purchasable item.
-- Never name a buyable product in prose without also emitting it in the JSON block.
+- Card every named purchasable product the user could actually buy WITHIN their stated constraints (budget, occasion). When you name a specific product they could buy that fits the ask, you MUST emit it in the ---RECS--- block.
+- Products named ONLY as styling references that exceed the user's stated budget MUST NOT be emitted in the JSON block. You may mention them in prose ("the Frankie Shop skirt is great but over your budget, so instead…") — just leave them out of recs. The platform will not card them and you do not get to override that by emitting them anyway.
+- A standalone brand mention without a specific product ("I love Khaite") does NOT need to be carded. A specific named product the user can actually buy ("SkinCeuticals C E Ferulic in the morning") MUST be carded.
+- If you list 3 actionable products conversationally, all 3 must appear in the recs block. If you list 4, all 4. No artificial 2–3 cap when more pieces are named.
+- Never card an over-budget item — not in prose, not in JSON. The platform also enforces this at the card layer; emitting an over-budget rec will be silently dropped, so just don't.${
+    budgetCeiling != null
+      ? `
+
+USER-STATED BUDGET: $${budgetCeiling}.
+- Every carded clothing/beauty/accessory product MUST have a stated price at or below $${budgetCeiling}.
+- Catalog (feed) items priced above $${budgetCeiling} are NOT eligible for cards in this reply, no exceptions for "her real pick."
+- The platform will drop any rec whose price exceeds $${budgetCeiling}, even if you emit it. Save the tokens — don't emit them.
+- You MAY still reference an over-budget piece in prose as a styling note, but it stays in prose only.`
+      : ""
+  }
 
 OUTPUT FORMAT:
 

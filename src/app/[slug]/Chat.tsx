@@ -308,6 +308,7 @@ function RecCard({ rec, accent }: { rec: Rec; accent: string }) {
         accent={accent}
         brand={rec.brand}
         name={rec.name}
+        location={rec.location}
         isPlace={rec.tier === "place"}
       />
       <div className="flex-1 min-w-0 flex flex-col justify-between gap-1.5">
@@ -408,6 +409,7 @@ function Thumb({
   accent,
   brand,
   name,
+  location,
   isPlace,
 }: {
   src?: string;
@@ -415,7 +417,8 @@ function Thumb({
   accent: string;
   brand?: string;
   name?: string;
-  /** Place cards don't need a product image; show the letter tile and skip lookup. */
+  location?: string;
+  /** Place cards do a place-biased lookup (name + location + "restaurant"). */
   isPlace?: boolean;
 }) {
   const [resolvedSrc, setResolvedSrc] = useState<string | undefined>(src);
@@ -427,14 +430,20 @@ function Thumb({
     setFailed(false);
   }, [src]);
 
-  // Lazy lookup for off-feed cards: no stored image_url, not a place,
-  // and we have a name to search on.
+  // Lazy lookup: off-feed product cards (no image_url) and place cards
+  // (always lookup) both fire a Bing-backed search through /api/product-image.
   useEffect(() => {
-    if (resolvedSrc || isPlace || !name) return;
+    if (resolvedSrc || !name) return;
     let cancelled = false;
     const params = new URLSearchParams();
-    if (brand) params.set("brand", brand);
-    if (name) params.set("product", name);
+    if (isPlace) {
+      const q = [name, location].filter(Boolean).join(" ");
+      params.set("q", q);
+      params.set("type", "place");
+    } else {
+      if (brand) params.set("brand", brand);
+      if (name) params.set("product", name);
+    }
     fetch(`/api/product-image?${params.toString()}`)
       .then((r) => (r.ok ? r.json() : null))
       .then((data: { imageUrl?: string | null } | null) => {
@@ -447,7 +456,7 @@ function Thumb({
     return () => {
       cancelled = true;
     };
-  }, [resolvedSrc, isPlace, brand, name]);
+  }, [resolvedSrc, isPlace, brand, name, location]);
 
   const tile = (
     <div
