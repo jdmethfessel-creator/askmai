@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { supabaseAdmin } from "@/lib/supabase";
 import { resolveLink } from "@/lib/resolveLink";
+import { generateAggregatorLink } from "@/lib/affiliateLinks";
 import type { ChatMessage, Creator, Rec } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -238,52 +239,54 @@ async function enrichRecsBlock(
     return !overBudget(r.price, budgetCeiling);
   });
 
+  // Resilience: each rec's resolveLink runs in its own try/catch and any
+  // failure degrades to a search-link card instead of dropping the rec or
+  // collapsing the whole array. A product should NEVER fail to card just
+  // because link resolution hiccuped.
   const enriched = await Promise.all(
     preFiltered.map(async (rec) => {
-      const resolved = await resolveLink(rec, creator);
-      // For feed-tier results, override the model's text with the catalog row.
-      // This is what guarantees the displayed product always matches the link.
-      if (resolved.tier === "feed" && resolved.feed_product) {
-        const fp = resolved.feed_product;
-        return {
-          ...rec,
-          name: fp.name,
-          brand: fp.brand ?? rec.brand,
-          price: fp.price ?? rec.price,
-          image_url: fp.image_url ?? rec.image_url,
+      try {
+        const resolved = await resolveLink(rec, creator);
+        if (resolved.tier === "feed" && resolved.feed_product) {
+          const fp = resolved.feed_product;
+          return {
+            ...rec,
+            name: fp.name,
+            brand: fp.brand ?? rec.brand,
+            price: fp.price ?? rec.price,
+            image_url: fp.image_url ?? rec.image_url,
+            affiliate_url: resolved.url,
+            tier: resolved.tier,
+            product_id: resolved.matched_product_id,
+          };
+        }
+        const { product_id: _ignored, ...rest } = rec;
+        void _ignored;
+        let base: Rec = {
+          ...rest,
           affiliate_url: resolved.url,
           tier: resolved.tier,
-          product_id: resolved.matched_product_id,
         };
+        if (resolved.tier === "aggregator" && resolved.live_product) {
+          const lp = resolved.live_product;
+          base = {
+            ...base,
+            price: lp.realPrice ?? base.price,
+            image_url: lp.realImage ?? base.image_url,
+          };
+        }
+        if (resolved.tier === "place" && resolved.place_links) {
+          return {
+            ...base,
+            reservable: resolved.place_links.reservable,
+            directions_url: resolved.place_links.directions,
+            menu_url: resolved.place_links.menu,
+          };
+        }
+        return base;
+      } catch (err) {
+        return degradeRec(rec, creator.slug, err);
       }
-      // Non-feed: keep the model's name; strip product_id so the client
-      // doesn't display a stale reference.
-      const { product_id: _ignored, ...rest } = rec;
-      void _ignored;
-      let base: Rec = {
-        ...rest,
-        affiliate_url: resolved.url,
-        tier: resolved.tier,
-      };
-      // Aggregator: Serper gave us authoritative price + image — override
-      // the model's guessed values so the card shows the real merchant data.
-      if (resolved.tier === "aggregator" && resolved.live_product) {
-        const lp = resolved.live_product;
-        base = {
-          ...base,
-          price: lp.realPrice ?? base.price,
-          image_url: lp.realImage ?? base.image_url,
-        };
-      }
-      if (resolved.tier === "place" && resolved.place_links) {
-        return {
-          ...base,
-          reservable: resolved.place_links.reservable,
-          directions_url: resolved.place_links.directions,
-          menu_url: resolved.place_links.menu,
-        };
-      }
-      return base;
     })
   );
 
@@ -476,9 +479,16 @@ async function augmentWithMissingMentions(
       product_id: k.template.product_id,
       why: "Named in her routine above.",
     };
-    const resolved = await resolveLink(synth, creator, {
-      source: "auto_augment",
-    });
+    let resolved;
+    try {
+      resolved = await resolveLink(synth, creator, {
+        source: "auto_augment",
+      });
+    } catch (err) {
+      additions.push(degradeRec(synth, creator.slug, err));
+      seenNames.add(k.template.name.toLowerCase());
+      continue;
+    }
 
     if (resolved.tier === "feed" && resolved.feed_product) {
       const fp = resolved.feed_product;
@@ -562,6 +572,46 @@ function formatCatalogForPrompt(catalog: CatalogRow[]): string {
       return `  - id:${p.id} | ${brand} — ${p.name} | ${cat} | ${price}`;
     })
     .join("\n");
+}
+
+/**
+ * Last-resort card builder when resolveLink throws. Builds a real brand-
+ * search URL via the existing generateAggregatorLink so the card still has
+ * a working link, just unenriched (model's price/image kept, no Serper
+ * data, no Skimlinks wrap when we can't tell host). The user sees a card
+ * instead of nothing.
+ */
+function degradeRec(
+  rec: Rec,
+  creatorSlug: string,
+  err: unknown
+): Rec {
+  console.error("[enrichRecsBlock] degraded rec due to error:", {
+    name: rec.name,
+    brand: rec.brand,
+    tier: rec.tier,
+    error: err instanceof Error ? err.message : String(err),
+  });
+  let url: string | null = null;
+  try {
+    url = generateAggregatorLink({
+      product: {
+        name: rec.name,
+        brand: rec.brand,
+        category: rec.category,
+      },
+      creatorSlug,
+    });
+  } catch {
+    url = null;
+  }
+  const { product_id: _omit, ...rest } = rec;
+  void _omit;
+  return {
+    ...rest,
+    affiliate_url: url,
+    tier: rec.tier ?? "aggregator",
+  };
 }
 
 function sanitizeHistory(history: ChatMessage[]) {
