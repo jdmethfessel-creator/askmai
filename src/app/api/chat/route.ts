@@ -51,6 +51,7 @@ export async function POST(request: Request) {
   const creatorId = creator.id;
 
   const catalog = await loadCatalog(creatorId, message);
+  const knownProducts = buildKnownProducts(catalog, creator.taste_profile);
   const creatorRef = { id: creatorId, slug: creator.slug };
   const systemPrompt = buildSystemPrompt(creator, catalog);
   const history = sanitizeHistory(body.history ?? []);
@@ -70,6 +71,7 @@ export async function POST(request: Request) {
   const readable = new ReadableStream({
     async start(controller) {
       let pending = ""; // pre-marker tail we haven't decided about yet
+      let proseText = ""; // everything we've actually emitted as prose
       let pastMarker = false;
       let buffered = ""; // post-marker text (to be enriched)
       const HOLD = RECS_MARKER.length - 1;
@@ -88,6 +90,7 @@ export async function POST(request: Request) {
             const markerIdx = combined.indexOf(RECS_MARKER);
             if (markerIdx !== -1) {
               const before = combined.slice(0, markerIdx);
+              proseText += before;
               if (before.length > 0) {
                 controller.enqueue(encoder.encode(before));
               }
@@ -100,19 +103,29 @@ export async function POST(request: Request) {
               const safeEnd = Math.max(0, combined.length - HOLD);
               const safe = combined.slice(0, safeEnd);
               pending = combined.slice(safeEnd);
+              proseText += safe;
               if (safe.length > 0) controller.enqueue(encoder.encode(safe));
             }
           }
         }
 
         if (!pastMarker && pending.length > 0) {
+          proseText += pending;
           controller.enqueue(encoder.encode(pending));
         }
 
-        if (pastMarker) {
-          const enriched = await enrichRecsBlock(buffered, creatorRef);
+        const baseRecs = pastMarker
+          ? await enrichRecsBlock(buffered, creatorRef)
+          : [];
+        const finalRecs = await augmentWithMissingMentions(
+          baseRecs,
+          proseText,
+          knownProducts,
+          creatorRef
+        );
+        if (finalRecs.length > 0) {
           controller.enqueue(
-            encoder.encode(`\n${RECS_MARKER}\n${JSON.stringify(enriched)}`)
+            encoder.encode(`\n${RECS_MARKER}\n${JSON.stringify(finalRecs)}`)
           );
         }
         controller.close();
@@ -206,6 +219,198 @@ type CatalogRow = {
   category: string | null;
   price: number | null;
 };
+
+type KnownProduct = {
+  /** Lowercased phrase to search for in the model's prose. */
+  match: string;
+  /** Skeleton rec to feed through resolveLink when matched. */
+  template: {
+    name: string;
+    brand?: string;
+    category: string;
+    price?: string;
+    product_id?: string;
+  };
+};
+
+/**
+ * Two-token brand prefixes from the seeded taste profiles. Anything not in
+ * this list collapses to a single-token brand. Cheap, predictable, easy to
+ * extend per creator if we add more two-word brands.
+ */
+const TWO_TOKEN_BRANDS = [
+  "U Beauty",
+  "Ole Henriksen",
+  "Summer Fridays",
+  "Augustinus Bader",
+  "Sisley Paris",
+  "Westman Atelier",
+  "Tower 28",
+  "Saint Laurent",
+  "The Row",
+  "The Frankie Shop",
+  "Isabel Marant",
+  "Acne Studios",
+  "Dion Lee",
+  "By Far",
+  "Paris Texas",
+];
+
+function splitBrandAndName(s: string): { brand?: string; name: string } {
+  const trimmed = s.trim();
+  if (!trimmed) return { name: trimmed };
+  for (const prefix of TWO_TOKEN_BRANDS) {
+    if (trimmed.toLowerCase().startsWith(prefix.toLowerCase() + " ")) {
+      return {
+        brand: prefix,
+        name: trimmed.slice(prefix.length).trim() || trimmed,
+      };
+    }
+  }
+  const idx = trimmed.indexOf(" ");
+  if (idx === -1) return { name: trimmed };
+  return { brand: trimmed.slice(0, idx), name: trimmed.slice(idx + 1).trim() };
+}
+
+function buildKnownProducts(
+  catalog: CatalogRow[],
+  taste: Creator["taste_profile"]
+): KnownProduct[] {
+  const out: KnownProduct[] = [];
+  const seen = new Set<string>();
+  const add = (k: KnownProduct) => {
+    const key = k.match;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(k);
+  };
+
+  // Catalog rows: match on the full product name. We only auto-add catalog
+  // items the model fully names, never on brand-only mentions.
+  for (const p of catalog) {
+    if (!p.name) continue;
+    add({
+      match: p.name.toLowerCase(),
+      template: {
+        product_id: p.id,
+        name: p.name,
+        brand: p.brand ?? undefined,
+        category: (p.category ?? "fashion").toLowerCase(),
+        price: p.price != null ? `$${p.price}` : undefined,
+      },
+    });
+  }
+
+  // taste_profile.beauty product lists: skincare / makeup / sleep_wellness.
+  // These are all phrased as specific products by the seeder.
+  if (taste && typeof taste === "object") {
+    const t = taste as Record<string, unknown>;
+    const beauty = t.beauty as Record<string, unknown> | undefined;
+    if (beauty) {
+      for (const list of ["skincare", "makeup", "sleep_wellness"]) {
+        const arr = beauty[list];
+        if (!Array.isArray(arr)) continue;
+        for (const item of arr) {
+          if (typeof item !== "string" || !item.trim()) continue;
+          const { brand, name } = splitBrandAndName(item);
+          add({
+            match: item.toLowerCase(),
+            template: {
+              name: brand ? name : item,
+              brand,
+              category: "beauty",
+            },
+          });
+        }
+      }
+    }
+  }
+
+  return out;
+}
+
+/**
+ * Looks for product names mentioned in prose that aren't already in the
+ * structured recs block. For each match, build a synthetic rec and run it
+ * through resolveLink so it gets a real affiliate URL. This closes the gap
+ * where the model casually names a product (e.g. "U Beauty in the morning")
+ * but forgets to also emit it in the JSON block.
+ */
+async function augmentWithMissingMentions(
+  enriched: Rec[],
+  proseText: string,
+  known: KnownProduct[],
+  creator: { id: string; slug: string }
+): Promise<Rec[]> {
+  if (!proseText || known.length === 0) return enriched;
+  const prose = proseText.toLowerCase();
+
+  const seenNames = new Set<string>();
+  const seenIds = new Set<string>();
+  for (const r of enriched) {
+    if (r.name) seenNames.add(r.name.toLowerCase());
+    if (r.product_id) seenIds.add(r.product_id);
+  }
+
+  const additions: Rec[] = [];
+  for (const k of known) {
+    if (!prose.includes(k.match)) continue;
+    if (
+      k.template.product_id &&
+      seenIds.has(k.template.product_id)
+    )
+      continue;
+    if (seenNames.has(k.template.name.toLowerCase())) continue;
+    // Also skip if any existing rec name already contains this match phrase
+    // (e.g. the catalog name overlaps a taste-profile entry).
+    let overlaps = false;
+    for (const existing of seenNames) {
+      if (existing.includes(k.match) || k.match.includes(existing)) {
+        overlaps = true;
+        break;
+      }
+    }
+    if (overlaps) continue;
+
+    const synth: Rec = {
+      name: k.template.name,
+      brand: k.template.brand,
+      category: k.template.category,
+      price: k.template.price,
+      product_id: k.template.product_id,
+      why: "Named in her routine above.",
+    };
+    const resolved = await resolveLink(synth, creator, {
+      source: "auto_augment",
+    });
+
+    if (resolved.tier === "feed" && resolved.feed_product) {
+      const fp = resolved.feed_product;
+      additions.push({
+        ...synth,
+        name: fp.name,
+        brand: fp.brand ?? synth.brand,
+        price: fp.price ?? synth.price,
+        image_url: fp.image_url ?? undefined,
+        affiliate_url: resolved.url,
+        tier: resolved.tier,
+        product_id: resolved.matched_product_id,
+      });
+      seenIds.add(resolved.matched_product_id ?? synth.product_id ?? "");
+    } else {
+      const { product_id: _ignored, ...rest } = synth;
+      void _ignored;
+      additions.push({
+        ...rest,
+        affiliate_url: resolved.url,
+        tier: resolved.tier,
+      });
+    }
+    seenNames.add(k.template.name.toLowerCase());
+  }
+
+  return [...enriched, ...additions];
+}
 
 const CATEGORY_HINTS: { keywords: RegExp; categories: string[] }[] = [
   {
@@ -304,11 +509,17 @@ GENERAL RULES:
 - Be concrete. Real names, not categories. No marketing fluff.
 - If a question is outside ${c.name}'s areas, answer briefly and steer back toward what she actually knows.
 - Never invent product links. The platform handles linking.
-- Most replies should end with a light, natural follow-up question, the way a stylist friend would, to invite the next step. Keep it understated, never pushy. Not every reply needs one.
+- About 1 reply in 3 ends with a follow-up question, only when it's actually natural to keep the thread going. The other 2 in 3 just answer and stop. Never force a question to round out a reply.
+
+SHOPPABILITY RULE (READ FIRST):
+- Whenever you name ANY specific purchasable product in your reply — even casually inside a sentence — you MUST also emit it in the ---RECS--- block so it renders as a shoppable card with a link.
+- "Purchasable" means a specific named product, brand+product, restaurant, or hotel a visitor could buy or book. A standalone brand mention without a specific product ("I love Khaite") does NOT need to be carded. A specific named product ("SkinCeuticals C E Ferulic in the morning") MUST be carded.
+- If you list 3 products conversationally, all 3 must appear in the recs block. If you mention 4 products, you may exceed the usual 2–3 cap — the rec block must cover every named purchasable item.
+- Never name a buyable product in prose without also emitting it in the JSON block.
 
 OUTPUT FORMAT:
 
-When you are recommending 2–3 specific products, places, or hotels, structure your reply like this:
+When you are recommending specific products, places, or hotels, structure your reply like this:
 
   [1–3 sentences of conversational intro in ${c.name}'s voice. Optionally end with a follow-up question.]
   ---RECS---
@@ -329,7 +540,7 @@ Each recommendation object:
 Rules:
 - Emit the marker "---RECS---" on its OWN line.
 - After the marker, output ONLY a valid JSON array. No prose, no markdown fences.
-- 2 or 3 recommendations, best first.
+- One rec per purchasable item named in prose. Usually 2–3; can be more when you list more. Order best/most-relevant first.
 - "why" is one tight line.
 
 CATALOG (real products from ${c.name}'s feeds, with affiliate links the platform will attach):
