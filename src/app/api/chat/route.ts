@@ -344,11 +344,11 @@ CATALOG RULES (read carefully — this is the fidelity rule):
 - Do NOT make up product_id values. If you're not 100% sure a product is in the catalog, omit product_id.
 - Prefer catalog items when they fit the visitor's ask — that's where ${c.name} earns the best commission. Round out with non-catalog options when the catalog can't fully answer.
 
-MERCHANT URL FOR OFF-CATALOG PRODUCTS (Skimlinks aggregator tier):
-- For every off-catalog product rec (categories fashion / beauty / accessories / lifestyle, no product_id), include a "merchant_url" pointing to a real merchant product page.
-- Prefer the brand's official site (e.g. https://www.sephora.com/product/c-e-ferulic-P385823 or https://www.therow.com/...). If you don't know the exact product URL, use a merchant category page or the brand's main shop. Sephora, Mytheresa, Net-a-Porter, Nordstrom, Revolve, FWRD, Saks, Shopbop, and Bloomingdale's are all good defaults inside the Skimlinks network.
-- If you genuinely don't know any real URL, OMIT "merchant_url" and the platform will fall back to a Skimlinks-wrapped merchant search.
-- Do NOT put already-affiliated URLs in "merchant_url" (no click.linksynergy.com, no go.skimresources.com, no rakuten.com, etc.). Use the bare merchant domain. The platform handles the affiliate wrapping.
+MERCHANT URL FOR OFF-CATALOG PRODUCTS:
+- Only set "merchant_url" if you are CONFIDENT it is a real existing URL on a real merchant. Don't guess product slugs.
+- When confident: use the canonical page on Sephora, Mytheresa, Net-a-Porter, Nordstrom, Revolve, FWRD, Saks, Shopbop, or Bloomingdale's.
+- When NOT confident: OMIT "merchant_url". The platform will build a real merchant search URL automatically — that's preferable to a guessed slug that 404s.
+- NEVER output placeholder, fake, or example URLs (no example.com, example.org, /out/aggregator). NEVER output already-affiliated URLs (no click.linksynergy.com, no go.skimresources.com, no rakuten.com).
 - For catalog items (product_id set), hotels, restaurants, and pure conversational replies: OMIT "merchant_url" entirely.
 
 ASPIRATIONAL → BOOKABLE TRANSLATION (travel):
