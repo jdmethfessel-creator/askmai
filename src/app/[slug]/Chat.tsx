@@ -351,17 +351,8 @@ function Thumb({
   initial: string;
   accent: string;
 }) {
-  if (src) {
-    // eslint-disable-next-line @next/next/no-img-element
-    return (
-      <img
-        src={src}
-        alt=""
-        className="h-20 w-20 sm:h-24 sm:w-24 rounded-xl object-cover shrink-0"
-      />
-    );
-  }
-  return (
+  const [failed, setFailed] = useState(false);
+  const tile = (
     <div
       className="h-20 w-20 sm:h-24 sm:w-24 rounded-xl flex items-center justify-center font-serif text-2xl shrink-0 text-white"
       style={{
@@ -371,5 +362,16 @@ function Thumb({
     >
       {initial}
     </div>
+  );
+  if (!src || failed) return tile;
+  const proxied = `/api/img?url=${encodeURIComponent(src)}`;
+  // eslint-disable-next-line @next/next/no-img-element
+  return (
+    <img
+      src={proxied}
+      alt=""
+      onError={() => setFailed(true)}
+      className="h-20 w-20 sm:h-24 sm:w-24 rounded-xl object-cover shrink-0 bg-black/5"
+    />
   );
 }
