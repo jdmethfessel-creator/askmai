@@ -118,16 +118,13 @@ export default function Marketing() {
         </p>
         <h1 className="lp-hero-h1">
           <span className="lp-line lp-fade-in" style={{ animationDelay: "180ms" }}>
-            Your taste,
-          </span>{" "}
-          <span className="lp-line lp-fade-in" style={{ animationDelay: "320ms" }}>
-            as an agent your
+            Your shoppable AI
           </span>{" "}
           <span
             className="lp-line lp-fade-in lp-accent-ink"
-            style={{ animationDelay: "460ms" }}
+            style={{ animationDelay: "320ms" }}
           >
-            followers can shop.
+            digital twin
           </span>
         </h1>
 
@@ -210,20 +207,19 @@ export default function Marketing() {
           <div className="lp-live-copy">
             <p className="lp-eyebrow">Live now</p>
             <h2 className="lp-h2">
-              Cass DiMicco&apos;s agent is{" "}
+              Danielle Bernstein&apos;s agent is{" "}
               <span className="lp-accent-ink">live.</span>
             </h2>
             <p className="lp-live-sub">
-              This isn&apos;t a concept. Cass&apos;s agent is running today,
-              answering followers in her voice, recommending the real products
-              she actually wears, with real links to where she actually buys
-              them.
+              Danielle&apos;s agent is running today, answering followers in
+              her voice, recommending the real products she actually wears,
+              with real links to where she actually buys them.
             </p>
-            <p className="lp-live-sub">
-              Try it. Ask it anything. Then picture yours.
-            </p>
-            <Link href="/cass" className="lp-btn lp-btn-primary lp-btn-large">
-              Try Cass&apos;s agent
+            <Link
+              href="/weworewhat"
+              className="lp-btn lp-btn-primary lp-btn-large"
+            >
+              Try Danielle&apos;s agent
               <ArrowRight />
             </Link>
             <Link href="/creators" className="lp-live-all-link">
@@ -232,16 +228,16 @@ export default function Marketing() {
             </Link>
             <ul className="lp-live-stats">
               <li>
-                <span className="lp-live-stat-num">1M+</span>
+                <span className="lp-live-stat-num">2.9M</span>
                 <span className="lp-live-stat-label">followers</span>
               </li>
               <li>
-                <span className="lp-live-stat-num">47</span>
+                <span className="lp-live-stat-num">39</span>
                 <span className="lp-live-stat-label">products in her feed</span>
               </li>
               <li>
                 <span className="lp-live-stat-num">Live</span>
-                <span className="lp-live-stat-label">askmai.co/cass</span>
+                <span className="lp-live-stat-label">askmai.co/weworewhat</span>
               </li>
             </ul>
           </div>
@@ -431,47 +427,54 @@ function BackgroundGlow() {
   );
 }
 
+const PREVIEW_THUMB_SRC = `/api/img?url=${encodeURIComponent(
+  "https://cdn.shopify.com/s/files/1/0025/6049/1566/files/Artboard_22_7dbb2b75-0b25-4c2e-9db2-d50212d88364.png?v=1776700045"
+)}`;
+
 function AgentPreviewCard() {
   return (
     <Link
-      href="/cass"
+      href="/weworewhat"
       className="lp-preview"
-      aria-label="Open Cass's live agent"
+      aria-label="Open Danielle Bernstein's live agent"
     >
       <div className="lp-preview-card">
         <div className="lp-preview-corner">live</div>
         <div className="lp-preview-head">
           <div className="lp-preview-avatar" aria-hidden>
-            C
+            D
           </div>
           <div className="lp-preview-meta">
-            <span className="lp-preview-name">Cass DiMicco</span>
+            <span className="lp-preview-name">Danielle Bernstein</span>
             <span className="lp-preview-handle">
-              @cass · 1M followers
+              @weworewhat · 2.9M followers
             </span>
           </div>
         </div>
         <div className="lp-preview-chat">
           <div className="lp-preview-bubble lp-preview-user">
-            what should I pack for amalfi
+            what do I wear to a dinner in the city
           </div>
           <div className="lp-preview-bubble lp-preview-assistant">
             <p>
-              loose linen trousers in sand or white, fitted ribbed tank,
-              flat leather sandals. all in under $200. add Aureum gold
-              stacked on both wrists and you&apos;re there.
+              a maxi is the move for city dinner — looks pulled together
+              without trying. my Cowl Halter Maxi in navy/crimson is the one
+              I&apos;d reach for. add a strappy heel, you&apos;re done.
             </p>
             <div className="lp-preview-rec">
-              <span className="lp-preview-rec-thumb" aria-hidden />
+              <span className="lp-preview-rec-thumb" aria-hidden>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={PREVIEW_THUMB_SRC} alt="" />
+              </span>
               <span className="lp-preview-rec-text">
-                <strong>Mango</strong> Linen Wide-Leg Trousers
-                <em>$89.99</em>
+                <strong>WeWoreWhat</strong> Cowl Halter Maxi Dress
+                <em>$168</em>
               </span>
             </div>
           </div>
         </div>
         <div className="lp-preview-foot">
-          askmai.co/cass
+          askmai.co/weworewhat
           <ArrowRight subtle />
         </div>
       </div>
