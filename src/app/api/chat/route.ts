@@ -8,7 +8,11 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const MODEL = "claude-sonnet-4-6";
-const MAX_TOKENS = 1024;
+// Output token budget. Heavy multi-part queries (2+ outfits + multiple
+// places + per-rec JSON with long image / place URLs) routinely run
+// 1200-1600 output tokens. 1024 was clipping the RECS block mid-prose
+// on those queries — zero cards rendered. 2048 leaves clear headroom.
+const MAX_TOKENS = 2048;
 const MAX_HISTORY = 20;
 
 export async function POST(request: Request) {
@@ -140,6 +144,20 @@ export async function POST(request: Request) {
           controller.enqueue(
             encoder.encode(`\n${RECS_MARKER}\n${JSON.stringify(finalRecs)}`)
           );
+        }
+        // Log truncation diagnostics so we can spot recurring max_tokens
+        // hits before users do.
+        try {
+          const final = await stream.finalMessage();
+          if (final.stop_reason === "max_tokens" && !pastMarker) {
+            console.warn(
+              `[chat] response hit max_tokens BEFORE reaching ---RECS--- marker. ` +
+                `creator=${creator.slug} prose_chars=${proseText.length} ` +
+                `recs_emitted=${finalRecs.length}. Raise MAX_TOKENS or shorten prose.`
+            );
+          }
+        } catch {
+          // finalMessage may not be available — non-fatal.
         }
         controller.close();
       } catch (err) {
@@ -1094,11 +1112,21 @@ USER-STATED BUDGET: $${budgetCeiling}.
       : ""
   }
 
+HEAVY MULTI-PART REQUESTS (read before any answer with 2+ outfits or 3+ places):
+- When the user asks for multiple parts in one shot — e.g. "two outfits + a hotel + a drinks spot + a dinner spot," "three looks for the weekend + restaurants" — prose MUST be tight. The output token budget is finite and the RECS block lives AFTER the prose. If prose runs long, the RECS block gets clipped and the user sees ZERO cards. Cards are the deliverable; prose is the wrapping.
+- Tight-prose recipe for heavy queries:
+    * Skip the long "here's everything you need for…" preamble. One short opener (≤ 1 sentence) is enough.
+    * Compact section labels work better than full headers: "Outfit 1:" / "Outfit 2:" / "Hotel:" / "Drinks:" / "Dinner:" — one line each, naming the pieces / the place with a 6-12 word reason. Do NOT do bold markdown headers + a 3-line paragraph per section.
+    * Skip the price math line for each outfit when prices are obvious from the cards. The card prices are the source of truth.
+    * Skip restating the user's question.
+- The RECS block is non-negotiable. Every requested part (every outfit piece, every place) must appear in the recs JSON array. If you find yourself running long in prose, CUT PROSE, not the RECS block. Better to ship 9 cards with terse prose than to ship beautiful prose and ZERO cards.
+- This rule overrides any creator voice tendency toward longer prose for heavy queries only. On single-piece or single-place queries, normal voice still applies.
+
 OUTPUT FORMAT:
 
 When you are recommending specific products, places, or hotels, structure your reply like this:
 
-  [1–3 sentences of conversational intro in ${c.name}'s voice. Optionally end with a follow-up question.]
+  [1–3 sentences of conversational intro in ${c.name}'s voice. Optionally end with a follow-up question. For HEAVY multi-part queries (see rule above) keep this to a single short opener.]
   ---RECS---
   [a JSON array of 2–3 recommendation objects, nothing else after it]
 
