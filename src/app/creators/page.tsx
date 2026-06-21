@@ -108,7 +108,7 @@ export default async function CreatorsPage() {
         </header>
 
         <section className="cr-intro">
-          <p className="lp-eyebrow">Live twins</p>
+          <p className="lp-eyebrow">Live now</p>
           <h1 className="cr-h1">
             Chat with your favorite{" "}
             <span className="lp-accent-ink">creators.</span>

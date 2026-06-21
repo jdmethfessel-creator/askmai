@@ -69,6 +69,13 @@ export default function Chat({
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
+  // Per-message kill-switch for the editorial-board renderer: when a hero
+  // image fails to load on a visual-mode message, we flip its index in this
+  // set and the next render demotes that message back to the card layout.
+  // A failed hero image must NEVER stay on screen.
+  const [demotedMessages, setDemotedMessages] = useState<Set<number>>(
+    () => new Set()
+  );
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -204,6 +211,12 @@ export default function Chat({
               const isLast = i === messages.length - 1;
               const showCaret =
                 isAssistant && streaming && isLast && !m.recs;
+              const partitioned = m.recs ? partitionRecs(m.recs) : null;
+              const visualEligible = !!(
+                partitioned &&
+                !demotedMessages.has(i) &&
+                isVisualEligible(partitioned.products)
+              );
               return (
                 <li key={i} className="space-y-3">
                   {m.content && (
@@ -232,15 +245,45 @@ export default function Chat({
                             : "whitespace-pre-wrap"
                         }
                       >
-                        {m.content}
+                        {visualEligible
+                          ? extractLeadCaption(m.content)
+                          : m.content}
                       </span>
                     </div>
                   )}
 
-                  {m.recs && m.recs.length > 0 && (
-                    <div className="space-y-2.5 mr-auto max-w-[92%]">
-                      {m.recs.map((rec, j) => (
-                        <RecCard key={recKey(rec, j)} rec={rec} accent={accent} />
+                  {partitioned && m.recs && m.recs.length > 0 && (
+                    <div className="space-y-3 mr-auto max-w-[92%]">
+                      {visualEligible ? (
+                        <EditorialBoard
+                          products={partitioned.products}
+                          accent={accent}
+                          onHeroFail={() =>
+                            setDemotedMessages((prev) => {
+                              if (prev.has(i)) return prev;
+                              const next = new Set(prev);
+                              next.add(i);
+                              return next;
+                            })
+                          }
+                          onRefine={send}
+                          streaming={streaming}
+                        />
+                      ) : (
+                        partitioned.products.map((rec, j) => (
+                          <RecCard
+                            key={recKey(rec, j)}
+                            rec={rec}
+                            accent={accent}
+                          />
+                        ))
+                      )}
+                      {partitioned.places.map((rec, j) => (
+                        <RecCard
+                          key={recKey(rec, partitioned.products.length + j)}
+                          rec={rec}
+                          accent={accent}
+                        />
                       ))}
                     </div>
                   )}
@@ -289,6 +332,371 @@ export default function Chat({
 
 function recKey(rec: Rec, fallback: number) {
   return `${rec.tier ?? "?"}-${rec.product_id ?? ""}-${rec.name ?? ""}-${fallback}`;
+}
+
+// -------- Editorial-board (visual-first) renderer --------
+
+function partitionRecs(recs: Rec[]): { products: Rec[]; places: Rec[] } {
+  const products: Rec[] = [];
+  const places: Rec[] = [];
+  for (const r of recs) {
+    if (
+      r.tier === "place" ||
+      r.tier === "hotel" ||
+      r.category === "dining" ||
+      r.category === "travel"
+    ) {
+      places.push(r);
+    } else {
+      products.push(r);
+    }
+  }
+  return { products, places };
+}
+
+/**
+ * Eligibility for the visual layout. The HERO image dominates the
+ * response, so it MUST be reliable — feed/owned_feed (real catalog
+ * image) or aggregator-with-server-resolved-image_url. Finishers can use
+ * the existing lazy /api/product-image lookup (with tile fallback on
+ * failure), so we don't require image_url on every product — just one
+ * reliable hero candidate. Synth cards (off-catalog scanner) are
+ * tile-only by design and can't ever qualify as a hero.
+ */
+function isVisualEligible(products: Rec[]): boolean {
+  if (products.length < 2) return false;
+  return pickHeroCandidate(products) !== null;
+}
+
+function pickHeroCandidate(products: Rec[]): Rec | null {
+  const eligible = products.filter(
+    (p) =>
+      !!p.image_url &&
+      !p.synth &&
+      (p.tier === "feed" ||
+        p.tier === "owned_feed" ||
+        p.tier === "aggregator")
+  );
+  if (eligible.length === 0) return null;
+  // Prefer real catalog tiers (image guaranteed); within the pool, prefer
+  // the highest-priced piece — usually the centerpiece garment.
+  const feedFirst = eligible.filter(
+    (p) => p.tier === "feed" || p.tier === "owned_feed"
+  );
+  const pool = feedFirst.length > 0 ? feedFirst : eligible;
+  let best = pool[0];
+  let bestPrice = parsePriceNum(best.price);
+  for (const p of pool.slice(1)) {
+    const n = parsePriceNum(p.price);
+    if (n != null && (bestPrice == null || n > bestPrice)) {
+      best = p;
+      bestPrice = n;
+    }
+  }
+  return best;
+}
+
+function parsePriceNum(s: string | undefined): number | null {
+  if (!s) return null;
+  const m = String(s).match(/(\d{1,5}(?:,\d{3})*(?:\.\d+)?)/);
+  if (!m) return null;
+  const n = Number(m[1].replace(/,/g, ""));
+  return Number.isFinite(n) ? n : null;
+}
+
+
+function outfitTotal(products: Rec[]): number | null {
+  let total = 0;
+  let count = 0;
+  for (const p of products) {
+    const n = parsePriceNum(p.price);
+    if (n != null) {
+      total += n;
+      count++;
+    }
+  }
+  return count >= 2 ? total : null;
+}
+
+function extractLeadCaption(prose: string): string {
+  if (!prose) return prose;
+  // Trim, drop trailing whitespace. Take the first 1-2 sentences (up to
+  // ~180 chars) so the visual layout leads with voice, not a paragraph.
+  const trimmed = prose.trim();
+  if (trimmed.length <= 180) return trimmed;
+  // Sentence-end match: . ! or ? followed by space or end.
+  const reSentence = /[.!?](?:\s|$)/g;
+  let end = -1;
+  let cuts = 0;
+  let m: RegExpExecArray | null;
+  while ((m = reSentence.exec(trimmed)) !== null) {
+    cuts++;
+    end = m.index + 1;
+    if (cuts >= 2 || end >= 180) break;
+  }
+  if (end > 0) return trimmed.slice(0, end).trim();
+  return trimmed.slice(0, 180).trim() + "…";
+}
+
+const REFINE_CHIPS: { label: string; prompt: string }[] = [
+  { label: "dressier", prompt: "make it dressier" },
+  { label: "cheaper", prompt: "show me a cheaper version of this outfit" },
+  { label: "more color", prompt: "more color, less neutral" },
+  { label: "different vibe", prompt: "try a different vibe" },
+];
+
+function EditorialBoard({
+  products,
+  accent,
+  onHeroFail,
+  onRefine,
+  streaming,
+}: {
+  products: Rec[];
+  accent: string;
+  onHeroFail: () => void;
+  onRefine: (prompt: string) => void;
+  streaming: boolean;
+}) {
+  const hero = pickHeroCandidate(products);
+  if (!hero) {
+    // Eligibility check should have caught this. Safety net: demote.
+    onHeroFail();
+    return null;
+  }
+  const finishers = products.filter((p) => p !== hero);
+  const total = outfitTotal(products);
+  return (
+    <div className="space-y-3">
+      <HeroProduct rec={hero} accent={accent} onFail={onHeroFail} />
+      {total != null && (
+        <p
+          className="text-[11px] uppercase tracking-[0.2em] opacity-65 font-medium pt-0.5"
+          style={{ color: "var(--ink)" }}
+        >
+          ${total.toLocaleString()} total · {products.length} pieces
+        </p>
+      )}
+      {finishers.length > 0 && (
+        <div className="grid grid-cols-2 gap-2.5">
+          {finishers.map((rec, i) => (
+            <FinisherCard
+              key={`fin-${i}-${rec.name}`}
+              rec={rec}
+              accent={accent}
+            />
+          ))}
+        </div>
+      )}
+      {!streaming && (
+        <div className="flex flex-wrap gap-1.5 pt-1.5">
+          {REFINE_CHIPS.map((chip) => (
+            <button
+              key={chip.label}
+              type="button"
+              onClick={() => onRefine(chip.prompt)}
+              className="text-[11px] px-3 py-1.5 rounded-full transition-all hover:translate-y-[-1px]"
+              style={{
+                border: `1px solid ${accent}55`,
+                color: accent,
+                background: "rgba(0,0,0,0.02)",
+              }}
+            >
+              {chip.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function HeroProduct({
+  rec,
+  accent,
+  onFail,
+}: {
+  rec: Rec;
+  accent: string;
+  onFail: () => void;
+}) {
+  if (!rec.image_url) {
+    // Should never happen given eligibility, but if image_url disappears
+    // mid-flight, demote the whole response rather than render a hero gap.
+    onFail();
+    return null;
+  }
+  const proxied = `/api/img?url=${encodeURIComponent(rec.image_url)}`;
+  return (
+    <article
+      className="relative w-full overflow-hidden rounded-2xl"
+      style={{
+        aspectRatio: "1 / 1.1",
+        background: `${accent}11`,
+      }}
+    >
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={proxied}
+        alt=""
+        loading="lazy"
+        className="absolute inset-0 w-full h-full object-cover"
+        onError={onFail}
+      />
+      <div
+        className="absolute inset-x-0 bottom-0 p-3.5 flex items-end justify-between gap-3"
+        style={{
+          background:
+            "linear-gradient(to top, rgba(0,0,0,0.6) 0%, rgba(0,0,0,0.3) 45%, rgba(0,0,0,0) 80%)",
+        }}
+      >
+        <div className="text-white min-w-0 flex-1">
+          {rec.brand && (
+            <p className="text-[10px] uppercase tracking-[0.18em] opacity-90 mb-0.5 font-medium truncate">
+              {rec.brand}
+            </p>
+          )}
+          <h3 className="font-serif text-[17px] leading-tight">{rec.name}</h3>
+          {rec.price && (
+            <p className="text-[14px] font-medium mt-1 opacity-95">
+              {rec.price}
+            </p>
+          )}
+        </div>
+        {rec.affiliate_url && (
+          <a
+            href={rec.affiliate_url}
+            target="_blank"
+            rel="noopener sponsored"
+            className={`text-[12px] px-3.5 py-2 rounded-full font-semibold whitespace-nowrap shrink-0 transition-transform hover:translate-y-[-1px]${
+              rec.tier === "feed" ? " noskim" : ""
+            }`}
+            style={{ background: "#ffffff", color: "#111" }}
+          >
+            Shop →
+          </a>
+        )}
+      </div>
+    </article>
+  );
+}
+
+function FinisherCard({ rec, accent }: { rec: Rec; accent: string }) {
+  const initial = (rec.brand?.trim()?.[0] ?? rec.name.trim()[0] ?? "?")
+    .toUpperCase();
+  return (
+    <article
+      className="rounded-xl overflow-hidden flex flex-col"
+      style={{
+        background: "rgba(0,0,0,0.025)",
+        border: "1px solid rgba(0,0,0,0.05)",
+      }}
+    >
+      <div className="relative w-full" style={{ aspectRatio: "1 / 1" }}>
+        <FinisherImage rec={rec} accent={accent} initial={initial} />
+      </div>
+      <div className="p-2.5 space-y-0.5">
+        {rec.brand && (
+          <p className="text-[9px] uppercase tracking-[0.14em] opacity-60 truncate">
+            {rec.brand}
+          </p>
+        )}
+        <h4 className="font-serif text-[13px] leading-tight line-clamp-2">
+          {rec.name}
+        </h4>
+        <div className="flex items-baseline justify-between gap-2 pt-1">
+          <span className="text-[11px] font-medium opacity-90">
+            {rec.price ?? ""}
+          </span>
+          {rec.affiliate_url && (
+            <a
+              href={rec.affiliate_url}
+              target="_blank"
+              rel="noopener sponsored"
+              className={`text-[10px] font-semibold tracking-wide${
+                rec.tier === "feed" ? " noskim" : ""
+              }`}
+              style={{ color: accent }}
+            >
+              Shop →
+            </a>
+          )}
+        </div>
+      </div>
+    </article>
+  );
+}
+
+/**
+ * Square-fill image for finisher cards. Mirrors the lazy lookup behavior
+ * of Thumb (for aggregator items without server-resolved image_url, fire
+ * /api/product-image) but renders absolute-fill in the parent square.
+ * Synth cards skip the lookup — tile only — and any image error in any
+ * tier collapses to the tile so a broken image never lands in the grid.
+ */
+function FinisherImage({
+  rec,
+  accent,
+  initial,
+}: {
+  rec: Rec;
+  accent: string;
+  initial: string;
+}) {
+  const [resolvedSrc, setResolvedSrc] = useState<string | undefined>(
+    rec.image_url
+  );
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    setResolvedSrc(rec.image_url);
+    setFailed(false);
+  }, [rec.image_url]);
+
+  useEffect(() => {
+    if (resolvedSrc || !rec.name || rec.synth) return;
+    let cancelled = false;
+    const params = new URLSearchParams();
+    if (rec.brand) params.set("brand", rec.brand);
+    params.set("product", rec.name);
+    fetch(`/api/product-image?${params.toString()}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: { imageUrl?: string | null } | null) => {
+        if (cancelled) return;
+        if (data?.imageUrl) setResolvedSrc(data.imageUrl);
+      })
+      .catch(() => {
+        // stay on the tile
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [resolvedSrc, rec.brand, rec.name, rec.synth]);
+
+  if (!resolvedSrc || failed) {
+    return (
+      <div
+        className="absolute inset-0 flex items-center justify-center font-serif text-3xl text-white"
+        style={{
+          background: `linear-gradient(135deg, ${accent}, ${accent}aa)`,
+        }}
+        aria-hidden
+      >
+        {initial}
+      </div>
+    );
+  }
+  const proxied = `/api/img?url=${encodeURIComponent(resolvedSrc)}`;
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={proxied}
+      alt=""
+      loading="lazy"
+      className="absolute inset-0 w-full h-full object-cover"
+      onError={() => setFailed(true)}
+    />
+  );
 }
 
 function RecCard({ rec, accent }: { rec: Rec; accent: string }) {

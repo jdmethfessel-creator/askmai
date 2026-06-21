@@ -132,7 +132,7 @@ export default function Marketing() {
             <ArrowRight />
           </a>
           <Link href="/creators" className="lp-btn lp-btn-ghost">
-            Browse the twins
+            Talk to creators
             <ArrowRight subtle />
           </Link>
         </div>
