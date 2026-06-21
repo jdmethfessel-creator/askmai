@@ -20,15 +20,38 @@ export default async function CreatorPage({
 }: {
   params: { slug: string };
 }) {
-  const { data, error } = await supabaseAdmin()
+  const sb = supabaseAdmin();
+  // `hidden` is column-tolerant: if the migration hasn't been applied
+  // yet, Postgres returns code 42703 and we retry without it (treating
+  // every creator as visible). Once the column exists the primary query
+  // succeeds and hidden=true 404s normally.
+  const cols =
+    "id, slug, name, bio, avatar_url, theme, voice_prompt, taste_profile, hidden";
+  const primary = await sb
     .from("creators")
-    .select("id, slug, name, bio, avatar_url, theme, voice_prompt, taste_profile")
+    .select(cols)
     .eq("slug", params.slug)
     .maybeSingle();
 
-  if (error || !data) notFound();
+  let row: (Creator & { hidden?: boolean | null }) | null = null;
+  if (primary.error?.code === "42703") {
+    const fb = await sb
+      .from("creators")
+      .select(
+        "id, slug, name, bio, avatar_url, theme, voice_prompt, taste_profile"
+      )
+      .eq("slug", params.slug)
+      .maybeSingle();
+    if (fb.error || !fb.data) notFound();
+    row = { ...(fb.data as Creator), hidden: false };
+  } else if (primary.error || !primary.data) {
+    notFound();
+  } else {
+    row = primary.data as Creator;
+  }
+  if (!row || row.hidden) notFound();
 
-  const creator = data as Creator;
+  const creator = row;
   const theme = { ...DEFAULT_THEME, ...(creator.theme ?? {}) };
   const followerLabel = deriveFollowers(creator.taste_profile);
 

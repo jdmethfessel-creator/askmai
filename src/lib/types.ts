@@ -17,6 +17,10 @@ export type Creator = {
   theme: Theme | null;
   voice_prompt: string | null;
   taste_profile: TasteProfile | null;
+  /** Soft-hide flag. Hidden creators 404 on the chat page and disappear
+   *  from the /creators directory while all their data, voice, and
+   *  catalog stay intact. Toggle in Supabase to restore. */
+  hidden?: boolean | null;
 };
 
 export type Product = {

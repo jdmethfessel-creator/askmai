@@ -35,6 +35,7 @@ type CreatorRow = {
   avatar_url: string | null;
   taste_profile: unknown;
   theme: unknown;
+  hidden: boolean | null;
 };
 
 function deriveFollowers(tp: unknown): string | null {
@@ -76,12 +77,24 @@ function firstName(name: string): string {
 }
 
 async function loadCreators(): Promise<CreatorRow[]> {
-  const { data, error } = await supabaseAdmin()
+  // `hidden` is column-tolerant: if the migration hasn't been applied
+  // yet, Postgres returns code 42703 and we retry without the filter.
+  const sb = supabaseAdmin();
+  const primary = await sb
     .from("creators")
-    .select("id, slug, name, bio, avatar_url, taste_profile, theme")
+    .select("id, slug, name, bio, avatar_url, taste_profile, theme, hidden")
+    .eq("hidden", false)
     .order("created_at", { ascending: true });
-  if (error || !data) return [];
-  return data as CreatorRow[];
+  if (primary.error?.code === "42703") {
+    const fb = await sb
+      .from("creators")
+      .select("id, slug, name, bio, avatar_url, taste_profile, theme")
+      .order("created_at", { ascending: true });
+    if (fb.error || !fb.data) return [];
+    return fb.data.map((r) => ({ ...(r as object), hidden: false })) as CreatorRow[];
+  }
+  if (primary.error || !primary.data) return [];
+  return primary.data as CreatorRow[];
 }
 
 export default async function CreatorsPage() {
