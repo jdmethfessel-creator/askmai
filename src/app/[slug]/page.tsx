@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import { supabaseAdmin } from "@/lib/supabase";
 import type { Creator } from "@/lib/types";
+import { CreatorAvatar } from "../_components/CreatorAvatar";
 import Chat from "./Chat";
 
 const DEFAULT_THEME = {
@@ -46,10 +47,15 @@ export default async function CreatorPage({
     >
       <main className="w-full max-w-[480px] px-5 pt-10 sm:pt-14 pb-6 flex flex-col">
         <header className="text-center">
-          <Avatar
+          <CreatorAvatar
             src={creator.avatar_url}
-            name={creator.name}
-            accent={theme.accent}
+            initial={creator.name.trim().charAt(0).toUpperCase()}
+            alt={creator.name}
+            imgClassName="h-[100px] w-[100px] rounded-full ring-4 ring-white shadow-[0_10px_30px_-10px_rgba(0,0,0,0.25)] object-cover mx-auto"
+            tileClassName="h-[100px] w-[100px] rounded-full ring-4 ring-white shadow-[0_10px_30px_-10px_rgba(0,0,0,0.25)] mx-auto flex items-center justify-center font-serif text-white text-[40px]"
+            tileStyle={{
+              background: `linear-gradient(135deg, ${theme.accent}, ${theme.accent}b3 60%, ${theme.accent}80)`,
+            }}
           />
           <h1 className="font-serif mt-5 text-3xl sm:text-[34px] tracking-tight leading-tight">
             {creator.name}
@@ -101,42 +107,6 @@ export default async function CreatorPage({
           · askmai.co/{creator.slug}
         </footer>
       </main>
-    </div>
-  );
-}
-
-function Avatar({
-  src,
-  name,
-  accent,
-}: {
-  src: string | null;
-  name: string;
-  accent: string;
-}) {
-  const ringClass =
-    "h-[100px] w-[100px] rounded-full ring-4 ring-white";
-  const shadow = "shadow-[0_10px_30px_-10px_rgba(0,0,0,0.25)]";
-
-  if (src) {
-    return (
-      // eslint-disable-next-line @next/next/no-img-element
-      <img
-        src={src}
-        alt={name}
-        className={`${ringClass} ${shadow} object-cover mx-auto`}
-      />
-    );
-  }
-  return (
-    <div
-      className={`${ringClass} ${shadow} mx-auto flex items-center justify-center font-serif text-white text-[40px]`}
-      style={{
-        background: `linear-gradient(135deg, ${accent}, ${accent}b3 60%, ${accent}80)`,
-      }}
-      aria-hidden
-    >
-      {name.trim().charAt(0).toUpperCase()}
     </div>
   );
 }

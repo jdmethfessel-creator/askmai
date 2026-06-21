@@ -2,6 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { supabaseAdmin } from "@/lib/supabase";
 import { resolveLink } from "@/lib/resolveLink";
 import { generateAggregatorLink } from "@/lib/affiliateLinks";
+import { bingLookup } from "@/lib/bingImage";
 import type { ChatMessage, Creator, Rec } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -140,9 +141,16 @@ export async function POST(request: Request) {
           creatorRef,
           budgetCeiling
         );
-        if (finalRecs.length > 0) {
+        // Server-side image prefetch. Non-synth aggregator items often
+        // arrive without image_url (Serper failed, or returned a
+        // brand-search fallback with no realImage). The visual-board
+        // gate runs at partition time, so without this pass those items
+        // would never count toward eligibility — even though the lazy
+        // client lookup would fill them in for the eventual render.
+        const enrichedRecs = await prefetchAggregatorImages(finalRecs);
+        if (enrichedRecs.length > 0) {
           controller.enqueue(
-            encoder.encode(`\n${RECS_MARKER}\n${JSON.stringify(finalRecs)}`)
+            encoder.encode(`\n${RECS_MARKER}\n${JSON.stringify(enrichedRecs)}`)
           );
         }
         // Log truncation diagnostics so we can spot recurring max_tokens
@@ -1001,6 +1009,35 @@ async function augmentWithOffCatalogMentions(
   return [...enriched, ...additions];
 }
 
+/**
+ * Bing-resolve image_url for non-synth, non-place recs that don't already
+ * have one. The visual-board gate uses image_url presence as its
+ * reliability signal — without this pass, clean aggregator responses
+ * (skincare, contemporary fashion) miss the gate and fall back to cards
+ * even though the actual images are clean.
+ *
+ * Synth (off-catalog scanner) recs intentionally skip Bing — they're
+ * low-confidence by design and stay on the letter tile.
+ *
+ * Places/travel use the place-biased Bing path on the client when they
+ * render their own card; no point firing here.
+ */
+async function prefetchAggregatorImages(recs: Rec[]): Promise<Rec[]> {
+  return Promise.all(
+    recs.map(async (rec) => {
+      if (rec.image_url) return rec;
+      if (rec.synth) return rec;
+      if (rec.tier !== "aggregator") return rec;
+      const cat = (rec.category ?? "").toLowerCase();
+      if (cat === "travel" || cat === "dining") return rec;
+      const query = [rec.brand, rec.name].filter(Boolean).join(" ").trim();
+      if (!query) return rec;
+      const url = await bingLookup(query);
+      return url ? { ...rec, image_url: url } : rec;
+    })
+  );
+}
+
 const CATEGORY_HINTS: { keywords: RegExp; categories: string[] }[] = [
   {
     keywords:
@@ -1230,9 +1267,14 @@ HEAVY MULTI-PART REQUESTS (read before any answer with 2+ outfits or 3+ places):
 
 OUTPUT FORMAT:
 
+VOICE-LED INTRO (non-negotiable):
+- EVERY reply that emits a ---RECS--- block MUST begin with at least one sentence of prose in ${c.name}'s voice BEFORE the marker. Never start a reply with the marker. Never dump bare links, bare brand lists, or bare JSON. The platform renders the cards as a visual board with images — the prose is what makes the recommendation feel like ${c.name} talking, not a search result.
+- The intro must sound like ${c.name} actually answering the user — a real reaction, opinion, or hook. Not "Here are some great options:" or "Check these out:" or any generic opener. Speak in her voice from word one.
+- This applies identically to every creator. No creator gets to skip the intro for any reason (catalog density, owned-brand answer, single-item reply, none of it).
+
 When you are recommending specific products, places, or hotels, structure your reply like this:
 
-  [1–3 sentences of conversational intro in ${c.name}'s voice. Optionally end with a follow-up question. For HEAVY multi-part queries (see rule above) keep this to a single short opener.]
+  [1–3 sentences of conversational intro in ${c.name}'s voice. Optionally end with a follow-up question. For HEAVY multi-part queries (see rule above) keep this to a single short opener — but the opener IS still required.]
   ---RECS---
   [a JSON array of 2–3 recommendation objects, nothing else after it]
 

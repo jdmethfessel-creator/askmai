@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { Fraunces, Manrope } from "next/font/google";
 import { supabaseAdmin } from "@/lib/supabase";
-import { CreatorAvatar } from "./CreatorAvatar";
+import { CreatorAvatar } from "../_components/CreatorAvatar";
 import "../_marketing/landing.css";
 import "./creators.css";
 
@@ -135,7 +135,11 @@ export default async function CreatorsPage() {
                 <CreatorAvatar
                   src={c.avatar_url}
                   initial={initial}
-                  accent={accent}
+                  imgClassName="cr-card-avatar"
+                  tileClassName="cr-card-avatar cr-card-avatar-tile"
+                  tileStyle={{
+                    background: `linear-gradient(135deg, ${accent}, ${accent}aa)`,
+                  }}
                 />
                 <div className="cr-card-body">
                   <h2 className="cr-card-name">{c.name}</h2>

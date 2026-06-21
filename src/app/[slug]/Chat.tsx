@@ -355,31 +355,42 @@ function partitionRecs(recs: Rec[]): { products: Rec[]; places: Rec[] } {
 }
 
 /**
- * Eligibility for the visual layout. The HERO image dominates the
- * response, so it MUST be reliable — feed/owned_feed (real catalog
- * image) or aggregator-with-server-resolved-image_url. Finishers can use
- * the existing lazy /api/product-image lookup (with tile fallback on
- * failure), so we don't require image_url on every product — just one
- * reliable hero candidate. Synth cards (off-catalog scanner) are
- * tile-only by design and can't ever qualify as a hero.
+ * Eligibility for the visual layout. The gate is IMAGE RELIABILITY, not
+ * product tier. The board fires when the response has at least two
+ * non-synth products with a confirmed image_url (server resolved it from
+ * a real source: feed/owned_feed catalog, Serper, or Bing prefetch in
+ * the chat route), AND the hero candidate has one.
+ *
+ * Synth recs (off-catalog scanner) are excluded — they're low-confidence
+ * by design and would risk a wrong/placeholder image as the hero.
+ *
+ * Final runtime guard: `onHeroFail` demotes to cards if the hero image
+ * actually fails to load. A wrong/placeholder image never stays on
+ * screen.
  */
 function isVisualEligible(products: Rec[]): boolean {
   if (products.length < 2) return false;
+  if (countReliableImages(products) < 2) return false;
   return pickHeroCandidate(products) !== null;
 }
 
+function countReliableImages(products: Rec[]): number {
+  let n = 0;
+  for (const p of products) {
+    if (p.synth) continue;
+    if (!p.image_url) continue;
+    n++;
+  }
+  return n;
+}
+
 function pickHeroCandidate(products: Rec[]): Rec | null {
-  const eligible = products.filter(
-    (p) =>
-      !!p.image_url &&
-      !p.synth &&
-      (p.tier === "feed" ||
-        p.tier === "owned_feed" ||
-        p.tier === "aggregator")
-  );
+  const eligible = products.filter((p) => !!p.image_url && !p.synth);
   if (eligible.length === 0) return null;
-  // Prefer real catalog tiers (image guaranteed); within the pool, prefer
-  // the highest-priced piece — usually the centerpiece garment.
+  // Prefer real catalog tiers (Shopify image, highest confidence); within
+  // the pool, prefer the highest-priced piece — usually the centerpiece
+  // garment. Aggregator items only become the hero when no feed/owned
+  // candidate exists.
   const feedFirst = eligible.filter(
     (p) => p.tier === "feed" || p.tier === "owned_feed"
   );
