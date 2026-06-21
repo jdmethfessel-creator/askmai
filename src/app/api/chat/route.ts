@@ -123,10 +123,16 @@ export async function POST(request: Request) {
         const baseRecs = pastMarker
           ? await enrichRecsBlock(buffered, creatorRef, budgetCeiling)
           : [];
-        const finalRecs = await augmentWithMissingMentions(
+        const catalogAugmented = await augmentWithMissingMentions(
           baseRecs,
           proseText,
           knownProducts,
+          creatorRef,
+          budgetCeiling
+        );
+        const finalRecs = await augmentWithOffCatalogMentions(
+          catalogAugmented,
+          proseText,
           creatorRef,
           budgetCeiling
         );
@@ -554,6 +560,318 @@ async function augmentWithMissingMentions(
       });
     }
     seenNames.add(k.template.name.toLowerCase());
+  }
+
+  return [...enriched, ...additions];
+}
+
+/**
+ * Off-catalog prose scanner.
+ *
+ * The model sometimes describes specific purchasable pieces in prose
+ * ("a Mango slip dress", "Zara strappy heels") but skips them in the
+ * structured RECS block — usually on hedged "Brand A or Brand B"
+ * mentions. augmentWithMissingMentions only catches CATALOG items, so
+ * those off-catalog pieces silently disappear. This scanner detects
+ * `<Brand> ... <piece-noun>` patterns for the Skimlinks-network brands
+ * we already recommend, synthesizes recs, and routes them through
+ * resolveLink so every named purchasable piece gets a card.
+ */
+const OFF_CATALOG_BRANDS = [
+  // Mass fashion
+  "Mango",
+  "Zara",
+  "H&M",
+  "& Other Stories",
+  "COS",
+  "Reformation",
+  "Aritzia",
+  "Madewell",
+  "Sezane",
+  "Sézane",
+  "Everlane",
+  "Abercrombie",
+  "Free People",
+  "Anthropologie",
+  "J.Crew",
+  "Banana Republic",
+  "Uniqlo",
+  // Contemporary
+  "Nili Lotan",
+  "AGOLDE",
+  "ABLE",
+  "Steve Madden",
+  "Sam Edelman",
+  "Loeffler Randall",
+  "Mejuri",
+  "Catbird",
+  "Veja",
+  "New Balance",
+  // Home / lifestyle
+  "West Elm",
+  "Pottery Barn",
+  "Article",
+  "Target",
+  "Wayfair",
+  "IKEA",
+  "Crate & Barrel",
+  "Crate and Barrel",
+  "CB2",
+  "Lulu and Georgia",
+  "Lulu & Georgia",
+  "Rejuvenation",
+  "Schoolhouse",
+  "McGee & Co",
+  "Burke Decor",
+  "Lamps Plus",
+  "Chairish",
+];
+
+const OFF_CATALOG_NOUNS = {
+  beauty: [
+    "serum",
+    "moisturizer",
+    "cream",
+    "cleanser",
+    "sunscreen",
+    "spf",
+    "mask",
+    "toner",
+    "lipstick",
+    "balm",
+    "gloss",
+    "foundation",
+    "concealer",
+    "mascara",
+    "blush",
+    "bronzer",
+    "palette",
+  ],
+  home: [
+    "lamp",
+    "sofa",
+    "couch",
+    "chair",
+    "armchair",
+    "table",
+    "rug",
+    "pillow",
+    "throw",
+    "vase",
+    "bowl",
+    "tray",
+    "basket",
+    "mirror",
+    "cabinet",
+    "dresser",
+    "shelf",
+    "sconce",
+    "bed",
+    "headboard",
+    "nightstand",
+    "wallpaper",
+    "curtain",
+    "frame",
+    "artwork",
+  ],
+  accessories: [
+    "heels",
+    "heel",
+    "sandal",
+    "sandals",
+    "sneakers",
+    "boots",
+    "boot",
+    "flats",
+    "loafers",
+    "mules",
+    "pumps",
+    "slingbacks",
+    "clogs",
+    "bag",
+    "tote",
+    "purse",
+    "clutch",
+    "handbag",
+    "backpack",
+    "crossbody",
+    "necklace",
+    "earrings",
+    "earring",
+    "bracelet",
+    "ring",
+    "belt",
+    "sunglasses",
+    "scarf",
+    "watch",
+  ],
+  fashion: [
+    "dress",
+    "midi",
+    "maxi",
+    "mini",
+    "slip",
+    "gown",
+    "jumpsuit",
+    "romper",
+    "top",
+    "blouse",
+    "shirt",
+    "tee",
+    "t-shirt",
+    "tank",
+    "bodysuit",
+    "cami",
+    "camisole",
+    "sweater",
+    "cardigan",
+    "knit",
+    "pullover",
+    "hoodie",
+    "pants",
+    "trouser",
+    "trousers",
+    "jeans",
+    "denim",
+    "shorts",
+    "skirt",
+    "jacket",
+    "blazer",
+    "coat",
+    "trench",
+    "vest",
+  ],
+};
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function titleCasePhrase(s: string): string {
+  return s
+    .split(/\s+/)
+    .map((w) =>
+      w.length > 0 ? w[0].toUpperCase() + w.slice(1).toLowerCase() : w
+    )
+    .join(" ")
+    .trim();
+}
+
+function categoryForPieceNoun(noun: string): string {
+  const n = noun.toLowerCase();
+  if (OFF_CATALOG_NOUNS.beauty.includes(n)) return "beauty";
+  if (OFF_CATALOG_NOUNS.home.includes(n)) return "home";
+  if (OFF_CATALOG_NOUNS.accessories.includes(n)) return "accessories";
+  return "fashion";
+}
+
+async function augmentWithOffCatalogMentions(
+  enriched: Rec[],
+  proseText: string,
+  creator: { id: string; slug: string },
+  budgetCeiling: number | null
+): Promise<Rec[]> {
+  if (!proseText || !proseText.trim()) return enriched;
+
+  const allNouns = [
+    ...OFF_CATALOG_NOUNS.beauty,
+    ...OFF_CATALOG_NOUNS.home,
+    ...OFF_CATALOG_NOUNS.accessories,
+    ...OFF_CATALOG_NOUNS.fashion,
+  ]
+    .map(escapeRegex)
+    .join("|");
+
+  const seenKeys = new Set<string>();
+  for (const r of enriched) {
+    if (r.name) {
+      seenKeys.add(
+        `${(r.brand ?? "").toLowerCase()}|${r.name.toLowerCase()}`
+      );
+    }
+  }
+
+  const additions: Rec[] = [];
+
+  for (const brand of OFF_CATALOG_BRANDS) {
+    const bEscaped = escapeRegex(brand);
+    // Match: brand, optional ≤ ~60 chars of qualifiers / "or X" / parenthetical,
+    // then a noun phrase of up to 3 leading words ending on a piece-noun.
+    // Excludes sentence enders to avoid crossing into the next thought.
+    const re = new RegExp(
+      `\\b${bEscaped}\\b([^.!?\\n]{0,60}?)((?:[\\w-]+\\s+){0,3}(?:${allNouns}))\\b`,
+      "gi"
+    );
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(proseText)) !== null) {
+      const pieceRaw = m[2].trim();
+      if (!pieceRaw) continue;
+      const piece = titleCasePhrase(pieceRaw);
+      const key = `${brand.toLowerCase()}|${piece.toLowerCase()}`;
+      if (seenKeys.has(key)) continue;
+
+      // Skip if any existing rec under the same brand already names this piece.
+      let overlap = false;
+      for (const r of enriched) {
+        if (!r.brand) continue;
+        if (
+          r.brand.toLowerCase() === brand.toLowerCase() &&
+          r.name.toLowerCase().includes(pieceRaw.toLowerCase())
+        ) {
+          overlap = true;
+          break;
+        }
+      }
+      if (overlap) continue;
+
+      const nounMatch = pieceRaw
+        .toLowerCase()
+        .match(new RegExp(`(${allNouns})$`));
+      const category = nounMatch
+        ? categoryForPieceNoun(nounMatch[1])
+        : "fashion";
+
+      const synth: Rec = {
+        name: piece,
+        brand,
+        category,
+        why: "Named in her reply.",
+      };
+
+      let card: Rec;
+      try {
+        const resolved = await resolveLink(synth, creator, {
+          source: "off_catalog_augment",
+        });
+        card = {
+          name: synth.name,
+          brand: synth.brand,
+          category: synth.category,
+          why: synth.why,
+          affiliate_url: resolved.url,
+          tier: resolved.tier,
+        };
+        if (resolved.tier === "aggregator" && resolved.live_product) {
+          const lp = resolved.live_product;
+          card.price = lp.realPrice ?? card.price;
+          card.image_url = lp.realImage ?? card.image_url;
+        }
+      } catch {
+        // resolveLink failed — skip silently rather than push a broken card.
+        seenKeys.add(key);
+        continue;
+      }
+
+      // Post-resolve budget filter: catalog/Serper may have surfaced a real
+      // price that exceeds the ceiling. Drop those rather than mislead.
+      if (budgetCeiling != null && overBudget(card.price, budgetCeiling)) {
+        seenKeys.add(key);
+        continue;
+      }
+
+      additions.push(card);
+      seenKeys.add(key);
+    }
   }
 
   return [...enriched, ...additions];
