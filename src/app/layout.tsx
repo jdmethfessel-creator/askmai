@@ -9,12 +9,12 @@ export const metadata: Metadata = {
     template: "%s · AskMai",
   },
   description:
-    "Each creator gets a branded AI agent that knows their real taste and recommends real products, with real links.",
+    "Each creator gets a branded AI twin that knows their real taste and recommends real products, with real links.",
   applicationName: "AskMai",
   openGraph: {
     title: "AskMai",
     description:
-      "Each creator gets a branded AI agent that knows their real taste and recommends real products, with real links.",
+      "Each creator gets a branded AI twin that knows their real taste and recommends real products, with real links.",
     siteName: "AskMai",
     type: "website",
   },

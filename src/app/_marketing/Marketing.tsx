@@ -106,7 +106,7 @@ export default function Marketing() {
             Creators
           </Link>
           <a href="#waitlist" className="lp-nav-cta">
-            Get your agent
+            Get your twin
           </a>
         </nav>
       </header>
@@ -132,23 +132,23 @@ export default function Marketing() {
           className="lp-sub lp-fade-in"
           style={{ animationDelay: "620ms" }}
         >
-          Each creator gets a branded AI agent that knows their real taste and
+          Each creator gets a branded AI twin that knows their real taste and
           recommends real products with real links, from their own bio.
         </p>
 
         <div className="lp-cta-row lp-fade-in" style={{ animationDelay: "760ms" }}>
           <a href="#waitlist" className="lp-btn lp-btn-primary">
-            Get your agent
+            Get your twin
             <ArrowRight />
           </a>
           <Link href="/creators" className="lp-btn lp-btn-ghost">
-            Browse the agents
+            Browse the twins
             <ArrowRight subtle />
           </Link>
         </div>
 
         <div className="lp-verbs lp-fade-in" style={{ animationDelay: "900ms" }}>
-          <span className="lp-verbs-prefix">Your agent</span>
+          <span className="lp-verbs-prefix">Your twin</span>
           <span className="lp-verb-stage" aria-live="polite">
             {VERBS.map((v, i) => (
               <span
@@ -207,11 +207,11 @@ export default function Marketing() {
           <div className="lp-live-copy">
             <p className="lp-eyebrow">Live now</p>
             <h2 className="lp-h2">
-              Danielle Bernstein&apos;s agent is{" "}
+              Danielle Bernstein&apos;s twin is{" "}
               <span className="lp-accent-ink">live.</span>
             </h2>
             <p className="lp-live-sub">
-              Danielle&apos;s agent is running today, answering followers in
+              Danielle&apos;s twin is running today, answering followers in
               her voice, recommending the real products she actually wears,
               with real links to where she actually buys them.
             </p>
@@ -219,7 +219,7 @@ export default function Marketing() {
               href="/weworewhat"
               className="lp-btn lp-btn-primary lp-btn-large"
             >
-              Try Danielle&apos;s agent
+              Try Danielle&apos;s twin
               <ArrowRight />
             </Link>
             <Link href="/creators" className="lp-live-all-link">
@@ -232,8 +232,10 @@ export default function Marketing() {
                 <span className="lp-live-stat-label">followers</span>
               </li>
               <li>
-                <span className="lp-live-stat-num">39</span>
-                <span className="lp-live-stat-label">products in her feed</span>
+                <span className="lp-live-stat-num">∞</span>
+                <span className="lp-live-stat-label">
+                  products she can recommend
+                </span>
               </li>
               <li>
                 <span className="lp-live-stat-num">Live</span>
@@ -278,14 +280,14 @@ export default function Marketing() {
           <div className="lp-pitch-col">
             <h4 className="lp-pitch-col-title">Free to start.</h4>
             <p className="lp-pitch-col-body">
-              No setup fee. We build your agent and host it. You stay focused
+              No setup fee. We build your twin and host it. You stay focused
               on what you already do.
             </p>
           </div>
           <div className="lp-pitch-col">
             <h4 className="lp-pitch-col-title">You earn the commission.</h4>
             <p className="lp-pitch-col-body">
-              When your followers buy through your agent, the affiliate
+              When your followers buy through your twin, the affiliate
               earnings go to you. Same as a tagged link, fewer steps.
             </p>
           </div>
@@ -431,7 +433,7 @@ function AgentPreviewCard() {
     <Link
       href="/weworewhat"
       className="lp-preview"
-      aria-label="Open Danielle Bernstein's live agent"
+      aria-label="Open Danielle Bernstein's live twin"
     >
       <div className="lp-preview-card">
         <div className="lp-preview-corner">live</div>

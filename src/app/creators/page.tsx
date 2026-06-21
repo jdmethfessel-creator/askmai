@@ -19,9 +19,9 @@ const manrope = Manrope({
 });
 
 export const metadata: Metadata = {
-  title: "AskMai — Meet the agents",
+  title: "AskMai — Meet the twins",
   description:
-    "Every creator with an AskMai agent. Chat with their AI, in their voice, with real product recommendations.",
+    "Every creator with an AskMai twin. Chat with their AI, in their voice, with real product recommendations.",
 };
 
 export const dynamic = "force-dynamic";
@@ -101,16 +101,16 @@ export default async function CreatorsPage() {
               Home
             </Link>
             <a href="/#waitlist" className="lp-nav-cta">
-              Get your agent
+              Get your twin
             </a>
           </nav>
         </header>
 
         <section className="cr-intro">
-          <p className="lp-eyebrow">Meet the agents</p>
+          <p className="lp-eyebrow">Meet the twins</p>
           <h1 className="cr-h1">
             Every creator with a{" "}
-            <span className="lp-accent-ink">live agent.</span>
+            <span className="lp-accent-ink">live twin.</span>
           </h1>
           <p className="cr-sub">
             Each one knows their creator&apos;s real taste, recommends real
@@ -146,7 +146,7 @@ export default async function CreatorsPage() {
                   </p>
                   {c.bio && <p className="cr-card-bio">{c.bio}</p>}
                   <span className="cr-card-cta">
-                    Talk to {fn}
+                    Talk to {fn}&apos;s twin
                     <CardArrow />
                   </span>
                 </div>
