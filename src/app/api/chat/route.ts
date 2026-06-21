@@ -189,6 +189,27 @@ function parsePriceNumber(s: string | undefined): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+/**
+ * Reads taste_profile.identity.own_brand_no_catalog (string[]) — brands that
+ * are the creator's OWN line but have no live storefront connected. The
+ * platform blocks fabricated SKU cards under these brands.
+ */
+function collectOwnBrandNoCatalog(taste: unknown): Set<string> {
+  const out = new Set<string>();
+  if (!taste || typeof taste !== "object") return out;
+  const id = (taste as Record<string, unknown>).identity;
+  if (!id || typeof id !== "object") return out;
+  const list = (id as Record<string, unknown>).own_brand_no_catalog;
+  if (Array.isArray(list)) {
+    for (const v of list) {
+      if (typeof v === "string" && v.trim()) {
+        out.add(v.trim().toLowerCase());
+      }
+    }
+  }
+  return out;
+}
+
 function overBudget(price: string | undefined, ceiling: number | null): boolean {
   if (ceiling == null) return false;
   const n = parsePriceNumber(price);
@@ -198,7 +219,7 @@ function overBudget(price: string | undefined, ceiling: number | null): boolean 
 
 async function enrichRecsBlock(
   raw: string,
-  creator: { id: string; slug: string },
+  creator: { id: string; slug: string; taste_profile?: unknown },
   budgetCeiling: number | null
 ): Promise<Rec[]> {
   const cleaned = raw
@@ -235,12 +256,22 @@ async function enrichRecsBlock(
           : undefined,
     }));
 
-  // First budget pass: drop recs whose model-stated price already exceeds
-  // the ceiling. Place/travel categories are skipped (their prices are
-  // per-night or unrated and shouldn't be filtered by a clothing budget).
+  // First budget pass + own-brand-no-catalog guardrail. Drop recs whose
+  // brand is the creator's own brand WHEN that brand has no catalog
+  // entries (no live storefront connected). The model may mention these
+  // in prose but must not fabricate a SKU + price.
+  const ownBrandNoCatalog = collectOwnBrandNoCatalog(creator.taste_profile);
   const preFiltered = recs.filter((r) => {
     if (r.category === "travel" || r.category === "dining") return true;
-    return !overBudget(r.price, budgetCeiling);
+    if (overBudget(r.price, budgetCeiling)) return false;
+    const recBrand = (r.brand ?? "").trim().toLowerCase();
+    if (recBrand && ownBrandNoCatalog.has(recBrand)) {
+      console.warn(
+        `[shoppability] dropping fabricated own-brand card: brand="${r.brand}" name="${r.name}" (no catalog connected)`
+      );
+      return false;
+    }
+    return true;
   });
 
   // Resilience: each rec's resolveLink runs in its own try/catch and any
@@ -251,7 +282,10 @@ async function enrichRecsBlock(
     preFiltered.map(async (rec) => {
       try {
         const resolved = await resolveLink(rec, creator);
-        if (resolved.tier === "feed" && resolved.feed_product) {
+        if (
+          (resolved.tier === "feed" || resolved.tier === "owned_feed") &&
+          resolved.feed_product
+        ) {
           const fp = resolved.feed_product;
           return {
             ...rec,
@@ -494,7 +528,10 @@ async function augmentWithMissingMentions(
       continue;
     }
 
-    if (resolved.tier === "feed" && resolved.feed_product) {
+    if (
+      (resolved.tier === "feed" || resolved.tier === "owned_feed") &&
+      resolved.feed_product
+    ) {
       const fp = resolved.feed_product;
       additions.push({
         ...synth,
@@ -712,6 +749,8 @@ OUTFIT-BUNDLE MATH (apply BEFORE naming any piece in a budget answer):
 
 SHOPPABILITY RULE (READ FIRST):
 - Card every named purchasable product the user could actually buy WITHIN their stated constraints (budget, occasion). When you name a specific product they could buy that fits the ask, you MUST emit it in the ---RECS--- block.
+- NEVER fabricate a specific product name + price for a brand you don't have catalog data for. If the CATALOG below doesn't list a brand's products, you may mention the brand by name in prose, but you CANNOT card a specific SKU with an invented title and price. Inventing "Brand X Cozy Ribbed Sweat Set $26.99" when Brand X has no catalog entry is fabrication; the platform will drop those cards. Reference the brand generally in prose if needed.
+- This applies especially to a creator's OWN brand when it has no CATALOG entry: keep the brand mention general (e.g. "a Something Navy sweat set", "her line has a few options"), never card a specific invented item from it.
 - Products named ONLY as styling references that exceed the user's stated budget MUST NOT be emitted in the JSON block. You may mention them in prose ("the Frankie Shop skirt is great but over your budget, so instead…") — just leave them out of recs. The platform will not card them and you do not get to override that by emitting them anyway.
 - A standalone brand mention without a specific product ("I love Khaite") does NOT need to be carded. A specific named product the user can actually buy ("SkinCeuticals C E Ferulic in the morning") MUST be carded.
 - If you list 3 actionable products conversationally, all 3 must appear in the recs block. If you list 4, all 4. No artificial 2–3 cap when more pieces are named.
@@ -764,16 +803,23 @@ Rules:
 CATALOG (real products from ${c.name}'s feeds, with affiliate links the platform will attach):
 ${formatCatalogForPrompt(catalog)}
 
-OWNED BRANDS (HIGHEST PRIORITY — these are ${c.name}'s OWN brands):
+OWNED BRANDS (HIGHEST PRIORITY — these are ${c.name}'s OWN brands/products):
 ${describeOwnedBrands(c.taste_profile) || "  (none configured)"}
 
 Owned-brand rules:
-- When you recommend any item from an owned brand (jewelry / hoops / necklaces / etc., as applicable), you MUST emit it as a card. Owned-brand recs are the most important monetization on the page — full margin, no affiliate wrap.
-- Set "brand" to the brand's primary name exactly as listed above (e.g. "Aureum" not "Aureum Collective" — though either alias is fine, the platform normalizes).
-- Set "category" appropriately (typically the category listed next to the brand above).
-- Name the item naturally ("Gold Hoops", "Layered Gold Necklaces", "Stacking Rings"). The platform builds a search link to her store from the name, so be specific.
-- Owned brands skip the catalog/Serper pipeline entirely — the platform routes them to her store directly. You still set price as a representative number (estimate if you don't know) so the budget filter works.
-- ${c.name} wears her own brand constantly; anytime jewelry comes up in an outfit recommendation, an owned-brand card should appear.
+- When the user's request genuinely overlaps with an owned brand's category, surface a card for it. ${c.name} actually uses these in real life; they're authentic to her, never forced.
+- Category cues — surface owned brand when the request matches:
+    "accessories" / "jewelry" → outfit, jewelry, what-to-wear queries
+    "app" → photo editing, presets, "how do you get that look", digicam aesthetic, content creation, camera setup
+    "beauty" / "skincare" → skincare, makeup, routine queries
+    "home" → home, decor, hosting queries
+  Use the actual category listed next to each brand above.
+- Do NOT force an owned brand into a query where it doesn't fit. A photo-editing app does not belong in a skincare answer. Skincare doesn't belong in an outfit answer.
+- Set "brand" to the brand's primary name exactly (aliases are fine; the platform normalizes).
+- Set "category" to the brand's category from the list.
+- Name the item naturally: for product brands (jewelry, skincare) use a specific product name ("Gold Hoops", "Resurfacing Serum"); for app-type owned brands use the brand name itself ("Tezza app", "Tezza") as the product, since there's only one product.
+- Always set "price" to a representative number so the budget filter works (e.g. "$7/month" for the Tezza app, "$95" for hoops). For subscription/app pricing, use the monthly cost.
+- Owned brands skip the catalog/Serper pipeline entirely — the platform routes them to her store directly, never wrapped with an affiliate network.
 
 CATALOG RULES (read carefully — this is the fidelity rule):
 - When you recommend a product that EXISTS in the CATALOG, you MUST:

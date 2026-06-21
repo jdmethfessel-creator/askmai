@@ -7,6 +7,10 @@
     "build": "next build",
     "start": "next start",
     "seed": "node --env-file=.env.local scripts/seed.mjs",
+    "seed:tezza": "node --env-file=.env.local scripts/seed-tezza.mjs",
+    "seed:weworewhat": "node --env-file=.env.local scripts/seed-weworewhat.mjs",
+    "seed:somethingnavy": "node --env-file=.env.local scripts/seed-somethingnavy.mjs",
+    "seed:emily": "node --env-file=.env.local scripts/seed-emily.mjs",
     "ingest": "node --env-file=.env.local scripts/ingest.mjs",
     "reingest:images": "node --env-file=.env.local scripts/reingest-images.mjs"
   },

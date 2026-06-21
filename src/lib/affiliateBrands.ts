@@ -36,6 +36,54 @@ export const BRAND_DOMAINS: Record<string, (productName: string) => string> = {
     )}`,
   "free people": (q) =>
     `https://www.freepeople.com/search?q=${encodeURIComponent(q)}`,
+
+  // Home / lifestyle (all confirmed Skimlinks merchants except where noted).
+  "west elm": (q) =>
+    `https://www.westelm.com/search/?words=${encodeURIComponent(q)}`,
+  westelm: (q) =>
+    `https://www.westelm.com/search/?words=${encodeURIComponent(q)}`,
+  "pottery barn": (q) =>
+    `https://www.potterybarn.com/search/?words=${encodeURIComponent(q)}`,
+  potterybarn: (q) =>
+    `https://www.potterybarn.com/search/?words=${encodeURIComponent(q)}`,
+  article: (q) =>
+    `https://www.article.com/search?q=${encodeURIComponent(q)}`,
+  target: (q) =>
+    `https://www.target.com/s?searchTerm=${encodeURIComponent(q)}`,
+  wayfair: (q) =>
+    `https://www.wayfair.com/keyword.php?keyword=${encodeURIComponent(q)}`,
+  "crate & barrel": (q) =>
+    `https://www.crateandbarrel.com/search?query=${encodeURIComponent(q)}`,
+  "crate and barrel": (q) =>
+    `https://www.crateandbarrel.com/search?query=${encodeURIComponent(q)}`,
+  crateandbarrel: (q) =>
+    `https://www.crateandbarrel.com/search?query=${encodeURIComponent(q)}`,
+  cb2: (q) =>
+    `https://www.cb2.com/search?query=${encodeURIComponent(q)}`,
+  "lulu and georgia": (q) =>
+    `https://www.luluandgeorgia.com/search?q=${encodeURIComponent(q)}`,
+  "lulu & georgia": (q) =>
+    `https://www.luluandgeorgia.com/search?q=${encodeURIComponent(q)}`,
+  rejuvenation: (q) =>
+    `https://www.rejuvenation.com/search/?q=${encodeURIComponent(q)}`,
+  schoolhouse: (q) =>
+    `https://schoolhouse.com/search?q=${encodeURIComponent(q)}`,
+  "mcgee & co": (q) =>
+    `https://www.mcgeeandco.com/search?q=${encodeURIComponent(q)}`,
+  "mcgee and co": (q) =>
+    `https://www.mcgeeandco.com/search?q=${encodeURIComponent(q)}`,
+  mcgeeandco: (q) =>
+    `https://www.mcgeeandco.com/search?q=${encodeURIComponent(q)}`,
+  "burke decor": (q) =>
+    `https://www.burkedecor.com/search?q=${encodeURIComponent(q)}`,
+  burkedecor: (q) =>
+    `https://www.burkedecor.com/search?q=${encodeURIComponent(q)}`,
+  "lamps plus": (q) =>
+    `https://www.lampsplus.com/search/?q=${encodeURIComponent(q)}`,
+  lampsplus: (q) =>
+    `https://www.lampsplus.com/search/?q=${encodeURIComponent(q)}`,
+  anthropologie: (q) =>
+    `https://www.anthropologie.com/search?q=${encodeURIComponent(q)}`,
 };
 
 /** Brand → canonical host name (used to match Serper results back). */
@@ -55,6 +103,30 @@ const BRAND_HOSTS: Record<string, string> = {
   everlane: "everlane.com",
   abercrombie: "abercrombie.com",
   "free people": "freepeople.com",
+  // home
+  "west elm": "westelm.com",
+  westelm: "westelm.com",
+  "pottery barn": "potterybarn.com",
+  potterybarn: "potterybarn.com",
+  article: "article.com",
+  target: "target.com",
+  wayfair: "wayfair.com",
+  "crate & barrel": "crateandbarrel.com",
+  "crate and barrel": "crateandbarrel.com",
+  crateandbarrel: "crateandbarrel.com",
+  cb2: "cb2.com",
+  "lulu and georgia": "luluandgeorgia.com",
+  "lulu & georgia": "luluandgeorgia.com",
+  rejuvenation: "rejuvenation.com",
+  schoolhouse: "schoolhouse.com",
+  "mcgee & co": "mcgeeandco.com",
+  "mcgee and co": "mcgeeandco.com",
+  mcgeeandco: "mcgeeandco.com",
+  "burke decor": "burkedecor.com",
+  burkedecor: "burkedecor.com",
+  "lamps plus": "lampsplus.com",
+  lampsplus: "lampsplus.com",
+  anthropologie: "anthropologie.com",
 };
 
 export function brandOwnDomainHost(brand: string): string | null {
@@ -137,6 +209,7 @@ export const MYTHERESA_BRANDS = LUXURY_BRANDS;
  * our affiliate network).
  */
 export const IN_NETWORK_HOSTS = new Set<string>([
+  // Fashion / beauty / department stores
   "thereformation.com",
   "aritzia.com",
   "madewell.com",
@@ -161,6 +234,24 @@ export const IN_NETWORK_HOSTS = new Set<string>([
   "abercrombie.com",
   "sezane.com",
   "jcrew.com",
+  // Home & lifestyle — Skimlinks merchants. Note: IKEA is intentionally
+  // excluded (their affiliate program is direct-only, not in Skimlinks);
+  // Etsy is excluded pending confirmation.
+  "westelm.com",
+  "potterybarn.com",
+  "potterybarnkids.com",
+  "article.com",
+  "target.com",
+  "wayfair.com",
+  "crateandbarrel.com",
+  "cb2.com",
+  "luluandgeorgia.com",
+  "rejuvenation.com",
+  "schoolhouse.com",
+  "schoolhouseelectric.com",
+  "mcgeeandco.com",
+  "burkedecor.com",
+  "lampsplus.com",
 ]);
 
 export function normalizeBrand(b: string | undefined): string {

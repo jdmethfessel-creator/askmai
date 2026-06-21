@@ -59,6 +59,12 @@ type OwnedBrand = {
   aliases?: string[];
   store_url: string;
   category?: string;
+  /**
+   * "app" → link straight to store_url (no /search?q= path; the store
+   * isn't a Shopify product catalog).
+   * undefined → default Shopify product-search behavior.
+   */
+  type?: "app" | "shopify" | string;
 };
 
 function findOwnedBrandMatch(
@@ -83,9 +89,80 @@ function findOwnedBrandMatch(
   return null;
 }
 
+/**
+ * For owned brands whose store IS a Shopify catalog (e.g. WeWoreWhat),
+ * try to match the model's paraphrased product name against the creator's
+ * actual catalog before falling back to the store's /search?q=. The model
+ * often writes "Strapless Foldover Midi Dress in ivory" instead of the
+ * exact catalog name "Strapless Foldover Midi Dress - Ivory/Beige"; this
+ * function token-matches within the SAME brand so we always land on the
+ * real product page when one exists.
+ */
+async function findOwnedCatalogMatch(
+  sb: SupabaseClient,
+  creatorId: string,
+  brand: OwnedBrand,
+  productName: string
+): Promise<{
+  id: string;
+  name: string;
+  brand: string | null;
+  price: number | null;
+  affiliate_url: string;
+  image_url: string | null;
+  network: string | null;
+} | null> {
+  const target = (productName ?? "")
+    .toLowerCase()
+    .split(/[\s\-/_,]+/)
+    .filter((t) => t.length > 2);
+  if (target.length === 0) return null;
+
+  const { data } = await sb
+    .from("products")
+    .select("id, name, brand, price, affiliate_url, image_url, network")
+    .eq("creator_id", creatorId)
+    .eq("network", "shopify_owned");
+  if (!data || data.length === 0) return null;
+
+  let best: typeof data[number] | null = null;
+  let bestScore = 0;
+  for (const row of data) {
+    if (!row.affiliate_url) continue;
+    const candTokens = (row.name ?? "")
+      .toLowerCase()
+      .split(/[\s\-/_,]+/)
+      .filter(Boolean);
+    if (candTokens.length === 0) continue;
+    const candSet = new Set(candTokens);
+    let overlap = 0;
+    for (const t of target) if (candSet.has(t)) overlap++;
+    if (overlap > bestScore) {
+      bestScore = overlap;
+      best = row;
+    }
+  }
+  // Require enough overlap that we're confident — at least 3 tokens AND
+  // half of the target tokens hit.
+  const minRequired = Math.max(3, Math.ceil(target.length * 0.5));
+  if (bestScore < minRequired || !best) return null;
+  return best as {
+    id: string;
+    name: string;
+    brand: string | null;
+    price: number | null;
+    affiliate_url: string;
+    image_url: string | null;
+    network: string | null;
+  };
+}
+
 function ownedStoreLink(brand: OwnedBrand, productName: string): string {
+  // App-type owned brands (e.g. Tezza photo editing app at shoptezza.com)
+  // are single-product stores; a /search?q= path would 404. Link straight
+  // to the homepage.
+  if (brand.type === "app") return brand.store_url;
   // Shopify storefronts universally support /search?q= for product-name lookup.
-  // If we don't have a usable product name, link straight to the homepage.
   const trimmed = (productName ?? "").trim();
   if (!trimmed) return brand.store_url;
   const base = brand.store_url.replace(/\/+$/, "");
@@ -117,6 +194,36 @@ export async function resolveLink(
   // wrap with an affiliate network — it's her own store, full margin.
   const owned = findOwnedBrandMatch(rec.brand, creator.taste_profile);
   if (owned) {
+    // shopify_catalog brands: try to land on the actual product page in
+    // the creator's catalog. The model often paraphrases names; we
+    // token-match within the same brand to find the right product.
+    if (owned.type === "shopify_catalog") {
+      const match = await findOwnedCatalogMatch(
+        sb,
+        creatorId,
+        owned,
+        rec.name
+      );
+      if (match) {
+        await logEvent(sb, creatorId, "owned_feed", {
+          ...meta,
+          rec_name: match.name,
+          product_id: match.id,
+          resolved_url: match.affiliate_url,
+        });
+        return {
+          url: match.affiliate_url,
+          tier: "owned_feed",
+          matched_product_id: match.id,
+          feed_product: {
+            name: match.name,
+            brand: match.brand,
+            price: match.price != null ? `$${match.price}` : null,
+            image_url: match.image_url,
+          },
+        };
+      }
+    }
     const url = ownedStoreLink(owned, rec.name);
     await logEvent(sb, creatorId, "owned", {
       ...meta,
@@ -128,11 +235,16 @@ export async function resolveLink(
     return { url, tier: "owned" };
   }
 
-  // Tier 1: feed — exact ID match only.
+  // Tier 1: feed (or owned_feed) — exact ID match only.
   if (rec.product_id) {
     const matched = await findFeedById(sb, creatorId, rec.product_id);
     if (matched) {
-      await logEvent(sb, creatorId, "feed", {
+      // network === "shopify_owned" means this is the creator's OWN line
+      // (e.g. WeWoreWhat is Danielle's Shopify catalog). Direct URL, never
+      // wrapped — full margin, her own store.
+      const isOwnedFeed = matched.network === "shopify_owned";
+      const tier: LinkTier = isOwnedFeed ? "owned_feed" : "feed";
+      await logEvent(sb, creatorId, tier, {
         ...meta,
         rec_name: matched.name,
         product_id: matched.id,
@@ -141,7 +253,7 @@ export async function resolveLink(
       });
       return {
         url: matched.affiliate_url,
-        tier: "feed",
+        tier,
         matched_product_id: matched.id,
         feed_product: {
           name: matched.name,
@@ -151,7 +263,6 @@ export async function resolveLink(
         },
       };
     }
-    // product_id provided but didn't resolve — fall through to non-feed tiers.
   }
 
   const category = (rec.category ?? "").toLowerCase();

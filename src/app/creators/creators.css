@@ -1,0 +1,186 @@
+/* Creator directory styles — inherits .askmai-landing tokens from
+   landing.css. Scoped further with .cr-* prefixes. */
+
+.cr-root {
+  padding-bottom: 80px;
+}
+
+.cr-intro {
+  position: relative;
+  z-index: 2;
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: clamp(40px, 7vw, 88px) clamp(20px, 4vw, 56px)
+    clamp(36px, 6vw, 64px);
+}
+
+.cr-h1 {
+  font-family: var(--font-display), Georgia, serif;
+  font-weight: 400;
+  font-size: clamp(40px, 6vw, 78px);
+  line-height: 0.98;
+  letter-spacing: -0.028em;
+  margin: 0 0 20px;
+  max-width: 18ch;
+}
+
+.cr-sub {
+  font-family: var(--font-body), sans-serif;
+  max-width: 46ch;
+  font-size: clamp(15px, 1.3vw, 17px);
+  line-height: 1.6;
+  color: var(--ink-soft);
+  margin: 0;
+  font-weight: 300;
+}
+
+.cr-grid {
+  position: relative;
+  z-index: 2;
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 0 clamp(20px, 4vw, 56px);
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 18px;
+}
+@media (min-width: 640px) {
+  .cr-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 22px;
+  }
+}
+@media (min-width: 1080px) {
+  .cr-grid {
+    grid-template-columns: repeat(3, 1fr);
+    gap: 24px;
+  }
+}
+
+.cr-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 26px 24px 22px;
+  background: linear-gradient(165deg, #1a1612 0%, #0e0c09 100%);
+  border: 1px solid var(--line-strong);
+  border-radius: 22px;
+  text-decoration: none;
+  color: inherit;
+  transition: transform 0.35s cubic-bezier(0.2, 0.8, 0.2, 1),
+    border-color 0.3s ease, box-shadow 0.3s ease;
+  overflow: hidden;
+  isolation: isolate;
+}
+.cr-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    circle at 80% 0%,
+    var(--card-accent, var(--accent)),
+    transparent 55%
+  );
+  opacity: 0;
+  transition: opacity 0.4s ease;
+  z-index: -1;
+}
+.cr-card:hover {
+  transform: translateY(-4px);
+  border-color: rgba(241, 232, 216, 0.22);
+  box-shadow: 0 30px 60px -30px rgba(0, 0, 0, 0.6);
+}
+.cr-card:hover::before {
+  opacity: 0.15;
+}
+
+.cr-card-avatar {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 1px solid var(--line-strong);
+}
+.cr-card-avatar-tile {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-display), Georgia, serif;
+  font-size: 28px;
+  color: var(--bg);
+  border-color: rgba(0, 0, 0, 0.3);
+}
+
+.cr-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.cr-card-name {
+  font-family: var(--font-display), Georgia, serif;
+  font-weight: 400;
+  font-size: 24px;
+  letter-spacing: -0.016em;
+  line-height: 1.05;
+  margin: 0;
+}
+.cr-card-handle {
+  font-size: 13px;
+  color: var(--muted);
+  margin: 0;
+}
+.cr-card-bio {
+  font-size: 13.5px;
+  color: var(--ink-soft);
+  line-height: 1.55;
+  margin: 6px 0 14px;
+  font-weight: 300;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.cr-card-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--card-accent, var(--accent));
+  margin-top: auto;
+  transition: gap 0.2s ease;
+}
+.cr-card:hover .cr-card-cta {
+  gap: 10px;
+}
+
+.cr-card-corner {
+  position: absolute;
+  top: 18px;
+  right: 22px;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--card-accent, var(--accent));
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.cr-card-corner::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--card-accent, var(--accent));
+  box-shadow: 0 0 8px var(--card-accent, var(--accent));
+  animation: lp-pulse 1.6s ease-in-out infinite;
+}
+
+.cr-empty {
+  max-width: 1240px;
+  margin: 80px auto;
+  padding: 0 clamp(20px, 4vw, 56px);
+  color: var(--muted);
+  font-size: 14px;
+}

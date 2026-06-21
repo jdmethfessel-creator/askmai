@@ -109,6 +109,21 @@
 .lp-wordmark-sm {
   font-size: 17px;
 }
+.lp-nav-right {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+.lp-nav-link {
+  font-size: 13px;
+  color: var(--ink-soft);
+  text-decoration: none;
+  transition: color 0.2s;
+  letter-spacing: -0.005em;
+}
+.lp-nav-link:hover {
+  color: var(--ink);
+}
 .lp-nav-cta {
   font-size: 13px;
   padding: 9px 18px;
@@ -122,6 +137,19 @@
   background: var(--ink);
   color: var(--bg);
   border-color: var(--ink);
+}
+.lp-live-all-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 14px 0 0 18px;
+  font-size: 13px;
+  color: var(--muted);
+  text-decoration: none;
+  transition: color 0.2s;
+}
+.lp-live-all-link:hover {
+  color: var(--accent);
 }
 
 /* ------- typography helpers ------- */

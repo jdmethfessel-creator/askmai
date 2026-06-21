@@ -101,9 +101,14 @@ export default function Marketing() {
         <span className="lp-wordmark">
           ask<em>mai</em>
         </span>
-        <a href="#waitlist" className="lp-nav-cta">
-          Get your agent
-        </a>
+        <nav className="lp-nav-right">
+          <Link href="/creators" className="lp-nav-link">
+            Creators
+          </Link>
+          <a href="#waitlist" className="lp-nav-cta">
+            Get your agent
+          </a>
+        </nav>
       </header>
 
       {/* ---------- HERO ---------- */}
@@ -132,7 +137,6 @@ export default function Marketing() {
         >
           Each creator gets a branded AI agent that knows their real taste and
           recommends real products with real links, from their own bio.
-          One agent. Your name. Your followers.
         </p>
 
         <div className="lp-cta-row lp-fade-in" style={{ animationDelay: "760ms" }}>
@@ -140,8 +144,8 @@ export default function Marketing() {
             Get your agent
             <ArrowRight />
           </a>
-          <Link href="/cass" className="lp-btn lp-btn-ghost">
-            See a live agent
+          <Link href="/creators" className="lp-btn lp-btn-ghost">
+            Browse the agents
             <ArrowRight subtle />
           </Link>
         </div>
@@ -222,6 +226,10 @@ export default function Marketing() {
               Try Cass&apos;s agent
               <ArrowRight />
             </Link>
+            <Link href="/creators" className="lp-live-all-link">
+              See all creators
+              <ArrowRight subtle />
+            </Link>
             <ul className="lp-live-stats">
               <li>
                 <span className="lp-live-stat-num">1M+</span>
@@ -265,9 +273,9 @@ export default function Marketing() {
       <section className="lp-pitch" data-reveal>
         <p className="lp-eyebrow">Why join</p>
         <h2 className="lp-pitch-h2">
-          Free to join. You earn on what your audience buys.{" "}
+          Free to join.{" "}
           <span className="lp-accent-ink">
-            Authenticity is the moat.
+            You earn on what your audience buys.
           </span>
         </h2>
         <div className="lp-pitch-row">
@@ -299,8 +307,8 @@ export default function Marketing() {
       <section id="waitlist" className="lp-waitlist" data-reveal>
         <p className="lp-eyebrow">Apply</p>
         <h2 className="lp-h2 lp-h2-tight">
-          One agent per creator.{" "}
-          <span className="lp-accent-ink">Get yours.</span>
+          Get your{" "}
+          <span className="lp-accent-ink">digital twin.</span>
         </h2>
         <p className="lp-waitlist-sub">
           We&apos;re onboarding a small group of creators next. Drop your

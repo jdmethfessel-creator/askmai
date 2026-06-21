@@ -33,6 +33,7 @@ export type Product = {
 
 export type LinkTier =
   | "feed"
+  | "owned_feed"
   | "owned"
   | "aggregator"
   | "hotel"
