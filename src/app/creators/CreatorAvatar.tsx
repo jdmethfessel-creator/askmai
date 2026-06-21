@@ -3,10 +3,18 @@
 import { useState } from "react";
 
 /**
- * Renders the creator's avatar with a guaranteed fallback. If avatar_url
- * exists we proxy it through /api/img (Bing thumbnails are host-allowlisted
- * there). On any load error we drop back to the colored initial tile so the
- * card NEVER shows a broken image.
+ * Renders the creator's avatar with a guaranteed fallback.
+ *
+ * Source path matches /[slug]/page.tsx's Avatar: src is the raw
+ * creators.avatar_url (a ts*.mm.bing.net thumbnail today) rendered
+ * directly into <img>, no /api/img proxy. The proxy added an extra
+ * round-trip that could fail / be slow and surface as the letter-tile
+ * fallback on this directory page even though the SAME url renders fine
+ * on the chat header. Keeping the source identical means the photo that
+ * shows on /cass also shows on the /creators tile for Cass.
+ *
+ * onError still flips to the colored initial tile so a broken / missing
+ * image never lands in the layout.
  */
 export function CreatorAvatar({
   src,
@@ -20,11 +28,10 @@ export function CreatorAvatar({
   const [failed, setFailed] = useState(false);
 
   if (src && !failed) {
-    const proxied = `/api/img?url=${encodeURIComponent(src)}`;
     return (
       // eslint-disable-next-line @next/next/no-img-element
       <img
-        src={proxied}
+        src={src}
         alt=""
         className="cr-card-avatar"
         loading="lazy"
