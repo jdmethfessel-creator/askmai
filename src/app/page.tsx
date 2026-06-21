@@ -16,9 +16,9 @@ const manrope = Manrope({
 });
 
 export const metadata: Metadata = {
-  title: "AskMai — Your taste, as an agent your followers can shop.",
+  title: "AskMai",
   description:
-    "AskMai builds a personal AI agent for creators. It knows your real taste, recommends real products with real links, and lives in your bio. Free to join. You earn on what your audience buys.",
+    "Each creator gets a branded AI agent that knows their real taste and recommends real products, with real links.",
 };
 
 export default function Home() {

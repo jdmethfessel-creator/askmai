@@ -356,13 +356,8 @@ export default function Marketing() {
         <span className="lp-wordmark lp-wordmark-sm">
           ask<em>mai</em>
         </span>
-        <span className="lp-footer-note">
-          One agent per creator. Built in NYC + Miami.
-        </span>
+        <span className="lp-footer-note">Built in NYC + Miami.</span>
         <span className="lp-footer-meta">
-          <Link href="/cass" className="lp-footer-link">
-            /cass
-          </Link>
           <a href="mailto:hi@askmai.co" className="lp-footer-link">
             hi@askmai.co
           </a>
@@ -428,7 +423,7 @@ function BackgroundGlow() {
 }
 
 const PREVIEW_THUMB_SRC = `/api/img?url=${encodeURIComponent(
-  "https://cdn.shopify.com/s/files/1/0025/6049/1566/files/Artboard_22_7dbb2b75-0b25-4c2e-9db2-d50212d88364.png?v=1776700045"
+  "https://cdn.shopify.com/s/files/1/0025/6049/1566/files/WWD205-01-ZEB_b9dd1c29-821e-410e-9228-7a6844063394.jpg?v=1776706350"
 )}`;
 
 function AgentPreviewCard() {
@@ -453,13 +448,13 @@ function AgentPreviewCard() {
         </div>
         <div className="lp-preview-chat">
           <div className="lp-preview-bubble lp-preview-user">
-            what do I wear to a dinner in the city
+            I need an outfit for dinner in the city for under $300
           </div>
           <div className="lp-preview-bubble lp-preview-assistant">
             <p>
-              a maxi is the move for city dinner — looks pulled together
-              without trying. my Cowl Halter Maxi in navy/crimson is the one
-              I&apos;d reach for. add a strappy heel, you&apos;re done.
+              easy at $300. my Strapless Foldover Midi in ivory/beige is what
+              I&apos;d grab — reads pulled together without trying. leaves you
+              room for strappy sandals and a small bag.
             </p>
             <div className="lp-preview-rec">
               <span className="lp-preview-rec-thumb" aria-hidden>
@@ -467,8 +462,8 @@ function AgentPreviewCard() {
                 <img src={PREVIEW_THUMB_SRC} alt="" />
               </span>
               <span className="lp-preview-rec-text">
-                <strong>WeWoreWhat</strong> Cowl Halter Maxi Dress
-                <em>$168</em>
+                <strong>WeWoreWhat</strong> Strapless Foldover Midi
+                <em>$198</em>
               </span>
             </div>
           </div>

@@ -3,8 +3,21 @@ import Script from "next/script";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "AskMai",
-  description: "Chat with your favorite creators' AI.",
+  metadataBase: new URL("https://askmai.co"),
+  title: {
+    default: "AskMai",
+    template: "%s · AskMai",
+  },
+  description:
+    "Each creator gets a branded AI agent that knows their real taste and recommends real products, with real links.",
+  applicationName: "AskMai",
+  openGraph: {
+    title: "AskMai",
+    description:
+      "Each creator gets a branded AI agent that knows their real taste and recommends real products, with real links.",
+    siteName: "AskMai",
+    type: "website",
+  },
 };
 
 const SKIMLINKS_PUBLISHER_ID = process.env.SKIMLINKS_PUBLISHER_ID;
