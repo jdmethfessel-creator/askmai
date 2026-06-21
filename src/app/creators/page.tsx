@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { Fraunces, Manrope } from "next/font/google";
 import { supabaseAdmin } from "@/lib/supabase";
+import { CreatorAvatar } from "./CreatorAvatar";
 import "../_marketing/landing.css";
 import "./creators.css";
 
@@ -19,9 +20,9 @@ const manrope = Manrope({
 });
 
 export const metadata: Metadata = {
-  title: "AskMai — Meet the twins",
+  title: "AskMai — Chat with your favorite creators",
   description:
-    "Every creator with an AskMai twin. Chat with their AI, in their voice, with real product recommendations.",
+    "Get real recommendations, in their voice, with shoppable links.",
 };
 
 export const dynamic = "force-dynamic";
@@ -107,15 +108,13 @@ export default async function CreatorsPage() {
         </header>
 
         <section className="cr-intro">
-          <p className="lp-eyebrow">Meet the twins</p>
+          <p className="lp-eyebrow">Live twins</p>
           <h1 className="cr-h1">
-            Every creator with a{" "}
-            <span className="lp-accent-ink">live twin.</span>
+            Chat with your favorite{" "}
+            <span className="lp-accent-ink">creators.</span>
           </h1>
           <p className="cr-sub">
-            Each one knows their creator&apos;s real taste, recommends real
-            products with real links, and talks the way they actually talk.
-            Try a few. Then picture yours.
+            Get real recommendations, in their voice, with shoppable links.
           </p>
         </section>
 
@@ -197,38 +196,6 @@ function CardArrow() {
       <path d="M3 8h10" />
       <path d="M9 4l4 4-4 4" />
     </svg>
-  );
-}
-
-function CreatorAvatar({
-  src,
-  initial,
-  accent,
-}: {
-  src: string | null;
-  initial: string;
-  accent: string;
-}) {
-  if (src) {
-    return (
-      // eslint-disable-next-line @next/next/no-img-element
-      <img
-        src={src}
-        alt=""
-        className="cr-card-avatar"
-      />
-    );
-  }
-  return (
-    <div
-      className="cr-card-avatar cr-card-avatar-tile"
-      aria-hidden
-      style={{
-        background: `linear-gradient(135deg, ${accent}, ${accent}aa)`,
-      }}
-    >
-      {initial}
-    </div>
   );
 }
 

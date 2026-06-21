@@ -310,6 +310,7 @@ function RecCard({ rec, accent }: { rec: Rec; accent: string }) {
         name={rec.name}
         location={rec.location}
         isPlace={rec.tier === "place"}
+        synth={rec.synth === true}
       />
       <div className="flex-1 min-w-0 flex flex-col justify-between gap-1.5">
         <div>
@@ -411,6 +412,7 @@ function Thumb({
   name,
   location,
   isPlace,
+  synth,
 }: {
   src?: string;
   initial: string;
@@ -420,6 +422,8 @@ function Thumb({
   location?: string;
   /** Place cards do a place-biased lookup (name + location + "restaurant"). */
   isPlace?: boolean;
+  /** True for off-catalog scanner cards — skip Bing, render tile only. */
+  synth?: boolean;
 }) {
   const [resolvedSrc, setResolvedSrc] = useState<string | undefined>(src);
   const [failed, setFailed] = useState(false);
@@ -432,8 +436,14 @@ function Thumb({
 
   // Lazy lookup: off-feed product cards (no image_url) and place cards
   // (always lookup) both fire a Bing-backed search through /api/product-image.
+  //
+  // Synth cards (server-side off-catalog scanner) skip the lookup — a Bing
+  // result on a partially-fabricated query is the source of "fire station for
+  // cane-back accent chair" failures. Tile is the safer default for low-
+  // confidence cards.
   useEffect(() => {
     if (resolvedSrc || !name) return;
+    if (synth && !isPlace) return;
     let cancelled = false;
     const params = new URLSearchParams();
     if (isPlace) {
@@ -456,7 +466,7 @@ function Thumb({
     return () => {
       cancelled = true;
     };
-  }, [resolvedSrc, isPlace, brand, name, location]);
+  }, [resolvedSrc, isPlace, brand, name, location, synth]);
 
   const tile = (
     <div

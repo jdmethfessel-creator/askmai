@@ -73,6 +73,13 @@ export type Rec = {
   /** Set for place recs: Google "X menu" search URL. */
   menu_url?: string;
   tier?: LinkTier;
+  /**
+   * True when the rec was synthesized server-side by the off-catalog prose
+   * scanner (not emitted by the model in its RECS block). The frontend
+   * treats these as low-confidence for image lookups — better to render the
+   * accent tile than a wrong photo.
+   */
+  synth?: boolean;
 };
 
 export type ChatMessage = {

@@ -9,8 +9,6 @@ import "./landing.css";
 // for a real Formspree URL when ready.
 const WAITLIST_ENDPOINT = "";
 
-const VERBS = ["Asks", "Discovers", "Styles", "Shops", "Books"];
-
 const FEATURES: { kicker: string; title: string; body: string }[] = [
   {
     kicker: "01",
@@ -35,18 +33,10 @@ const FEATURES: { kicker: string; title: string; body: string }[] = [
 ];
 
 export default function Marketing() {
-  const [verb, setVerb] = useState(0);
   const [email, setEmail] = useState("");
   const [submitState, setSubmitState] = useState<
     "idle" | "sending" | "done" | "error"
   >("idle");
-
-  useEffect(() => {
-    const t = setInterval(() => {
-      setVerb((v) => (v + 1) % VERBS.length);
-    }, 1800);
-    return () => clearInterval(t);
-  }, []);
 
   // Scroll-triggered reveals.
   const observerRef = useRef<IntersectionObserver | null>(null);
@@ -145,24 +135,6 @@ export default function Marketing() {
             Browse the twins
             <ArrowRight subtle />
           </Link>
-        </div>
-
-        <div className="lp-verbs lp-fade-in" style={{ animationDelay: "900ms" }}>
-          <span className="lp-verbs-prefix">Your twin</span>
-          <span className="lp-verb-stage" aria-live="polite">
-            {VERBS.map((v, i) => (
-              <span
-                key={v}
-                className={
-                  "lp-verb" + (i === verb ? " is-on" : "")
-                }
-                aria-hidden={i === verb ? "false" : "true"}
-              >
-                {v}
-              </span>
-            ))}
-          </span>
-          <span className="lp-verbs-suffix">in your voice.</span>
         </div>
 
         <div className="lp-marquee" aria-hidden>

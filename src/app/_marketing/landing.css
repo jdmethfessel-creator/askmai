@@ -261,45 +261,6 @@
   transform: translateX(3px);
 }
 
-/* verb cycle */
-.lp-verbs {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 10px;
-  flex-wrap: wrap;
-  font-size: clamp(15px, 1.4vw, 18px);
-  color: var(--muted);
-  margin-top: 6px;
-}
-.lp-verbs-prefix,
-.lp-verbs-suffix {
-  font-weight: 300;
-}
-.lp-verb-stage {
-  position: relative;
-  display: inline-block;
-  height: 1.3em;
-  min-width: 7ch;
-  vertical-align: baseline;
-}
-.lp-verb {
-  position: absolute;
-  inset: 0;
-  font-family: var(--font-display), Georgia, serif;
-  font-style: italic;
-  font-weight: 500;
-  font-size: clamp(20px, 1.9vw, 26px);
-  color: var(--accent);
-  opacity: 0;
-  transform: translateY(8px);
-  transition: opacity 0.45s ease, transform 0.55s cubic-bezier(0.34, 1.56, 0.64, 1);
-  white-space: nowrap;
-}
-.lp-verb.is-on {
-  opacity: 1;
-  transform: translateY(0);
-}
-
 /* marquee */
 .lp-marquee {
   position: relative;

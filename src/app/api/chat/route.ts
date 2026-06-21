@@ -765,6 +765,73 @@ function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+// Stop-words / connectors / articles / possessive remnants that should
+// NEVER appear inside a synthesized product name. If the regex captures
+// any of these, the captured phrase is grammatical glue between two
+// thoughts, not a real product description — drop the synth card.
+const PIECE_STOP_WORDS = new Set([
+  "a",
+  "an",
+  "the",
+  "and",
+  "or",
+  "but",
+  "for",
+  "with",
+  "of",
+  "in",
+  "on",
+  "at",
+  "to",
+  "by",
+  "from",
+  "into",
+  "onto",
+  "as",
+  "your",
+  "her",
+  "his",
+  "their",
+  "my",
+  "our",
+  "some",
+  "any",
+  "this",
+  "that",
+  "these",
+  "those",
+  "all",
+  "more",
+  "less",
+  "than",
+  "so",
+  "if",
+  "is",
+  "are",
+  "be",
+]);
+
+/**
+ * Validate a captured piece phrase before synthesizing a card.
+ * Rejects grammatical connectors ("and coffee table"), possessive
+ * remnants ("'s wallpaper" → "s wallpaper"), and 1-2 char fragments.
+ * These all produced garbage cards before this filter existed —
+ * "Shelves And Coffee Table" with brand=Target, etc.
+ */
+function isValidPiecePhrase(pieceRaw: string): boolean {
+  const trimmed = pieceRaw.trim();
+  if (!trimmed) return false;
+  const tokens = trimmed.split(/\s+/);
+  if (tokens.length === 0) return false;
+  for (const t of tokens) {
+    const norm = t.toLowerCase().replace(/[^\w-]/g, "");
+    if (!norm) return false;
+    if (PIECE_STOP_WORDS.has(norm)) return false;
+    if (norm.length <= 2 && !/^\d/.test(norm)) return false;
+  }
+  return true;
+}
+
 function titleCasePhrase(s: string): string {
   return s
     .split(/\s+/)
@@ -824,17 +891,55 @@ async function augmentWithOffCatalogMentions(
     while ((m = re.exec(proseText)) !== null) {
       const pieceRaw = m[2].trim();
       if (!pieceRaw) continue;
+      // Reject phrases that captured grammatical connectors / possessives /
+      // tiny fragments. These produced garbage cards like "Shelves And
+      // Coffee Table" and "S Wallpaper" before this guard.
+      if (!isValidPiecePhrase(pieceRaw)) continue;
+
+      // Reject if the captured phrase contains a DIFFERENT brand name from
+      // our scan list — that means the regex ran past an "or" hedge and
+      // attributed the wrong brand. e.g. matching "Schoolhouse" then
+      // capturing "Target Studio McGee lamp" through "or even a Target…"
+      const pieceLower = pieceRaw.toLowerCase();
+      let bleedsAcrossBrand = false;
+      for (const otherBrand of OFF_CATALOG_BRANDS) {
+        if (otherBrand.toLowerCase() === brand.toLowerCase()) continue;
+        const re2 = new RegExp(`\\b${escapeRegex(otherBrand)}\\b`, "i");
+        if (re2.test(pieceLower)) {
+          bleedsAcrossBrand = true;
+          break;
+        }
+      }
+      if (bleedsAcrossBrand) continue;
+
       const piece = titleCasePhrase(pieceRaw);
       const key = `${brand.toLowerCase()}|${piece.toLowerCase()}`;
       if (seenKeys.has(key)) continue;
 
-      // Skip if any existing rec under the same brand already names this piece.
+      // Skip if any existing rec under the same brand is the same piece.
+      // Use bidirectional substring + token-overlap so paraphrases get
+      // caught — "Studio McGee Lamp" vs "Studio McGee Table Lamp".
       let overlap = false;
+      const pieceTokens = pieceLower.split(/\s+/).filter((t) => t.length > 2);
       for (const r of enriched) {
         if (!r.brand) continue;
+        if (r.brand.toLowerCase() !== brand.toLowerCase()) continue;
+        const existingName = r.name.toLowerCase();
         if (
-          r.brand.toLowerCase() === brand.toLowerCase() &&
-          r.name.toLowerCase().includes(pieceRaw.toLowerCase())
+          existingName.includes(pieceLower) ||
+          pieceLower.includes(existingName)
+        ) {
+          overlap = true;
+          break;
+        }
+        const existingTokens = existingName
+          .split(/\s+/)
+          .filter((t) => t.length > 2);
+        let shared = 0;
+        for (const t of pieceTokens) if (existingTokens.includes(t)) shared++;
+        if (
+          pieceTokens.length > 0 &&
+          shared / pieceTokens.length >= 0.6
         ) {
           overlap = true;
           break;
@@ -868,6 +973,7 @@ async function augmentWithOffCatalogMentions(
           why: synth.why,
           affiliate_url: resolved.url,
           tier: resolved.tier,
+          synth: true,
         };
         if (resolved.tier === "aggregator" && resolved.live_product) {
           const lp = resolved.live_product;
