@@ -98,7 +98,7 @@ export default async function CreatorPage({
               className="h-1.5 w-1.5 rounded-full live-dot"
               style={{ background: theme.accent }}
             />
-            Real picks · real links
+            Find my favorites
           </span>
           {creator.bio && (
             <p className="mt-5 text-[14px] leading-relaxed opacity-75 max-w-[360px] mx-auto">
