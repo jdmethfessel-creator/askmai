@@ -9,6 +9,25 @@ import "./landing.css";
 // for a real Formspree URL when ready.
 const WAITLIST_ENDPOINT = "";
 
+const VALUE_PILLARS: { title: string; body: string }[] = [
+  {
+    title: "Scale the affiliate you already have",
+    body: "Your LTK and ShopMy links, now conversational. Your twin recommends in your voice and links what you already monetize, working for your audience around the clock.",
+  },
+  {
+    title: "Earn on what you couldn't before",
+    body: "Travel, hotels, restaurants, experiences. The categories LTK and ShopMy don't cover. Earn on the recommendations you were already making for free.",
+  },
+  {
+    title: "Be there for every follower at once",
+    body: "Your audience talks to your twin instead of scrolling past a link. A real conversation in your voice, available to every follower at the same time.",
+  },
+  {
+    title: "Drop exclusive recs",
+    body: "Give your twin picks and knowledge that live nowhere else. Your audience gets a you they can't find on any other platform.",
+  },
+];
+
 const FEATURES: { kicker: string; title: string; body: string }[] = [
   {
     kicker: "01",
@@ -218,6 +237,39 @@ export default function Marketing() {
 
           <AgentPreviewCard />
         </div>
+      </section>
+
+      {/* ---------- VALUE PROP ---------- */}
+      <section className="lp-value-prop" data-reveal>
+        <p className="lp-eyebrow">For creators</p>
+        <h2 className="lp-h2 lp-h2-tight">
+          What your twin{" "}
+          <span className="lp-accent-ink">does for you.</span>
+        </h2>
+
+        <div className="lp-value-grid">
+          {VALUE_PILLARS.map((p, i) => (
+            <article key={p.title} className="lp-value-pillar" data-reveal>
+              <span className="lp-value-num">
+                {String(i + 1).padStart(2, "0")}
+              </span>
+              <h3 className="lp-value-pillar-title">{p.title}</h3>
+              <p className="lp-value-pillar-body">{p.body}</p>
+            </article>
+          ))}
+        </div>
+
+        <p className="lp-value-closing">
+          You keep your existing affiliate. You earn a share of the new
+          revenue your twin unlocks.
+        </p>
+        <a
+          href="#waitlist"
+          className="lp-btn lp-btn-primary lp-btn-large lp-value-cta"
+        >
+          Get your twin
+          <ArrowRight />
+        </a>
       </section>
 
       {/* ---------- FEATURES ---------- */}
