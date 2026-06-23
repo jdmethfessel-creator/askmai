@@ -2,6 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { supabaseAdmin } from "@/lib/supabase";
 import { resolveLink } from "@/lib/resolveLink";
 import { generateAggregatorLink } from "@/lib/affiliateLinks";
+import { LUXURY_BRANDS } from "@/lib/affiliateBrands";
 import { bingLookup } from "@/lib/bingImage";
 import type { ChatMessage, Creator, Rec } from "@/lib/types";
 
@@ -135,11 +136,20 @@ export async function POST(request: Request) {
           creatorRef,
           budgetCeiling
         );
-        const finalRecs = await augmentWithOffCatalogMentions(
+        const offCatalogAugmented = await augmentWithOffCatalogMentions(
           catalogAugmented,
           proseText,
           creatorRef,
           budgetCeiling
+        );
+        // Place-prose scanner: when the model names a place + city in
+        // prose but skips the JSON rec, synthesize a place card and route
+        // it through the place tier. Same safety net products already
+        // get from augmentWithOffCatalogMentions.
+        const finalRecs = await augmentWithProsePlaces(
+          offCatalogAugmented,
+          proseText,
+          creatorRef
         );
         // Server-side image prefetch. Non-synth aggregator items often
         // arrive without image_url (Serper failed, or returned a
@@ -348,6 +358,9 @@ async function enrichRecsBlock(
         if (resolved.tier === "place" && resolved.place_links) {
           return {
             ...base,
+            // OSM resolves the authoritative neighborhood; only override
+            // when present so an OSM miss keeps the model's hint.
+            location: resolved.resolved_location ?? base.location,
             reservable: resolved.place_links.reservable,
             directions_url: resolved.place_links.directions,
             menu_url: resolved.place_links.menu,
@@ -1010,6 +1023,302 @@ async function augmentWithOffCatalogMentions(
 }
 
 /**
+ * Place-prose scanner.
+ *
+ * The model often names a real place ("Los Félix in Brickell", "Estela on
+ * Houston", "Carbone, NYC") in prose but skips it in the structured RECS
+ * block — sometimes because it doesn't think places are cardable, or
+ * because it followed a hedged "X or Y" pattern. This scanner detects
+ * `<Name> in/at/on <known city|neighborhood>` and `<Name>, <city>`
+ * patterns, synthesizes a place rec for each new match, and pushes them
+ * through resolveLink → place tier so every named place lands on a
+ * working Google Maps + Reserve card. OSM enriches the location.
+ *
+ * Defenses against false positives:
+ *  - candidate must lead with a real capitalized word, not a stop-word
+ *  - candidate name must not match a brand we already know (luxury list
+ *    or off-catalog mass-brand list) — those belong to product carding
+ *  - candidate must not overlap with any name already in the recs array
+ *  - location anchor must be on the curated city/neighborhood vocabulary
+ *    below
+ */
+const PLACE_LOCATION_TOKENS = [
+  // NYC neighborhoods + boroughs
+  "Manhattan",
+  "Brooklyn",
+  "Queens",
+  "Bronx",
+  "NYC",
+  "New York",
+  "SoHo",
+  "Soho",
+  "Tribeca",
+  "Chelsea",
+  "Williamsburg",
+  "DUMBO",
+  "Greenpoint",
+  "Bushwick",
+  "West Village",
+  "East Village",
+  "LES",
+  "NoHo",
+  "NoMad",
+  "UES",
+  "UWS",
+  "Midtown",
+  "Harlem",
+  "Astoria",
+  "Long Island City",
+  // Miami
+  "Miami",
+  "Brickell",
+  "Wynwood",
+  "Coconut Grove",
+  "Coral Gables",
+  "South Beach",
+  "Design District",
+  "Edgewater",
+  "Little Havana",
+  "Miami Beach",
+  // LA
+  "LA",
+  "Los Angeles",
+  "Hollywood",
+  "West Hollywood",
+  "WeHo",
+  "Silver Lake",
+  "Echo Park",
+  "Venice",
+  "Santa Monica",
+  "Culver City",
+  "Beverly Hills",
+  "Highland Park",
+  // Other US
+  "Chicago",
+  "Charleston",
+  "Nashville",
+  "Austin",
+  "San Francisco",
+  "SF",
+  "Boston",
+  "DC",
+  "Washington",
+  "Atlanta",
+  "Portland",
+  "Seattle",
+  "Philadelphia",
+  "Denver",
+  "Las Vegas",
+  // Resort + travel
+  "Sag Harbor",
+  "Hamptons",
+  "Montauk",
+  "Aspen",
+  "Tulum",
+  "Mexico City",
+  "Paris",
+  "London",
+  "Tokyo",
+  "Milan",
+  "Rome",
+  "Florence",
+  "Lisbon",
+  "Madrid",
+  "Barcelona",
+];
+
+const PLACE_NAME_STOPWORDS = new Set([
+  "the",
+  "a",
+  "an",
+  "i",
+  "you",
+  "he",
+  "she",
+  "we",
+  "they",
+  "this",
+  "that",
+  "these",
+  "those",
+  "my",
+  "your",
+  "her",
+  "his",
+  "their",
+  "outfit",
+  "look",
+  "piece",
+  "pieces",
+  "bag",
+  "dress",
+  "trouser",
+  "trousers",
+  "top",
+  "tee",
+  "shirt",
+  "jeans",
+  "denim",
+  "boots",
+  "sandals",
+  "heels",
+  "shoes",
+  "shoe",
+  "yes",
+  "no",
+  "okay",
+  "ok",
+  "honestly",
+  "actually",
+  "really",
+  "cocktail",
+  "cocktails",
+  "drink",
+  "drinks",
+  "dinner",
+  "lunch",
+  "breakfast",
+  "brunch",
+  "snack",
+  "menu",
+  "and",
+  "or",
+  "but",
+  "for",
+  "with",
+  "of",
+  "to",
+  "from",
+  "by",
+]);
+
+const PLACE_BANNED_NAMES = new Set<string>(
+  // The off-catalog mass-brand list and the luxury list — these are
+  // product brands, never restaurants. A "Mango" mention in prose should
+  // never trip a place card.
+  [
+    ...OFF_CATALOG_BRANDS,
+    ...Array.from(LUXURY_BRANDS),
+    "Aureum",
+    "Aureum Collective",
+    "WeWoreWhat",
+    "Tezza",
+    "Something Navy",
+  ].map((s: string) => s.toLowerCase())
+);
+
+function isLikelyPlaceName(raw: string): boolean {
+  const tokens = raw.trim().split(/\s+/);
+  if (tokens.length === 0 || tokens.length > 5) return false;
+  for (const t of tokens) {
+    const norm = t.toLowerCase().replace(/[^a-záéíóúñüç'’-]/gi, "");
+    if (!norm) return false;
+    if (norm.length < 2) return false;
+  }
+  const first = tokens[0].toLowerCase().replace(/[^a-z]/gi, "");
+  if (PLACE_NAME_STOPWORDS.has(first)) return false;
+  if (PLACE_BANNED_NAMES.has(raw.toLowerCase().trim())) return false;
+  // Reject "all-lowercase" tokens (model sometimes uses casual style),
+  // require at least one capitalized lead token.
+  if (!/[A-Z]/.test(tokens[0])) return false;
+  return true;
+}
+
+async function augmentWithProsePlaces(
+  recs: Rec[],
+  proseText: string,
+  creator: { id: string; slug: string }
+): Promise<Rec[]> {
+  if (!proseText || !proseText.trim()) return recs;
+
+  const existingNames = new Set<string>();
+  for (const r of recs) {
+    if (r.name) existingNames.add(r.name.toLowerCase().trim());
+  }
+
+  const locationBody = PLACE_LOCATION_TOKENS.map(escapeRegex)
+    .sort((a, b) => b.length - a.length)
+    .join("|");
+  const nameToken =
+    "(?:[A-Z][\\w'’&-]+|de|del|la|las|los|el|al|on|the)";
+  // Pattern A: "Name in/at/on (the) Location"
+  const reA = new RegExp(
+    `\\b((?:${nameToken}\\s+){0,3}[A-Z][\\w'’&-]+)\\s+(?:in|at|on)\\s+(?:the\\s+)?(${locationBody})\\b`,
+    "g"
+  );
+  // Pattern B: "Name, Location"
+  const reB = new RegExp(
+    `\\b((?:${nameToken}\\s+){0,3}[A-Z][\\w'’&-]+)\\s*,\\s*(${locationBody})\\b`,
+    "g"
+  );
+
+  type Candidate = { name: string; location: string };
+  const candidates: Candidate[] = [];
+  const seenCandidates = new Set<string>();
+  const pushIfNew = (raw: string, loc: string) => {
+    const trimmed = raw.replace(/[.,;:]+$/, "").trim();
+    if (!isLikelyPlaceName(trimmed)) return;
+    const key = trimmed.toLowerCase();
+    if (existingNames.has(key)) return;
+    if (seenCandidates.has(key)) return;
+    // Bidirectional substring dedupe: "La Trova" should not card when
+    // "Café La Trova" is already a rec, and vice versa. Mirrors the
+    // off-catalog scanner's overlap test so paraphrases of the same
+    // place don't double up.
+    for (const existing of existingNames) {
+      if (existing.includes(key) || key.includes(existing)) return;
+    }
+    for (const existing of seenCandidates) {
+      if (existing.includes(key) || key.includes(existing)) return;
+    }
+    seenCandidates.add(key);
+    candidates.push({ name: trimmed, location: loc.trim() });
+  };
+
+  for (const re of [reA, reB]) {
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(proseText)) !== null) {
+      pushIfNew(m[1], m[2]);
+    }
+  }
+
+  if (candidates.length === 0) return recs;
+
+  const additions: Rec[] = [];
+  await Promise.all(
+    candidates.map(async (c) => {
+      const synth: Rec = {
+        name: c.name,
+        category: "dining",
+        location: c.location,
+        reservable: true,
+        why: "Named in her reply.",
+      };
+      try {
+        const resolved = await resolveLink(synth, creator, {
+          source: "place_prose_scanner",
+        });
+        if (resolved.tier !== "place" || !resolved.place_links) return;
+        const card: Rec = {
+          ...synth,
+          location: resolved.resolved_location ?? synth.location,
+          affiliate_url: resolved.url,
+          tier: resolved.tier,
+          directions_url: resolved.place_links.directions,
+          menu_url: resolved.place_links.menu,
+          reservable: resolved.place_links.reservable,
+        };
+        additions.push(card);
+      } catch {
+        // place tier never throws today, but be defensive.
+      }
+    })
+  );
+
+  return [...recs, ...additions];
+}
+
+/**
  * Bing-resolve image_url for non-synth, non-place recs that don't already
  * have one. The visual-board gate uses image_url presence as its
  * reliability signal — without this pass, clean aggregator responses
@@ -1229,8 +1538,9 @@ OUTFIT-BUNDLE MATH (apply BEFORE naming any piece in a budget answer):
 - Never present a piece as fitting a budget by implying remaining slots cost less than they realistically do. The phrase "leaves you room for…" is FORBIDDEN unless that room is actually real (i.e., remaining ceiling minus the slot floor sum is still > 0).
 - This applies to feed-tier (CATALOG) pieces equally. A catalog item that breaks the bundle math gets omitted exactly like any other over-budget item — no "but it's her real pick" exception.
 
-SHOPPABILITY RULE (READ FIRST):
+SHOPPABILITY RULE (READ FIRST — applies to PRODUCTS AND PLACES equally):
 - Card every named purchasable product the user could actually buy WITHIN their stated constraints (budget, occasion). When you name a specific product they could buy that fits the ask, you MUST emit it in the ---RECS--- block.
+- PLACES ARE ALWAYS CARDABLE TOO. Every restaurant, bar, cafe, or hotel you name in prose with a known city MUST be carded — same rule, same response. A named place + city = card, always, in the first reply. The platform's place tier produces a guaranteed Google Maps URL as a floor, plus a Reserve link when reservable=true. NEVER claim "I can't drop links directly" for a place — that is false. Either card it or don't name that specific place.
 - LUXURY / DESIGNER BRANDS ARE ALWAYS CARDABLE. Brands like The Row, Khaite, Alaïa, By Far, Isabel Marant, Acne Studios, Dion Lee, The Frankie Shop, Toteme, Loewe, Saint Laurent, Bottega Veneta, Valentino, Prada, Miu Miu, Celine, Chloé, Gianvito Rossi, Manolo Blahnik, Paris Texas, Jacquemus, Ganni, Dries Van Noten, Stella McCartney, Tom Ford, Marc Jacobs, Wardrobe.NYC, Sandy Liang, Max Mara, Missoni, Pucci, Mugler, Nina Ricci, Simkhai, Jean Paul Gaultier, Róhe — and any contemporary designer brand in ${c.name}'s taste profile — are PLATFORM-ROUTED through a brand-search + Skimlinks pipeline. When you name a specific piece from one of these brands you MUST emit a card for it, even when the piece is not in CATALOG. The platform produces a working link automatically. NEVER omit a luxury card on the grounds of "I don't have catalog data for that piece."
 - MASS BRANDS in the Skimlinks network (Zara, Mango, COS, & Other Stories, Reformation, H&M, Aritzia, Madewell, Sezane, Everlane, Abercrombie, Free People, Anthropologie, J.Crew, Banana Republic, Uniqlo, and the home/lifestyle Skimlinks list: West Elm, Pottery Barn, Article, Target, Wayfair, Crate & Barrel, CB2, Lulu and Georgia, Rejuvenation, Schoolhouse, McGee & Co, Burke Decor, Lamps Plus) are EQUALLY cardable without catalog data — same routing pipeline, same working link.
 - The fabrication ban is narrow: it applies ONLY when there is NO platform routing path. Concretely: a creator's OWN brand that has no store URL configured, or an obscure unknown brand the platform can't link to (e.g. inventing "Brand X Cozy Ribbed Sweat Set $26.99" for a brand that isn't in any catalog, isn't in MYTHERESA_BRANDS, isn't in the Skimlinks mass-brand list, isn't a known designer). For those — and ONLY those — keep the brand mention general or drop the specific reference entirely. Creator-own-brand SKU invention without a configured store is the one case the platform genuinely cannot recover from.
@@ -1239,12 +1549,21 @@ SHOPPABILITY RULE (READ FIRST):
 - If you list 3 actionable products conversationally, all 3 must appear in the recs block. If you list 4, all 4. No artificial 2–3 cap when more pieces are named.
 - Never card an over-budget item — not in prose, not in JSON. The platform also enforces this at the card layer; emitting an over-budget rec will be silently dropped, so just don't.
 
-RETAILER NAMES IN PROSE — NEVER (CRITICAL):
-- Do not name any retailer in user-facing prose. Banned in prose under all circumstances: Net-a-Porter, Mytheresa, Shopbop, SSENSE, Farfetch, Nordstrom, Saks, Bloomingdale's, Neiman Marcus, Revolve, FWRD, Sephora, Ulta, Amazon, eBay, Etsy, Target, Wayfair. Also banned: "the brand's own site", "their site", "direct to their site", "their website", "go to [brand].com".
-- Never tell the user where to look, search, check, find, or buy a piece themselves. Banned phrasings include but are not limited to: "you can find it on [retailer]", "check [retailer] for it", "search [retailer]", "go direct to their site", "they have it on their website", "let me know if you find it", "send me a link", "worth going to [retailer]", "[retailer] usually stocks…", "I'd check [retailer] first", "available at [retailer]". If any of these patterns is about to leave your mouth, the answer is wrong — go back and card the piece instead.
-- These retailer names exist for the platform's internal merchant_url JSON field ONLY. They never appear in spoken prose. The user only ever sees the brand and the piece — the link itself is the card's Shop button, attached by the platform.
-- If a specific piece truly can't be carded for some reason (over-budget, no routing path), DROP THE PIECE entirely. Do not say "I'd recommend X but you'll have to look it up" or "X is great, search for it" — just don't name X. Recommend a piece you CAN card instead. The user came here for picks she can act on, not a list of places to do her own shopping.
-- This rule overrides any helpful instinct to point the user to a store. The card IS the directive. Trust it.
+SEARCH-IT-YOURSELF / PLATFORM NAMES IN PROSE — NEVER (CRITICAL, applies platform-wide):
+- This rule covers EVERY category — products, brands, restaurants, bars, cafes, hotels, travel — without exception.
+- Do not name any retailer, booking platform, search engine, or marketplace in user-facing prose. Banned in prose under all circumstances:
+    PRODUCT RETAILERS: Net-a-Porter, Mytheresa, Shopbop, SSENSE, Farfetch, Nordstrom, Saks, Bloomingdale's, Neiman Marcus, Revolve, FWRD, Sephora, Ulta, Amazon, eBay, Etsy, Target, Wayfair.
+    PLACE PLATFORMS: Resy, OpenTable, Yelp, Tripadvisor, TripAdvisor, Tock, Google Maps, Google search, Apple Maps, Yellow Pages, Foursquare.
+    TRAVEL PLATFORMS: Booking, Booking.com, Expedia, Hotels.com, Kayak, Trivago, Airbnb, Vrbo, Hotwire.
+    Also banned: "the brand's own site", "their site", "direct to their site", "their website", "go to [brand].com".
+- Never tell the user to search, look up, find, check, browse, or pull up anything themselves — for any category. Banned phrasings include but are not limited to: "you can find it on [X]", "check [X] for it", "search [X]", "search [name] on [X]", "look it up on [X]", "pull it up on [X]", "go direct to their site", "they have it on their website", "let me know if you find it", "send me a link", "I can't drop links directly", "can't pull links directly", "I don't have a direct link", "worth going to [X]", "[X] usually stocks…", "I'd check [X] first", "available at [X]", "you can book on [X]", "find it on Maps", "pull right up on Google", "it'll come up if you search". If any of these patterns is about to leave your mouth, the answer is wrong — go back and emit a card instead.
+- These platform names exist ONLY for the platform's internal JSON fields (merchant_url for products, the system's place/travel routing for restaurants and hotels). They NEVER appear in spoken prose. The user only ever sees the name of the piece or place — the link is the card's button, attached by the platform.
+- If a specific piece or place truly can't be carded for some reason, DROP IT entirely. Do not say "I'd recommend X but you'll have to look it up" or "search for it" — just don't name X. Recommend something you CAN card instead. The user came here for picks she can act on, not directions to do her own research.
+- This rule overrides any helpful instinct to point the user to a store, a booking site, or a map. The card IS the directive. Trust it.
+
+PLACE LOCATION ACCURACY:
+- For a place rec, set "location" to the CITY ("Miami", "NYC", "LA", "Charleston") and only add a neighborhood when you are 100% certain of it. If you are unsure of the exact neighborhood, use the city alone — a wrong neighborhood ("Wynwood" when the spot is actually in Brickell) misleads the user and is worse than a less-specific accurate city.
+- The platform performs an authoritative place lookup on the name + your location hint and will OVERRIDE your location with the real neighborhood/city it resolves. Your job is to give a good starting hint (at least the right city); the platform handles the precision.
 
 HEDGED PHRASING — must still produce cards:
 - "Brand A or Brand B" → pick the FIRST brand named and card the product under that brand. Then optionally card the same product under the second brand as a separate rec if both are genuinely good options. Hedged "A or B" must NEVER result in zero cards.

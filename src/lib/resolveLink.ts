@@ -8,6 +8,7 @@ import {
   openTableSearchUrl,
 } from "./affiliateLinks";
 import { resolveProductLive, wrapIfInNetwork } from "./productLive";
+import { lookupPlace } from "./placeLookup";
 import type { LinkTier, Rec } from "./types";
 
 export type ResolvedLink = {
@@ -43,6 +44,13 @@ export type ResolvedLink = {
     menu: string;
     reservable: boolean;
   };
+  /**
+   * Set for tier="place" when the OSM Nominatim lookup found a real
+   * neighborhood/city. The chat route overrides the model-provided
+   * rec.location with this so the card displays the authoritative
+   * address rather than the model's guess.
+   */
+  resolved_location?: string;
 };
 
 const FEED_BACKED_CATEGORIES = new Set([
@@ -284,11 +292,16 @@ export async function resolveLink(
     category === "dining" ||
     RESTAURANT_KEYWORDS.some((k) => category.includes(k))
   ) {
-    const directions = googleMapsSearchUrl(rec.name, rec.location);
-    const menu = menuSearchUrl(rec.name, rec.location);
+    // Authoritative place lookup via OSM. The model often mis-guesses the
+    // neighborhood (e.g. claiming Wynwood for a Brickell spot); OSM
+    // resolves the real address. Falls back to model's hint on miss.
+    const osm = await lookupPlace(rec.name, rec.location);
+    const effectiveLocation = osm?.location ?? rec.location;
+    const directions = googleMapsSearchUrl(rec.name, effectiveLocation);
+    const menu = menuSearchUrl(rec.name, effectiveLocation);
     const reservable = rec.reservable === true;
     const primary = reservable
-      ? openTableSearchUrl(rec.name, rec.location)
+      ? openTableSearchUrl(rec.name, effectiveLocation)
       : directions;
     await logEvent(sb, creatorId, "place", {
       ...meta,
@@ -296,11 +309,14 @@ export async function resolveLink(
       reservable,
       primary_action: reservable ? "reserve" : "directions",
       resolved_url: primary,
+      model_location: rec.location ?? null,
+      osm_location: osm?.location ?? null,
     });
     return {
       url: primary,
       tier: "place",
       place_links: { directions, menu, reservable },
+      resolved_location: osm?.location,
     };
   }
 
