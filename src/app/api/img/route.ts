@@ -59,6 +59,14 @@ const ALLOWED_HOST_PATTERNS: RegExp[] = [
 
 const ALLOWED_CONTENT_TYPE = /^image\//i;
 
+// Some upstream CDNs return a malformed bare-extension content-type
+// like "jpeg" or "png" instead of the well-formed "image/jpeg". Most
+// notably static.shopmy.us/pins/* serves `Content-Type: jpeg`, which
+// the strict image/* gate below rejects. When the host is on our
+// allowlist (already gates against SSRF), accept these bare values
+// and rewrite to the proper image/<ext> form on the response.
+const BARE_IMAGE_EXTENSION = /^(jpe?g|png|gif|webp|avif|svg)$/i;
+
 function hostAllowed(host: string): boolean {
   if (ALLOWED_HOSTS.has(host)) return true;
   return ALLOWED_HOST_PATTERNS.some((re) => re.test(host));
@@ -110,9 +118,21 @@ export async function GET(request: Request) {
     return new Response("Upstream not ok", { status: 404 });
   }
 
-  const contentType = upstream.headers.get("content-type") ?? "image/jpeg";
-  if (!ALLOWED_CONTENT_TYPE.test(contentType)) {
-    return new Response("Upstream is not an image", { status: 404 });
+  const rawContentType =
+    upstream.headers.get("content-type") ?? "image/jpeg";
+  let contentType = rawContentType;
+  if (!ALLOWED_CONTENT_TYPE.test(rawContentType)) {
+    // Try to recover a bare-extension content-type (e.g. "jpeg" from
+    // static.shopmy.us/pins/) by rewriting it. Host is already on the
+    // allowlist, so we're not opening an SSRF door — just papering
+    // over an upstream CDN's malformed header.
+    const bare = rawContentType.split(";")[0].trim().toLowerCase();
+    if (BARE_IMAGE_EXTENSION.test(bare)) {
+      const mime = bare === "jpg" ? "jpeg" : bare;
+      contentType = `image/${mime}`;
+    } else {
+      return new Response("Upstream is not an image", { status: 404 });
+    }
   }
 
   return new Response(upstream.body, {

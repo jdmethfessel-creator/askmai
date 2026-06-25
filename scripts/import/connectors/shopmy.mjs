@@ -312,6 +312,45 @@ export const connector = {
   },
 };
 
+/**
+ * Rewrite a ShopMy product image URL so it's publicly addressable.
+ *
+ *   production-shopmyshelf-uploads.s3*.amazonaws.com/<key>
+ *     -> static.shopmy.us/uploads/<key>
+ *   production-shopmyshelf-pins.s3*.amazonaws.com/<key>
+ *     -> static.shopmy.us/pins/<key>
+ *
+ * All other URLs (retailer CDNs like cdn.shopify.com,
+ * images.lululemon.com, www.sephora.com, ringconcierge.com, etc.) are
+ * already publicly readable and pass through unchanged.
+ */
+function publicShopMyImage(url) {
+  if (!url || typeof url !== "string") return url;
+  let u;
+  try {
+    u = new URL(url);
+  } catch {
+    return url;
+  }
+  const host = u.hostname.toLowerCase();
+  const key = u.pathname.replace(/^\/+/, "");
+  if (
+    /^production-shopmyshelf-uploads\.s3(?:[.-]us-east-2)?\.amazonaws\.com$/.test(
+      host
+    )
+  ) {
+    return `https://static.shopmy.us/uploads/${key}`;
+  }
+  if (
+    /^production-shopmyshelf-pins\.s3(?:[.-]us-east-2)?\.amazonaws\.com$/.test(
+      host
+    )
+  ) {
+    return `https://static.shopmy.us/pins/${key}`;
+  }
+  return url;
+}
+
 function normalizeOne(r, curatorId) {
   const name = (r.title || "").toString().trim();
   if (!name) return null;
@@ -322,13 +361,24 @@ function normalizeOne(r, curatorId) {
     `https://shopmy.us/shop/product/${encodeURIComponent(productId)}` +
     `?Curator_id=${encodeURIComponent(curatorId)}`;
 
-  // Image: prefer the curated `image` field; fall back to the first
-  // cover image in `images[]`.
-  let image_url = r.image && typeof r.image === "string" ? r.image : null;
+  // Image selection. ShopMy stores cover images on a PRIVATE S3
+  // bucket (production-shopmyshelf-uploads / -pins), so the URLs they
+  // give us in `r.image` and the `isCover=1` row of `r.images[]` 403
+  // on any direct GET — including our /api/img proxy. The same files
+  // ARE served publicly through `static.shopmy.us/<bucket-path>/<key>`,
+  // which is ShopMy's own CDN mirror of those buckets. We pick the
+  // cover image (best quality, photographer-curated) and rewrite the
+  // host through publicShopMyImage() so the URL we store actually
+  // loads in a browser.
+  let image_url = null;
+  if (r.image && typeof r.image === "string") image_url = r.image;
   if (!image_url && Array.isArray(r.images)) {
     const cover = r.images.find((i) => i?.isCover) ?? r.images[0];
-    if (cover?.image && typeof cover.image === "string") image_url = cover.image;
+    if (cover?.image && typeof cover.image === "string") {
+      image_url = cover.image;
+    }
   }
+  image_url = publicShopMyImage(image_url);
 
   // Map ShopMy's granular Category_name / Department_name /
   // Industry_name into our enum so loadCatalog's IN-filter can find
