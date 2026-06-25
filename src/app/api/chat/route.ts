@@ -4,12 +4,25 @@ import { resolveLink } from "@/lib/resolveLink";
 import { generateAggregatorLink } from "@/lib/affiliateLinks";
 import { LUXURY_BRANDS } from "@/lib/affiliateBrands";
 import { bingLookup } from "@/lib/bingImage";
+import {
+  resolveDeviceIdentity,
+  deviceCookieHeader,
+} from "@/lib/deviceId";
+import {
+  checkAndIncrementUsage,
+  findCounterByFingerprint,
+} from "@/lib/usage";
+import { getServerSession } from "@/lib/session";
 import type { ChatMessage, Creator, Rec } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const MODEL = "claude-sonnet-4-6";
+// Subscribed users get Sonnet for full voice fidelity. Free users get
+// Haiku — cheaper per token, fast enough that the 3-use ramp doesn't
+// feel degraded; the cap is the value-prop wedge, not the model.
+const SONNET_MODEL = "claude-sonnet-4-6";
+const HAIKU_MODEL = "claude-haiku-4-5-20251001";
 // Output token budget. Heavy multi-part queries (2+ outfits + multiple
 // places + per-rec JSON with long image / place URLs) routinely run
 // 1200-1600 output tokens. 1024 was clipping the RECS block mid-prose
@@ -78,6 +91,44 @@ export async function POST(request: Request) {
   }
   const creatorId = creator.id;
 
+  // ----- Cap gate ----------------------------------------------------
+  // Anonymous device identity (cookie + UA+IP-prefix hash fallback) and
+  // optional logged-in session. The gate runs BEFORE any Anthropic or
+  // Serper call so a paywalled visitor never spends a token. Subscribed
+  // users skip the counter entirely; everyone else gets the free cap.
+  const identity = await resolveDeviceIdentity(
+    request,
+    findCounterByFingerprint
+  );
+  const session = await getServerSession();
+  const isSubscribed = session?.subscriptionStatus === "active";
+  const gate = await checkAndIncrementUsage({
+    deviceId: identity.deviceId,
+    fingerprint: identity.fingerprint,
+    userId: session?.userId ?? null,
+    isSubscribed,
+  });
+  const setCookieHeader: Record<string, string> = identity.isNew
+    ? { "Set-Cookie": deviceCookieHeader(identity.deviceId) }
+    : {};
+  if (!gate.allowed) {
+    return new Response(
+      JSON.stringify({
+        paywalled: true,
+        used: gate.used,
+        limit: gate.limit,
+      }),
+      {
+        status: 402,
+        headers: {
+          "Content-Type": "application/json",
+          "Cache-Control": "no-store",
+          ...setCookieHeader,
+        },
+      }
+    );
+  }
+
   const catalog = await loadCatalog(creatorId, message);
   const knownProducts = buildKnownProducts(catalog, creator.taste_profile);
   const creatorRef = {
@@ -90,9 +141,10 @@ export async function POST(request: Request) {
   const history = sanitizeHistory(body.history ?? []);
 
   const client = new Anthropic();
+  const model = isSubscribed ? SONNET_MODEL : HAIKU_MODEL;
 
   const stream = client.messages.stream({
-    model: MODEL,
+    model,
     max_tokens: MAX_TOKENS,
     system: systemPrompt,
     messages: [...history, { role: "user", content: message }],
@@ -212,6 +264,7 @@ export async function POST(request: Request) {
     headers: {
       "Content-Type": "text/plain; charset=utf-8",
       "Cache-Control": "no-store",
+      ...setCookieHeader,
     },
   });
 }

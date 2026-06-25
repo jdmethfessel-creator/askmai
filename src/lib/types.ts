@@ -91,3 +91,32 @@ export type ChatMessage = {
   content: string;
   recs?: Rec[];
 };
+
+/**
+ * Application-level user account. Created on first magic-link signup
+ * via /api/auth/callback. Stripe fields are nullable until checkout
+ * lands in the next phase.
+ */
+export type User = {
+  id: string;
+  email: string;
+  subscription_status: "none" | "active" | "canceled";
+  plan: "monthly" | "annual" | null;
+  stripe_customer_id: string | null;
+  stripe_subscription_id: string | null;
+  created_at: string;
+};
+
+/**
+ * Per-device free-use counter. Keyed by device_id (the cookie). On
+ * signup, user_id is stamped so the count carries forward.
+ */
+export type UsageCounter = {
+  id: string;
+  device_id: string;
+  fingerprint: string | null;
+  user_id: string | null;
+  free_uses_count: number;
+  created_at: string;
+  updated_at: string;
+};
