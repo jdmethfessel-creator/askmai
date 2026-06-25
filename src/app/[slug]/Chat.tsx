@@ -695,6 +695,28 @@ const REFINE_CHIPS: { label: string; prompt: string }[] = [
   { label: "different vibe", prompt: "try a different vibe" },
 ];
 
+/**
+ * Chunk an ordered product list into per-look groups. ≤5 products =>
+ * single look. Larger lists get split into roughly-4-item groups
+ * (Math.ceil(N/4) groups, evenly distributed) which approximates a
+ * weekend packing list of "outfit 1, outfit 2, outfit 3" or a fall
+ * wardrobe pull. The model already emits recs in its own intended
+ * order (dress, shoes, bag, jewelry…) and the server-side ranker
+ * preserves that within tier, so a naive in-order chunk lines up
+ * reasonably well with the model's per-outfit groupings without
+ * requiring it to emit explicit group labels.
+ */
+function chunkIntoLooks(products: Rec[]): Rec[][] {
+  if (products.length <= 5) return [products];
+  const groupCount = Math.ceil(products.length / 4);
+  const perGroup = Math.ceil(products.length / groupCount);
+  const groups: Rec[][] = [];
+  for (let i = 0; i < products.length; i += perGroup) {
+    groups.push(products.slice(i, i + perGroup));
+  }
+  return groups;
+}
+
 function EditorialBoard({
   products,
   accent,
@@ -708,25 +730,24 @@ function EditorialBoard({
   onRefine: (prompt: string) => void;
   streaming: boolean;
 }) {
-  const hero = pickHeroCandidate(products);
-  if (!hero) {
-    // Eligibility check should have caught this. Safety net: demote.
+  // Quick gate: if we can't even pick a hero for the whole set we
+  // demote the whole message rather than render partials.
+  if (!pickHeroCandidate(products)) {
     onHeroFail();
     return null;
   }
-  // Finishers must be photo-having. Letter-tile placeholders never
-  // belong in the visual board when image-having alternatives exist
-  // (server-side prefetch already gave every non-synth aggregator a
-  // Bing lookup, so a missing image_url at this point is permanent).
-  // Synth scanner items are tile-only by design and are also dropped
-  // from the board.
-  const finishers = products.filter(
-    (p) => p !== hero && Boolean(p.image_url) && !p.synth
-  );
+  const looks = chunkIntoLooks(products);
   const total = outfitTotal(products);
   return (
-    <div className="space-y-3">
-      <HeroProduct rec={hero} accent={accent} onFail={onHeroFail} />
+    <div className="space-y-5">
+      {looks.map((look, idx) => (
+        <LookSection
+          key={`look-${idx}-${look[0]?.name ?? ""}`}
+          products={look}
+          accent={accent}
+          onHeroFail={onHeroFail}
+        />
+      ))}
       {total != null && (
         <p
           className="text-[11px] uppercase tracking-[0.2em] opacity-65 font-medium pt-0.5"
@@ -734,17 +755,6 @@ function EditorialBoard({
         >
           ${total.toLocaleString()} total · {products.length} pieces
         </p>
-      )}
-      {finishers.length > 0 && (
-        <div className="grid grid-cols-2 gap-2.5">
-          {finishers.map((rec, i) => (
-            <FinisherCard
-              key={`fin-${i}-${rec.name}`}
-              rec={rec}
-              accent={accent}
-            />
-          ))}
-        </div>
       )}
       {!streaming && (
         <div className="flex flex-wrap gap-1.5 pt-1.5">
@@ -762,6 +772,44 @@ function EditorialBoard({
             >
               {chip.label}
             </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * One outfit's worth of board: a single hero product + the rest of
+ * the group as photo-only finishers in a 2-col grid. Letter-tile
+ * placeholders are dropped (server-side prefetch already exhausted
+ * the Bing fallback, so a missing image_url here is permanent).
+ */
+function LookSection({
+  products,
+  accent,
+  onHeroFail,
+}: {
+  products: Rec[];
+  accent: string;
+  onHeroFail: () => void;
+}) {
+  const hero = pickHeroCandidate(products);
+  if (!hero) return null;
+  const finishers = products.filter(
+    (p) => p !== hero && Boolean(p.image_url) && !p.synth
+  );
+  return (
+    <div className="space-y-3">
+      <HeroProduct rec={hero} accent={accent} onFail={onHeroFail} />
+      {finishers.length > 0 && (
+        <div className="grid grid-cols-2 gap-2.5">
+          {finishers.map((rec, i) => (
+            <FinisherCard
+              key={`fin-${i}-${rec.name}`}
+              rec={rec}
+              accent={accent}
+            />
           ))}
         </div>
       )}
