@@ -27,9 +27,16 @@ type MockupRec = {
 // aren't categories the product serves yet.
 
 // 1) Special-occasion single look.
+//
+// Price story matters here — the hero mockup is the first thing a
+// cold visitor sees, so the board can't read as "luxury-only or
+// don't bother." Anchor with one investment piece (the dress does
+// the visual work) and pair it with accessible finishers under
+// $50 and $150 so the range looks realistic. Real catalog items
+// only.
 const WEDDING_QUESTION = "what do I wear to a fall wedding";
 const WEDDING_CAPTION =
-  "fall wedding = something rich, a little drama, easy to dance in. this dress does the work, the rest just finishes it.";
+  "fall wedding = one piece that does the work, the rest can be quiet. let the dress carry it, then mix in pieces you'll actually re-wear.";
 const WEDDING_BOARD: { hero: MockupRec; finishers: MockupRec[] } = {
   hero: {
     brand: "Solace London",
@@ -43,33 +50,33 @@ const WEDDING_BOARD: { hero: MockupRec; finishers: MockupRec[] } = {
   },
   finishers: [
     {
-      brand: "Christian Louboutin",
-      name: "Rosa Z Patent Leather Sandals",
-      price: "$1,045",
+      brand: "Tony Bianco",
+      name: "Caprice Heel",
+      price: "$150",
       image:
         "/api/img?url=" +
         encodeURIComponent(
-          "https://static.shopmy.us/uploads/pretty-prod-1771328973318"
+          "https://static.shopmy.us/uploads/pretty-prod-1771324332426"
         ),
     },
     {
-      brand: "Cult Gaia",
-      name: "Emilia Mini Bag",
-      price: "$505",
+      brand: "Abbode",
+      name: "Signature Waffle Pouch",
+      price: "$78",
       image:
         "/api/img?url=" +
         encodeURIComponent(
-          "https://static.shopmy.us/uploads/pretty-prod-1765272997528"
+          "https://static.shopmy.us/uploads/30316e12-d049-4a87-bffe-dcee5a612273_image-1760052402236"
         ),
     },
     {
-      brand: "Ring Concierge",
-      name: "Twist Diamond Huggies",
-      price: "$498",
+      brand: "Uncommon James",
+      name: "Seeing Double Earrings",
+      price: "$48",
       image:
         "/api/img?url=" +
         encodeURIComponent(
-          "https://static.shopmy.us/uploads/a66e3aa9-b28d-4218-93a3-199176eda0aa_RC_Q3-2025_AUGUST-AFFORDABLE-CORE_TWISTED-DIAMOND-HUGGIES_1_4472x4472.jpg"
+          "https://static.shopmy.us/uploads/pretty-prod-1753495753677"
         ),
     },
   ],
