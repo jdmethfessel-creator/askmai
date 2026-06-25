@@ -555,13 +555,40 @@ function PaywallModal({
             )}
           </form>
         ) : (
-          <div className="space-y-2">
+          // emailPhase === "sent" — the previous build dead-ended
+          // here with no actionable button. Now: an explicit reload
+          // CTA the user hits after clicking the link in their email
+          // (re-checks the session on the server) plus a quiet
+          // back-link in case they typed the address wrong.
+          <div className="space-y-3">
             <p className="font-serif text-[16px]">Check your email.</p>
             <p className="text-[13px] opacity-70 leading-relaxed">
               We sent a one-tap sign-in link to{" "}
-              <span className="font-medium">{email}</span>. Click it and you
-              can pick a plan.
+              <span className="font-medium">{email}</span>. Click it,
+              then tap below to pick a plan.
             </p>
+            <button
+              type="button"
+              onClick={() => {
+                if (typeof window !== "undefined") {
+                  window.location.reload();
+                }
+              }}
+              className="w-full rounded-2xl px-4 py-3 text-[14px] font-medium text-white transition-opacity hover:opacity-95"
+              style={{ background: accent }}
+            >
+              I&apos;m signed in — show plans
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setEmailPhase("input");
+                setEmailError(null);
+              }}
+              className="block w-full text-[12px] opacity-60 hover:opacity-90 underline underline-offset-2 transition-opacity"
+            >
+              use a different email
+            </button>
           </div>
         )}
       </div>

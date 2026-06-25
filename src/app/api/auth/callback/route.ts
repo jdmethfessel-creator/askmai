@@ -37,15 +37,32 @@ export async function GET(request: NextRequest) {
     return NextResponse.redirect(`${siteUrl}${next}?auth=missing_code`);
   }
 
+  // Use the canonical Supabase Next.js pattern: write to cookieStore
+  // directly. In an App Router Route Handler, cookies set via
+  // cookieStore.set() are automatically attached to the returned
+  // response (including NextResponse.redirect). The previous code
+  // wrote to response.cookies which works in theory but is one step
+  // further off the supported path — and the bug report ("unclear
+  // whether the session was actually established") suggests session
+  // cookies weren't landing on every browser as expected. Aligning
+  // with the official adapter is the defensive move.
   const cookieStore = await cookies();
-  const response = NextResponse.redirect(`${siteUrl}${next}?auth=ok`);
   const supabase = createServerClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     cookies: {
       getAll() {
         return cookieStore.getAll();
       },
       setAll(toSet: { name: string; value: string; options: CookieOptions }[]) {
-        for (const c of toSet) response.cookies.set(c.name, c.value, c.options);
+        try {
+          for (const c of toSet) {
+            cookieStore.set(c.name, c.value, c.options);
+          }
+        } catch {
+          // cookieStore.set throws when called outside a Route
+          // Handler / Server Action context. In our context it's
+          // legal, but the guard mirrors Supabase's own example
+          // and keeps a bad call from killing the redirect.
+        }
       },
     },
   });
@@ -79,5 +96,9 @@ export async function GET(request: NextRequest) {
     });
   }
 
-  return response;
+  // Cookies set via cookieStore.set() above are auto-attached to
+  // this response by Next.js. The redirect lands the user back on
+  // the page they triggered sign-in from (?next=) and the next
+  // request server-renders with signedIn=true.
+  return NextResponse.redirect(`${siteUrl}${next}?auth=ok`);
 }
