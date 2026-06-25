@@ -1,12 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import "./landing.css";
-
-// Stub waitlist endpoint until Formspree is wired. Fake success so the
-// visual flow is testable end-to-end.
-const WAITLIST_ENDPOINT = "";
 
 // ---------------------------------------------------------------
 // Mockup product data.
@@ -149,13 +145,8 @@ const CHAT_BOARD: { hero: MockupRec; finishers: MockupRec[] } = {
 // ---------------------------------------------------------------
 
 export default function Marketing() {
-  const [email, setEmail] = useState("");
-  const [submitState, setSubmitState] = useState<
-    "idle" | "sending" | "done" | "error"
-  >("idle");
-
-  // Scroll-triggered reveals (kept from the prior page so atmosphere
-  // is consistent — sections fade in on intersect).
+  // Scroll-triggered reveals — sections fade in on intersect. Kept
+  // from the prior page so the atmosphere is consistent.
   const observerRef = useRef<IntersectionObserver | null>(null);
   useEffect(() => {
     const io = new IntersectionObserver(
@@ -176,27 +167,6 @@ export default function Marketing() {
     return () => io.disconnect();
   }, []);
 
-  async function onSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!email.includes("@")) return;
-    setSubmitState("sending");
-    try {
-      if (WAITLIST_ENDPOINT) {
-        const res = await fetch(WAITLIST_ENDPOINT, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email }),
-        });
-        if (!res.ok) throw new Error("Bad status");
-      } else {
-        await new Promise((r) => setTimeout(r, 700));
-      }
-      setSubmitState("done");
-    } catch {
-      setSubmitState("error");
-    }
-  }
-
   return (
     <main className="lp-root">
       <NoiseLayer />
@@ -207,9 +177,9 @@ export default function Marketing() {
           ask<em>mai</em>
         </span>
         <nav className="lp-nav-right">
-          <a href="#waitlist" className="lp-nav-cta">
-            Get your twin
-          </a>
+          <Link href="/creator-signup" className="lp-nav-cta">
+            Creator Sign Up
+          </Link>
         </nav>
       </header>
 
@@ -223,41 +193,23 @@ export default function Marketing() {
             >
               For creators
             </p>
-            <h1 className="lp-hero-h1">
-              <span
-                className="lp-line lp-fade-in"
-                style={{ animationDelay: "180ms" }}
-              >
-                Your AI twin.
-              </span>{" "}
-              <span
-                className="lp-line lp-fade-in"
-                style={{ animationDelay: "320ms" }}
-              >
-                Your voice.
-              </span>{" "}
-              <span
-                className="lp-line lp-fade-in lp-accent-ink"
-                style={{ animationDelay: "460ms" }}
-              >
-                Your links.
-              </span>
+            <h1 className="lp-hero-h1 lp-fade-in" style={{ animationDelay: "200ms" }}>
+              Your digital twin that engages with your followers in your{" "}
+              <span className="lp-accent-ink">voice,</span> and helps you
+              monetize your{" "}
+              <span className="lp-accent-ink">links.</span>
             </h1>
-            <p
-              className="lp-sub lp-fade-in"
-              style={{ animationDelay: "640ms" }}
-            >
-              Lives in your bio. Recommends in your voice. Earns on the
-              affiliate links you already have.
-            </p>
             <div
               className="lp-cta-row lp-fade-in"
-              style={{ animationDelay: "780ms" }}
+              style={{ animationDelay: "560ms" }}
             >
-              <a href="#waitlist" className="lp-btn lp-btn-primary lp-btn-large">
-                Get your twin
+              <Link
+                href="/creator-signup"
+                className="lp-btn lp-btn-primary lp-btn-large"
+              >
+                Creator Sign Up
                 <ArrowRight />
-              </a>
+              </Link>
             </div>
           </div>
 
@@ -335,55 +287,23 @@ export default function Marketing() {
       </section>
 
       {/* ---------- CTA ---------- */}
-      <section id="waitlist" className="lp-cta" data-reveal>
+      <section className="lp-cta" data-reveal>
         <p className="lp-eyebrow">Apply</p>
         <h2 className="lp-cta-h2">
           Change nothing.{" "}
           <span className="lp-accent-ink">Earn more.</span>
         </h2>
         <p className="lp-cta-sub">
-          We&apos;re onboarding a small group of creators next. Drop your
-          email and we&apos;ll be in touch.
+          We&apos;re onboarding a small group of creators next. Tell us
+          where to find you and we&apos;ll be in touch.
         </p>
-        <form onSubmit={onSubmit} className="lp-form">
-          <input
-            type="email"
-            required
-            inputMode="email"
-            placeholder="your@email.com"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            className="lp-input"
-            disabled={submitState === "sending" || submitState === "done"}
-            aria-label="email"
-          />
-          <button
-            type="submit"
-            className="lp-btn lp-btn-primary"
-            disabled={
-              submitState === "sending" ||
-              submitState === "done" ||
-              !email.includes("@")
-            }
-          >
-            {submitState === "done"
-              ? "You're on the list"
-              : submitState === "sending"
-              ? "Sending…"
-              : "Apply"}
-            {submitState !== "done" && <ArrowRight />}
-          </button>
-        </form>
-        {submitState === "done" && (
-          <p className="lp-form-note">
-            We&apos;ll reach out from hi@askmai.co with next steps.
-          </p>
-        )}
-        {submitState === "error" && (
-          <p className="lp-form-note lp-form-note-error">
-            Something hiccupped. Try again, or email us at hi@askmai.co.
-          </p>
-        )}
+        <Link
+          href="/creator-signup"
+          className="lp-btn lp-btn-primary lp-btn-large"
+        >
+          Creator Sign Up
+          <ArrowRight />
+        </Link>
       </section>
 
       {/* ---------- FOOTER ---------- */}
