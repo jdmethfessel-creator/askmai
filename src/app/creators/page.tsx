@@ -182,7 +182,6 @@ export default async function CreatorsPage() {
           <Link href="/" className="lp-wordmark lp-wordmark-sm" style={{ textDecoration: "none", color: "inherit" }}>
             ask<em>mai</em>
           </Link>
-          <span className="lp-footer-note">Built in NYC + Miami.</span>
           <span className="lp-footer-meta">
             <Link href="/" className="lp-footer-link">
               Home

@@ -31,7 +31,28 @@ export async function POST(request: Request) {
 
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
   const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000";
+  // Prefer the explicit env var, otherwise fall back to the request's
+  // own origin. On Vercel the origin is https://askmai.co for prod
+  // traffic; in dev it's http://localhost:3000. The previous silent
+  // "http://localhost:3000" hardcode was the bug: deploys that
+  // missed setting NEXT_PUBLIC_SITE_URL emailed a localhost link,
+  // and clicking the email landed users on their own machine instead
+  // of prod. The callback route already uses this same pattern.
+  const siteUrl =
+    process.env.NEXT_PUBLIC_SITE_URL ?? new URL(request.url).origin;
+
+  // Loud-log when a production-looking request resolves to a
+  // localhost site URL so this kind of misconfiguration screams in
+  // the function log instead of failing silently in users' inboxes.
+  if (
+    /^https?:\/\/localhost/i.test(siteUrl) &&
+    !/^https?:\/\/localhost/i.test(new URL(request.url).origin)
+  ) {
+    console.error(
+      `[auth] siteUrl resolved to ${siteUrl} on a non-localhost request — ` +
+        `NEXT_PUBLIC_SITE_URL is probably misset on this deploy.`
+    );
+  }
 
   // The magic-link URL preserves query string, so the callback receives
   // both ?code= and ?next= and can redirect the user back to wherever

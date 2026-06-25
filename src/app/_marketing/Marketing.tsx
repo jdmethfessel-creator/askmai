@@ -391,7 +391,6 @@ export default function Marketing() {
         <span className="lp-wordmark lp-wordmark-sm">
           ask<em>mai</em>
         </span>
-        <span className="lp-footer-note">Built in NYC + Miami.</span>
         <span className="lp-footer-meta">
           <a href="mailto:hi@askmai.co" className="lp-footer-link">
             hi@askmai.co
