@@ -41,20 +41,41 @@ export async function POST(request: Request) {
     );
   }
 
-  const { data, error } = await supabaseAdmin()
+  const sb = supabaseAdmin();
+  // `hidden` column is the soft-hide flag. Column-tolerant: if the
+  // migration hasn't been applied yet the primary query returns 42703
+  // and we retry without the column, treating every creator as visible.
+  // Once the column exists, hidden=true 404s here just like the page
+  // route, so a direct API hit can't bypass the visibility gate.
+  const primary = await sb
     .from("creators")
-    .select("id, slug, name, bio, voice_prompt, taste_profile")
+    .select("id, slug, name, bio, voice_prompt, taste_profile, hidden")
     .eq("slug", slug)
     .maybeSingle();
 
-  if (error || !data) {
-    return Response.json({ error: "Creator not found" }, { status: 404 });
-  }
-
-  const creator = data as Pick<
+  type CreatorRow = Pick<
     Creator,
     "id" | "slug" | "name" | "bio" | "voice_prompt" | "taste_profile"
-  >;
+  > & { hidden?: boolean | null };
+  let creator: CreatorRow | null = null;
+  if (primary.error?.code === "42703") {
+    const fb = await sb
+      .from("creators")
+      .select("id, slug, name, bio, voice_prompt, taste_profile")
+      .eq("slug", slug)
+      .maybeSingle();
+    if (fb.error || !fb.data) {
+      return Response.json({ error: "Creator not found" }, { status: 404 });
+    }
+    creator = { ...(fb.data as CreatorRow), hidden: false };
+  } else if (primary.error || !primary.data) {
+    return Response.json({ error: "Creator not found" }, { status: 404 });
+  } else {
+    creator = primary.data as CreatorRow;
+  }
+  if (!creator || creator.hidden) {
+    return Response.json({ error: "Creator not found" }, { status: 404 });
+  }
   const creatorId = creator.id;
 
   const catalog = await loadCatalog(creatorId, message);
