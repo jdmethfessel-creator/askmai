@@ -21,9 +21,16 @@ type MockupRec = {
   image: string;
 };
 
-const HERO_BOARD_CAPTION =
-  "okay dinner-night, this is the move. silky drama, no fuss.";
-const HERO_BOARD: { hero: MockupRec; finishers: MockupRec[] } = {
+// Three mockups, three distinct categories, all in the
+// question → answer → board format so the mechanic is obvious
+// at a glance. No restaurants / hotels / travel-booking — those
+// aren't categories the product serves yet.
+
+// 1) Special-occasion single look.
+const WEDDING_QUESTION = "what do I wear to a fall wedding";
+const WEDDING_CAPTION =
+  "fall wedding = something rich, a little drama, easy to dance in. this dress does the work, the rest just finishes it.";
+const WEDDING_BOARD: { hero: MockupRec; finishers: MockupRec[] } = {
   hero: {
     brand: "Solace London",
     name: "The Imani Maxi Dress",
@@ -35,6 +42,16 @@ const HERO_BOARD: { hero: MockupRec; finishers: MockupRec[] } = {
       ),
   },
   finishers: [
+    {
+      brand: "Christian Louboutin",
+      name: "Rosa Z Patent Leather Sandals",
+      price: "$1,045",
+      image:
+        "/api/img?url=" +
+        encodeURIComponent(
+          "https://static.shopmy.us/uploads/pretty-prod-1771328973318"
+        ),
+    },
     {
       brand: "Cult Gaia",
       name: "Emilia Mini Bag",
@@ -55,59 +72,14 @@ const HERO_BOARD: { hero: MockupRec; finishers: MockupRec[] } = {
           "https://static.shopmy.us/uploads/a66e3aa9-b28d-4218-93a3-199176eda0aa_RC_Q3-2025_AUGUST-AFFORDABLE-CORE_TWISTED-DIAMOND-HUGGIES_1_4472x4472.jpg"
         ),
     },
-    {
-      brand: "Suit Supply",
-      name: "Italian Calf Suede Loafer",
-      price: "$329",
-      image:
-        "/api/img?url=" +
-        encodeURIComponent(
-          "https://static.shopmy.us/uploads/pretty-prod-1764356633928"
-        ),
-    },
   ],
 };
 
-const EARN_BOARD_CAPTION =
-  "the everyday three. all from her real ShopMy feed.";
-const EARN_BOARD: { hero: MockupRec; finishers: MockupRec[] } = {
-  hero: {
-    brand: "Reformation",
-    name: "Balia Linen Dress",
-    price: "$278",
-    image:
-      "/api/img?url=" +
-      encodeURIComponent(
-        "https://static.shopmy.us/uploads/img-product-1751903970581"
-      ),
-  },
-  finishers: [
-    {
-      brand: "Citizens of Humanity",
-      name: "Brynn Low-Rise Wide-Leg Jeans",
-      price: "$298",
-      image:
-        "/api/img?url=" +
-        encodeURIComponent(
-          "https://static.shopmy.us/uploads/pretty-prod-1776699683773"
-        ),
-    },
-    {
-      brand: "Enza Costa",
-      name: "Silk Knit Perfect Tee",
-      price: "$207",
-      image:
-        "/api/img?url=" +
-        encodeURIComponent(
-          "https://static.shopmy.us/uploads/1a0aad90-6c35-4311-9860-7507371353b2_resized-image-2026-01-21T195700.310.png"
-        ),
-    },
-  ],
-};
-
-const CHAT_BOARD_CAPTION =
+// 2) Multi-outfit travel/packing — the existing strong example.
+const PACK_QUESTION = "what should I pack for a NYC weekend";
+const PACK_CAPTION =
   "okay a NYC weekend = walk-all-day, dress for dinner. here's what i'd pack:";
-const CHAT_BOARD: { hero: MockupRec; finishers: MockupRec[] } = {
+const PACK_BOARD: { hero: MockupRec; finishers: MockupRec[] } = {
   hero: {
     brand: "Citizens of Humanity",
     name: "Brynn Drawstring Jeans",
@@ -137,6 +109,55 @@ const CHAT_BOARD: { hero: MockupRec; finishers: MockupRec[] } = {
         "/api/img?url=" +
         encodeURIComponent(
           "https://static.shopmy.us/uploads/img-product-1732498195189"
+        ),
+    },
+  ],
+};
+
+// 3) Beauty/skincare routine — same mechanic, different category.
+const SKIN_QUESTION = "build me a simple skincare routine";
+const SKIN_CAPTION =
+  "simple routine, real results. C E Ferulic in the morning, hydrate, moisturize, repair at night. that's the whole game.";
+const SKIN_BOARD: { hero: MockupRec; finishers: MockupRec[] } = {
+  hero: {
+    brand: "SkinCeuticals",
+    name: "C E Ferulic Vitamin C Serum",
+    price: "$185",
+    image:
+      "/api/img?url=" +
+      encodeURIComponent(
+        "https://static.shopmy.us/uploads/pretty-prod-1775027500571"
+      ),
+  },
+  finishers: [
+    {
+      brand: "Rhode Skin",
+      name: "Glazing Milk Ceramide Essence",
+      price: "$32",
+      image:
+        "/api/img?url=" +
+        encodeURIComponent(
+          "https://static.shopmy.us/uploads/9eb95c13-f6b8-4c98-9d43-f90d53719e76_download-2026-05-16T163952.524.png"
+        ),
+    },
+    {
+      brand: "Charlotte Tilbury",
+      name: "Magic Cream Moisturizer",
+      price: "$32",
+      image:
+        "/api/img?url=" +
+        encodeURIComponent(
+          "https://static.shopmy.us/uploads/pretty-prod-1775973078244"
+        ),
+    },
+    {
+      brand: "Dieux",
+      name: "Deliverance 3-in-1 Repair Serum",
+      price: "$62",
+      image:
+        "/api/img?url=" +
+        encodeURIComponent(
+          "https://static.shopmy.us/uploads/pretty-prod-1779311904381"
         ),
     },
   ],
@@ -224,11 +245,11 @@ export default function Marketing() {
           </div>
 
           <div className="lp-hero-board lp-fade-in" style={{ animationDelay: "520ms" }}>
-            <ResultBoardMockup
-              caption={HERO_BOARD_CAPTION}
-              hero={HERO_BOARD.hero}
-              finishers={HERO_BOARD.finishers}
-              variant="hero"
+            <ChatMockup
+              userMessage={WEDDING_QUESTION}
+              twinIntro={WEDDING_CAPTION}
+              hero={WEDDING_BOARD.hero}
+              finishers={WEDDING_BOARD.finishers}
             />
           </div>
         </div>
@@ -237,12 +258,11 @@ export default function Marketing() {
       {/* ---------- EARN MORE ---------- */}
       <section className="lp-pillar lp-pillar-image-left" data-reveal>
         <div className="lp-pillar-visual">
-          <ResultBoardMockup
-            caption={EARN_BOARD_CAPTION}
-            hero={EARN_BOARD.hero}
-            finishers={EARN_BOARD.finishers}
-            variant="standard"
-            showShopPills
+          <ChatMockup
+            userMessage={SKIN_QUESTION}
+            twinIntro={SKIN_CAPTION}
+            hero={SKIN_BOARD.hero}
+            finishers={SKIN_BOARD.finishers}
           />
         </div>
         <div className="lp-pillar-copy">
@@ -288,10 +308,10 @@ export default function Marketing() {
         </div>
         <div className="lp-pillar-visual">
           <ChatMockup
-            userMessage="what should I pack for a NYC weekend"
-            twinIntro={CHAT_BOARD_CAPTION}
-            hero={CHAT_BOARD.hero}
-            finishers={CHAT_BOARD.finishers}
+            userMessage={PACK_QUESTION}
+            twinIntro={PACK_CAPTION}
+            hero={PACK_BOARD.hero}
+            finishers={PACK_BOARD.finishers}
           />
         </div>
       </section>
