@@ -193,12 +193,22 @@ export default function Marketing() {
             >
               For creators
             </p>
-            <h1 className="lp-hero-h1 lp-fade-in" style={{ animationDelay: "200ms" }}>
-              Your digital twin that engages with your followers in your{" "}
-              <span className="lp-accent-ink">voice,</span> and helps you
-              monetize your{" "}
-              <span className="lp-accent-ink">links.</span>
+            <h1
+              className="lp-hero-h1 lp-fade-in"
+              style={{ animationDelay: "200ms" }}
+            >
+              Your digital twin.
             </h1>
+            <p
+              className="lp-sub lp-fade-in"
+              style={{ animationDelay: "400ms" }}
+            >
+              Engages your followers in your{" "}
+              <span className="lp-accent-ink">voice,</span> and monetizes
+              the{" "}
+              <span className="lp-accent-ink">links</span> you already
+              have.
+            </p>
             <div
               className="lp-cta-row lp-fade-in"
               style={{ animationDelay: "560ms" }}
