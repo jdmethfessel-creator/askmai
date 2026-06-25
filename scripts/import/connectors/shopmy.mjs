@@ -27,6 +27,191 @@
 const API = "https://apiv3.shopmy.us";
 const SHOP_ORIGIN = "https://shopmy.us";
 
+// ShopMy → AskMai category enum mapping.
+//
+// ShopMy tags products at three levels:
+//   Industry_name   "Fashion & Accessories", "Beauty", "Home", ...
+//   Department_name "Apparel", "Footwear", "Jewelry", "Skincare", ...
+//   Category_name   "Dresses", "Sandals", "Necklaces", "Serums", ...
+//
+// AskMai's chat route filters loadCatalog by an IN check against
+// fashion/beauty/accessories/dining/travel/lifestyle. Without this
+// remap every imported row carries a granular ShopMy value (e.g.
+// "Dresses") and the IN filter rejects all of it.
+//
+// Resolution order: try Category_name (most specific), then
+// Department_name, then Industry_name. Anything that doesn't match
+// falls through to null — better to drop a product from category-
+// filtered queries than to dump it under a wrong bucket and have the
+// model recommend a candle for a dress request.
+
+const CATEGORY_MAP = {
+  // Apparel
+  dresses: "fashion",
+  tops: "fashion",
+  pants: "fashion",
+  jeans: "fashion",
+  denim: "fashion",
+  coats: "fashion",
+  jackets: "fashion",
+  blazers: "fashion",
+  sweaters: "fashion",
+  knits: "fashion",
+  cardigans: "fashion",
+  shorts: "fashion",
+  skirts: "fashion",
+  swimwear: "fashion",
+  leggings: "fashion",
+  "sports bras": "fashion",
+  "lingerie & intimates": "fashion",
+  rompers: "fashion",
+  jumpsuits: "fashion",
+  activewear: "fashion",
+  loungewear: "fashion",
+  outerwear: "fashion",
+  vests: "fashion",
+  suits: "fashion",
+  // Footwear, bags, jewelry, eyewear, hats
+  heels: "accessories",
+  sandals: "accessories",
+  sneakers: "accessories",
+  boots: "accessories",
+  flats: "accessories",
+  loafers: "accessories",
+  mules: "accessories",
+  clogs: "accessories",
+  slides: "accessories",
+  pumps: "accessories",
+  slippers: "accessories",
+  bags: "accessories",
+  clutches: "accessories",
+  totes: "accessories",
+  backpacks: "accessories",
+  crossbody: "accessories",
+  satchels: "accessories",
+  handbags: "accessories",
+  wallets: "accessories",
+  necklaces: "accessories",
+  bracelets: "accessories",
+  earrings: "accessories",
+  rings: "accessories",
+  jewelry: "accessories",
+  watches: "accessories",
+  sunglasses: "accessories",
+  hats: "accessories",
+  belts: "accessories",
+  scarves: "accessories",
+  gloves: "accessories",
+  // Beauty
+  fragrance: "beauty",
+  perfume: "beauty",
+  cologne: "beauty",
+  serums: "beauty",
+  moisturizers: "beauty",
+  cleansers: "beauty",
+  toners: "beauty",
+  "face masks": "beauty",
+  sunscreen: "beauty",
+  spf: "beauty",
+  "lip balm": "beauty",
+  "lip gloss": "beauty",
+  lipstick: "beauty",
+  blush: "beauty",
+  bronzer: "beauty",
+  highlighter: "beauty",
+  mascara: "beauty",
+  eyeliner: "beauty",
+  eyeshadow: "beauty",
+  foundation: "beauty",
+  concealer: "beauty",
+  "makeup brushes & applicators": "beauty",
+  makeup: "beauty",
+  skincare: "beauty",
+  "hair care": "beauty",
+  shampoo: "beauty",
+  conditioner: "beauty",
+  "nail polish": "beauty",
+  "body care": "beauty",
+  // Home / lifestyle
+  "candles & waxes": "lifestyle",
+  candles: "lifestyle",
+  serveware: "lifestyle",
+  dinnerware: "lifestyle",
+  glassware: "lifestyle",
+  kitchenware: "lifestyle",
+  bedding: "lifestyle",
+  bath: "lifestyle",
+  decor: "lifestyle",
+  furniture: "lifestyle",
+  lighting: "lifestyle",
+  art: "lifestyle",
+  rugs: "lifestyle",
+  pillows: "lifestyle",
+  vases: "lifestyle",
+  "vitamins & supplements": "lifestyle",
+  wellness: "lifestyle",
+  fitness: "lifestyle",
+  books: "lifestyle",
+  stationery: "lifestyle",
+  // Travel-specific
+  luggage: "travel",
+  suitcases: "travel",
+  "travel accessories": "travel",
+};
+
+const DEPARTMENT_MAP = {
+  apparel: "fashion",
+  clothing: "fashion",
+  outerwear: "fashion",
+  footwear: "accessories",
+  shoes: "accessories",
+  jewelry: "accessories",
+  bags: "accessories",
+  handbags: "accessories",
+  accessories: "accessories",
+  eyewear: "accessories",
+  skincare: "beauty",
+  makeup: "beauty",
+  fragrance: "beauty",
+  hair: "beauty",
+  "hair care": "beauty",
+  "body care": "beauty",
+  wellness: "lifestyle",
+  home: "lifestyle",
+  "home decor": "lifestyle",
+  kitchen: "lifestyle",
+  "kitchen & dining": "lifestyle",
+  bedroom: "lifestyle",
+  bath: "lifestyle",
+  fitness: "lifestyle",
+  travel: "travel",
+};
+
+const INDUSTRY_MAP = {
+  "fashion & accessories": "fashion",
+  fashion: "fashion",
+  beauty: "beauty",
+  home: "lifestyle",
+  lifestyle: "lifestyle",
+  wellness: "lifestyle",
+  "food & drink": "lifestyle",
+  travel: "travel",
+};
+
+function normalizeCategory(r) {
+  const cat = (r.Category_name || "").toString().trim().toLowerCase();
+  if (cat && CATEGORY_MAP[cat]) return CATEGORY_MAP[cat];
+  const dept = (r.Department_name || "").toString().trim().toLowerCase();
+  if (dept && DEPARTMENT_MAP[dept]) return DEPARTMENT_MAP[dept];
+  // Industry "Fashion & Accessories" is ambiguous — if we reached
+  // this line without matching a category or department we still
+  // know it's apparel-adjacent and "fashion" is the safer bucket
+  // than null. Same logic for the other industries.
+  const industry = (r.Industry_name || "").toString().trim().toLowerCase();
+  if (industry && INDUSTRY_MAP[industry]) return INDUSTRY_MAP[industry];
+  return null;
+}
+
 export const connector = {
   network: "shopmy",
 
@@ -145,12 +330,12 @@ function normalizeOne(r, curatorId) {
     if (cover?.image && typeof cover.image === "string") image_url = cover.image;
   }
 
-  // Category: prefer the most specific level ShopMy gives us.
-  const category =
-    r.Category_name ||
-    r.Department_name ||
-    r.Industry_name ||
-    null;
+  // Map ShopMy's granular Category_name / Department_name /
+  // Industry_name into our enum so loadCatalog's IN-filter can find
+  // them. Without this every product lands on a granular value like
+  // "Dresses" or "Sandals" and the chat route's IN filter rejects
+  // them. See normalizeCategory below for the table.
+  const category = normalizeCategory(r);
 
   // Price: ShopMy stores fallbackPrice as a number in USD (per data
   // inspection). Keep as a stringified dollar amount so the runner's

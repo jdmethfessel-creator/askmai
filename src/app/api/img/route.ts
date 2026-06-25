@@ -18,9 +18,6 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const ALLOWED_HOSTS = new Set<string>([
-  // ShopMy feed CDNs (kept; some legacy rows may still point here)
-  "production-shopmyshelf-pins.s3.us-east-2.amazonaws.com",
-  "production-shopmyshelf-uploads.s3.us-east-2.amazonaws.com",
   // Common retailer image CDNs we expect to encounter as feeds expand.
   "static.zara.net",
   "lp2.hm.com",
@@ -31,14 +28,33 @@ const ALLOWED_HOSTS = new Set<string>([
   "static.zarahome.net",
   "images.ulta.com",
   "www.sephora.com",
+  "sephora.com",
   "cdn.shopify.com",
+  // Specific retailer CDNs seen across the ShopMy import (e.g.
+  // products whose source-of-truth image lives on the brand's own
+  // CDN rather than ShopMy's S3). Tight allowlist — not a blanket
+  // pass on every retailer.
+  "images.lululemon.com",
+  "ringconcierge.com",
+  "m.media-amazon.com",
 ]);
 
-// Bing image-search thumbnails (where the re-ingest script puts feed images).
-// All Bing thumbs come from ts0–ts9.mm.bing.net; pinning the pattern lets us
-// keep SSRF protection without enumerating every subdomain.
+// Pattern allowlist. Keeps SSRF protection tight (we still validate
+// the host) while letting in:
+//  - Bing image-search thumbnails (ts0..ts9.mm.bing.net, used by the
+//    creator-avatar pipeline and any aggregator-tier image lookup).
+//  - Any subdomain of shopmy.us (covers static.shopmy.us and any
+//    other CDN host they rotate to). ShopMy is a creator-platform
+//    partner, not a generic third-party.
+//  - ShopMy's S3 bucket family across all the regional / dash /
+//    no-region URL variants we observe in their payload. Bucket names
+//    are pinned (`production-shopmyshelf-pins` /
+//    `production-shopmyshelf-uploads`) so we're not opening a hole
+//    for arbitrary AWS-hosted images.
 const ALLOWED_HOST_PATTERNS: RegExp[] = [
   /^ts\d+\.(?:mm|explicit)\.bing\.net$/,
+  /^(?:[\w-]+\.)*shopmy\.us$/,
+  /^production-shopmyshelf-(?:pins|uploads)\.s3(?:[.-]us-east-2)?\.amazonaws\.com$/,
 ];
 
 const ALLOWED_CONTENT_TYPE = /^image\//i;
