@@ -235,8 +235,36 @@ async function bingHeadshot(query) {
 
 // ---------- main ---------------------------------------------------
 
-console.log("Searching Bing for Madison Waller headshot…");
-const avatarUrl = await bingHeadshot("Madison Waller goinggonemadd travel blog");
+// Madison's real ShopMy avatar (her actual profile photo). Served by
+// img.shopmy.us — a *.shopmy.us subdomain, already allowlisted by the
+// /api/img proxy's pattern rule. Fall back to a Bing headshot lookup
+// only if a fresh seed is run without this URL configured.
+const SHOPMY_AVATAR =
+  "https://img.shopmy.us/eyJidWNrZXQiOiJwcm9kdWN0aW9uLXNob3BteXNoZWxmLXVwbG9hZHMiLCJrZXkiOiJpbWctdXNlci1kZXJlcy0xNzIxMzEtMTc3NjIwMDgxNDg2NiIsImVkaXRzIjp7InJlc2l6ZSI6eyJ3aWR0aCI6MTUzNiwiZml0IjoiY292ZXIiLCJ3aXRob3V0RW5sYXJnZW1lbnQiOnRydWV9fX0=";
+
+let avatarUrl = SHOPMY_AVATAR;
+console.log(`Using ShopMy avatar: ${avatarUrl.slice(0, 60)}…`);
+// Validate it still resolves to an image; if ShopMy ever invalidates
+// the resize token, fall back to Bing rather than store a dead URL.
+try {
+  const probe = await fetch(avatarUrl, {
+    headers: { "User-Agent": UA },
+    signal: AbortSignal.timeout(10_000),
+  });
+  const ct = probe.headers.get("content-type") ?? "";
+  if (!probe.ok || !ct.startsWith("image/")) {
+    console.warn(
+      `  ShopMy avatar probe failed (HTTP ${probe.status}, ct=${ct}). ` +
+        `Falling back to Bing.`
+    );
+    avatarUrl = await bingHeadshot("Madison Waller goinggonemadd travel blog");
+  }
+} catch (err) {
+  console.warn(
+    `  ShopMy avatar probe errored (${err.message}). Falling back to Bing.`
+  );
+  avatarUrl = await bingHeadshot("Madison Waller goinggonemadd travel blog");
+}
 console.log(`  avatar_url = ${avatarUrl ?? "(none found, will leave null)"}\n`);
 
 console.log("Upserting creators row…");

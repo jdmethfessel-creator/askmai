@@ -714,7 +714,15 @@ function EditorialBoard({
     onHeroFail();
     return null;
   }
-  const finishers = products.filter((p) => p !== hero);
+  // Finishers must be photo-having. Letter-tile placeholders never
+  // belong in the visual board when image-having alternatives exist
+  // (server-side prefetch already gave every non-synth aggregator a
+  // Bing lookup, so a missing image_url at this point is permanent).
+  // Synth scanner items are tile-only by design and are also dropped
+  // from the board.
+  const finishers = products.filter(
+    (p) => p !== hero && Boolean(p.image_url) && !p.synth
+  );
   const total = outfitTotal(products);
   return (
     <div className="space-y-3">

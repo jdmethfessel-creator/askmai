@@ -231,9 +231,21 @@ export async function POST(request: Request) {
         // would never count toward eligibility — even though the lazy
         // client lookup would fill them in for the eventual render.
         const enrichedRecs = await prefetchAggregatorImages(finalRecs);
-        if (enrichedRecs.length > 0) {
+        // Card ranker. Attribution is the priority (creator's own
+        // ShopMy/LTK links come first), image presence is the
+        // tiebreaker. Order:
+        //   1) feed/owned_feed WITH image_url   (own link + photo)
+        //   2) feed/owned_feed                  (own link, no photo)
+        //   3) aggregator WITH image_url        (off-catalog with photo)
+        //   4) anything else                    (off-catalog no photo,
+        //                                        synth scanner items)
+        // Places are untouched — they go through their own tier and
+        // attribution model. Stable sort preserves the model's
+        // intra-rank ordering, so its "best first" intent survives.
+        const rankedRecs = rankProductsByAttributionThenImage(enrichedRecs);
+        if (rankedRecs.length > 0) {
           controller.enqueue(
-            encoder.encode(`\n${RECS_MARKER}\n${JSON.stringify(enrichedRecs)}`)
+            encoder.encode(`\n${RECS_MARKER}\n${JSON.stringify(rankedRecs)}`)
           );
         }
         // Log truncation diagnostics so we can spot recurring max_tokens
@@ -1390,6 +1402,60 @@ async function augmentWithProsePlaces(
   );
 
   return [...recs, ...additions];
+}
+
+/**
+ * Stable sort that re-ranks product recs by (attribution, then image
+ * presence). Places are left in their original relative position so
+ * place-tier recs don't get reshuffled by a product-only priority
+ * rule.
+ *
+ * Rank table:
+ *   1  feed/owned_feed product WITH image_url     (best card)
+ *   2  feed/owned_feed product, no image_url      (kept — own link
+ *                                                  matters even if
+ *                                                  the photo will be
+ *                                                  a letter tile)
+ *   3  aggregator product WITH image_url          (gap-filler with
+ *                                                  a real photo)
+ *   4  everything else                            (off-catalog with
+ *                                                  no image, synth
+ *                                                  scanner items)
+ *
+ * The model emits recs in its own "best first" intent; this sort
+ * only re-orders within rank ties so that intent is preserved.
+ */
+function rankProductsByAttributionThenImage(recs: Rec[]): Rec[] {
+  type Bucket = { rec: Rec; origIndex: number; rank: number };
+  const isPlaceLike = (r: Rec) =>
+    r.tier === "place" ||
+    r.tier === "hotel" ||
+    r.category === "dining" ||
+    r.category === "travel";
+
+  const products: Bucket[] = [];
+  const placesInOrder: Bucket[] = [];
+  recs.forEach((rec, origIndex) => {
+    if (isPlaceLike(rec)) {
+      placesInOrder.push({ rec, origIndex, rank: 0 });
+      return;
+    }
+    const isFeed = rec.tier === "feed" || rec.tier === "owned_feed";
+    const hasImage = Boolean(rec.image_url) && !rec.synth;
+    let rank = 4;
+    if (isFeed && hasImage) rank = 1;
+    else if (isFeed) rank = 2;
+    else if (hasImage) rank = 3;
+    products.push({ rec, origIndex, rank });
+  });
+
+  products.sort((a, b) =>
+    a.rank !== b.rank ? a.rank - b.rank : a.origIndex - b.origIndex
+  );
+  // Products first (re-ranked), then places (original order). The
+  // client's partitionRecs already separates them, so the relative
+  // ordering within each group is what's visible to the user.
+  return [...products.map((p) => p.rec), ...placesInOrder.map((p) => p.rec)];
 }
 
 /**
