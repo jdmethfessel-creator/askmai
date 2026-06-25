@@ -715,12 +715,87 @@ function extractLeadCaption(prose: string): string {
   return trimmed.slice(0, 180).trim() + "…";
 }
 
-const REFINE_CHIPS: { label: string; prompt: string }[] = [
+type RefineChip = { label: string; prompt: string };
+
+// Category-keyed refine chip sets. The board picks ONE set based on
+// its dominant product category so a skincare board never offers
+// "dressier" and an outfit board never offers "fragrance-free." Each
+// set ends with two universal-feeling chips ("cheaper" + a "different
+// X" axis) that work regardless of category.
+const FASHION_CHIPS: RefineChip[] = [
   { label: "dressier", prompt: "make it dressier" },
+  { label: "more casual", prompt: "make it more casual" },
+  { label: "different color", prompt: "show me different colors" },
   { label: "cheaper", prompt: "show me a cheaper version of this outfit" },
-  { label: "more color", prompt: "more color, less neutral" },
+];
+
+const BEAUTY_CHIPS: RefineChip[] = [
+  { label: "gentler", prompt: "show me gentler options" },
+  {
+    label: "fragrance-free",
+    prompt: "show me fragrance-free alternatives",
+  },
+  { label: "cleaner ingredients", prompt: "show me cleaner-ingredient options" },
+  { label: "cheaper", prompt: "show me a cheaper version" },
+];
+
+const LIFESTYLE_CHIPS: RefineChip[] = [
+  { label: "more minimal", prompt: "show me a more minimal version" },
+  { label: "different style", prompt: "try a different style" },
+  { label: "cheaper", prompt: "show me a cheaper version" },
+];
+
+// Used for mixed boards or when the board's category can't be told
+// from its products. Stays neutral on purpose.
+const UNIVERSAL_CHIPS: RefineChip[] = [
+  { label: "cheaper", prompt: "show me a cheaper version" },
   { label: "different vibe", prompt: "try a different vibe" },
 ];
+
+type CategoryBucket = "fashion" | "beauty" | "lifestyle" | "mixed";
+
+function categoryBucketOf(c: string | undefined | null): CategoryBucket | null {
+  const v = (c ?? "").toLowerCase();
+  // Bags / shoes / jewelry / belts / hats all live under "accessories"
+  // in our enum but belong with fashion chips ("dressier" still makes
+  // sense for a heel; "fragrance-free" doesn't).
+  if (v === "fashion" || v === "accessories") return "fashion";
+  if (v === "beauty") return "beauty";
+  if (v === "lifestyle" || v === "travel") return "lifestyle";
+  return null;
+}
+
+function dominantBucket(products: Rec[]): CategoryBucket {
+  const counts: Record<string, number> = {};
+  let total = 0;
+  for (const p of products) {
+    const bucket = categoryBucketOf(p.category);
+    if (!bucket || bucket === "mixed") continue;
+    counts[bucket] = (counts[bucket] ?? 0) + 1;
+    total++;
+  }
+  if (total === 0) return "mixed";
+  const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  const [topBucket, topCount] = entries[0];
+  // Dominant when ≥60% of categorizable items agree. Below that the
+  // board's a mix (e.g. an outfit + a skincare pick) and the only
+  // chips that don't read as a non-sequitur are the universal ones.
+  if (topCount / total < 0.6) return "mixed";
+  return topBucket as CategoryBucket;
+}
+
+function chipsForBoard(products: Rec[]): RefineChip[] {
+  switch (dominantBucket(products)) {
+    case "fashion":
+      return FASHION_CHIPS;
+    case "beauty":
+      return BEAUTY_CHIPS;
+    case "lifestyle":
+      return LIFESTYLE_CHIPS;
+    default:
+      return UNIVERSAL_CHIPS;
+  }
+}
 
 /**
  * Chunk an ordered product list into per-look groups. ≤5 products =>
@@ -785,7 +860,7 @@ function EditorialBoard({
       )}
       {!streaming && (
         <div className="flex flex-wrap gap-1.5 pt-1.5">
-          {REFINE_CHIPS.map((chip) => (
+          {chipsForBoard(products).map((chip) => (
             <button
               key={chip.label}
               type="button"
