@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { supabaseAdmin } from "@/lib/supabase";
+import { getServerSession } from "@/lib/session";
 import type { Creator } from "@/lib/types";
 import { CreatorAvatar } from "../_components/CreatorAvatar";
 import Chat from "./Chat";
@@ -52,6 +53,7 @@ export default async function CreatorPage({
   if (!row || row.hidden) notFound();
 
   const creator = row;
+  const session = await getServerSession();
   const theme = { ...DEFAULT_THEME, ...(creator.theme ?? {}) };
   const followerLabel = deriveFollowers(creator.taste_profile);
 
@@ -119,6 +121,8 @@ export default async function CreatorPage({
             slug={creator.slug}
             accent={theme.accent}
             creatorFirstName={creator.name.trim().split(/\s+/)[0]}
+            signedIn={Boolean(session)}
+            isSubscribed={session?.subscriptionStatus === "active"}
           />
         </section>
 

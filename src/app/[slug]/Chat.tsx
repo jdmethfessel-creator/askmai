@@ -61,10 +61,14 @@ export default function Chat({
   slug,
   accent,
   creatorFirstName,
+  signedIn,
+  isSubscribed,
 }: {
   slug: string;
   accent: string;
   creatorFirstName: string;
+  signedIn: boolean;
+  isSubscribed: boolean;
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
@@ -76,6 +80,7 @@ export default function Chat({
   const [demotedMessages, setDemotedMessages] = useState<Set<number>>(
     () => new Set()
   );
+  const [paywallOpen, setPaywallOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -109,6 +114,23 @@ export default function Chat({
           history: baseHistory,
         }),
       });
+
+      // Free-tier cap: server returns 402 {paywalled:true,…}. Drop the
+      // placeholder assistant bubble (keep the user's question), open
+      // the modal, and skip the streaming path.
+      if (res.status === 402) {
+        let parsed: { paywalled?: boolean } | null = null;
+        try {
+          parsed = await res.json();
+        } catch {
+          parsed = null;
+        }
+        if (parsed?.paywalled) {
+          setMessages((prev) => prev.slice(0, -1));
+          setPaywallOpen(true);
+          return;
+        }
+      }
 
       if (!res.ok || !res.body) {
         throw new Error(`Chat failed (${res.status})`);
@@ -326,6 +348,223 @@ export default function Chat({
           </button>
         </div>
       </form>
+
+      {paywallOpen && (
+        <PaywallModal
+          accent={accent}
+          signedIn={signedIn}
+          creatorFirstName={creatorFirstName}
+          onClose={() => setPaywallOpen(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+function PaywallModal({
+  accent,
+  signedIn,
+  creatorFirstName,
+  onClose,
+}: {
+  accent: string;
+  signedIn: boolean;
+  creatorFirstName: string;
+  onClose: () => void;
+}) {
+  const [email, setEmail] = useState("");
+  const [emailPhase, setEmailPhase] = useState<"input" | "sent">("input");
+  const [emailError, setEmailError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [planError, setPlanError] = useState<string | null>(null);
+
+  const returnTo =
+    typeof window !== "undefined"
+      ? window.location.pathname + window.location.search
+      : "/";
+
+  async function sendLink(e: React.FormEvent) {
+    e.preventDefault();
+    if (!email.includes("@") || busy) return;
+    setBusy(true);
+    setEmailError(null);
+    try {
+      const r = await fetch("/api/auth/send-link", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, returnTo }),
+      });
+      if (!r.ok) {
+        setEmailError("couldn't send the link. try again?");
+      } else {
+        setEmailPhase("sent");
+      }
+    } catch {
+      setEmailError("network blip. try again?");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function startCheckout(plan: "monthly" | "annual") {
+    if (busy) return;
+    setBusy(true);
+    setPlanError(null);
+    try {
+      const r = await fetch("/api/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ plan, returnTo }),
+      });
+      if (r.status === 401) {
+        // Session expired between modal open and click — drop back to
+        // sign-in.
+        setPlanError("Please sign in first.");
+        setBusy(false);
+        return;
+      }
+      const data = (await r.json()) as { url?: string; error?: string };
+      if (!r.ok || !data.url) {
+        setPlanError("couldn't start checkout. try again?");
+        setBusy(false);
+        return;
+      }
+      window.location.href = data.url;
+    } catch {
+      setPlanError("network blip. try again?");
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center px-4 pb-4 pt-10 sm:p-6"
+      style={{ background: "rgba(0,0,0,0.5)", backdropFilter: "blur(2px)" }}
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+    >
+      <div
+        className="w-full max-w-[420px] rounded-3xl px-6 py-7 relative"
+        style={{
+          background: "var(--surface)",
+          color: "var(--ink)",
+          boxShadow:
+            "0 24px 48px -12px rgba(0,0,0,0.32), 0 4px 16px rgba(0,0,0,0.12)",
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close"
+          className="absolute top-3 right-3 h-8 w-8 rounded-full flex items-center justify-center text-[18px] opacity-50 hover:opacity-90"
+        >
+          ×
+        </button>
+
+        <h2 className="font-serif text-[22px] leading-tight mb-1.5">
+          You&apos;ve used your free stylings.
+        </h2>
+        <p className="text-[13.5px] opacity-70 leading-relaxed mb-5">
+          Subscribe to keep chatting with {creatorFirstName} and every other
+          AskMai twin.
+        </p>
+
+        {signedIn ? (
+          <div className="space-y-2.5">
+            <button
+              type="button"
+              onClick={() => startCheckout("monthly")}
+              disabled={busy}
+              className="w-full rounded-2xl px-4 py-3.5 text-left transition-all hover:translate-y-[-1px] disabled:opacity-50"
+              style={{
+                background: accent,
+                color: "#fff",
+                boxShadow: "0 4px 12px -4px rgba(0,0,0,0.2)",
+              }}
+            >
+              <div className="flex items-baseline justify-between">
+                <span className="font-serif text-[16px]">Monthly</span>
+                <span className="font-serif text-[18px]">$9.99/mo</span>
+              </div>
+              <p className="text-[11.5px] opacity-85 mt-0.5">
+                cancel anytime
+              </p>
+            </button>
+            <button
+              type="button"
+              onClick={() => startCheckout("annual")}
+              disabled={busy}
+              className="w-full rounded-2xl px-4 py-3.5 text-left transition-all hover:translate-y-[-1px] disabled:opacity-50"
+              style={{
+                background: "rgba(0,0,0,0.04)",
+                border: `1px solid ${accent}55`,
+              }}
+            >
+              <div className="flex items-baseline justify-between">
+                <span className="font-serif text-[16px]">Annual</span>
+                <span
+                  className="font-serif text-[18px]"
+                  style={{ color: accent }}
+                >
+                  $29.99/yr
+                </span>
+              </div>
+              <p className="text-[11.5px] opacity-65 mt-0.5">
+                two months free
+              </p>
+            </button>
+            {planError && (
+              <p className="text-[12px] mt-2" style={{ color: "#c53030" }}>
+                {planError}
+              </p>
+            )}
+          </div>
+        ) : emailPhase === "input" ? (
+          <form onSubmit={sendLink} className="space-y-3">
+            <p className="text-[13px] opacity-65 leading-relaxed">
+              Sign in first — we&apos;ll email you a one-tap link.
+            </p>
+            <input
+              type="email"
+              required
+              inputMode="email"
+              placeholder="your@email.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              disabled={busy}
+              className="w-full rounded-2xl px-4 py-3 text-[14px] outline-none"
+              style={{
+                background: "rgba(0,0,0,0.04)",
+                border: "1px solid rgba(0,0,0,0.08)",
+              }}
+            />
+            <button
+              type="submit"
+              disabled={!email.includes("@") || busy}
+              className="w-full rounded-2xl px-4 py-3 text-[14px] font-medium text-white disabled:opacity-40 transition-opacity"
+              style={{ background: accent }}
+            >
+              {busy ? "Sending…" : "Send sign-in link"}
+            </button>
+            {emailError && (
+              <p className="text-[12px]" style={{ color: "#c53030" }}>
+                {emailError}
+              </p>
+            )}
+          </form>
+        ) : (
+          <div className="space-y-2">
+            <p className="font-serif text-[16px]">Check your email.</p>
+            <p className="text-[13px] opacity-70 leading-relaxed">
+              We sent a one-tap sign-in link to{" "}
+              <span className="font-medium">{email}</span>. Click it and you
+              can pick a plan.
+            </p>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

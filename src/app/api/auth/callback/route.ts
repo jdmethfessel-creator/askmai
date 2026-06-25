@@ -27,15 +27,18 @@ const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
 export async function GET(request: NextRequest) {
   const code = request.nextUrl.searchParams.get("code");
+  const nextParam = request.nextUrl.searchParams.get("next");
+  const next =
+    nextParam && nextParam.startsWith("/") ? nextParam : "/";
   const siteUrl =
     process.env.NEXT_PUBLIC_SITE_URL ?? request.nextUrl.origin;
 
   if (!code) {
-    return NextResponse.redirect(`${siteUrl}/?auth=missing_code`);
+    return NextResponse.redirect(`${siteUrl}${next}?auth=missing_code`);
   }
 
   const cookieStore = await cookies();
-  const response = NextResponse.redirect(`${siteUrl}/?auth=ok`);
+  const response = NextResponse.redirect(`${siteUrl}${next}?auth=ok`);
   const supabase = createServerClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     cookies: {
       getAll() {
@@ -53,7 +56,7 @@ export async function GET(request: NextRequest) {
       "[auth] exchangeCodeForSession failed:",
       exchange.error?.message
     );
-    return NextResponse.redirect(`${siteUrl}/?auth=exchange_failed`);
+    return NextResponse.redirect(`${siteUrl}${next}?auth=exchange_failed`);
   }
 
   const email = exchange.data.session.user.email.toLowerCase();

@@ -57,6 +57,12 @@ export const config = {
   matcher: [
     // Match every path EXCEPT the public ones. The negative lookahead
     // runs against the rest of the path after the leading slash.
-    "/((?!api/img|_next/static|_next/image|favicon|icon|apple-icon).*)",
+    //
+    // /api/webhooks/* is intentionally excluded: external callers
+    // (Stripe today, others later) authenticate via their own signed
+    // payload, never with HTTP Basic. Sending them a 401 +
+    // WWW-Authenticate would break delivery before our webhook route
+    // ever sees the signature header.
+    "/((?!api/img|api/webhooks|_next/static|_next/image|favicon|icon|apple-icon).*)",
   ],
 };
