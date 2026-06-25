@@ -4,6 +4,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { getServerSession } from "@/lib/session";
 import type { Creator } from "@/lib/types";
 import { CreatorAvatar } from "../_components/CreatorAvatar";
+import NavAuth from "../_components/NavAuth";
 import Chat from "./Chat";
 
 const DEFAULT_THEME = {
@@ -70,7 +71,19 @@ export default async function CreatorPage({
       className="min-h-dvh w-full flex flex-col items-center"
       style={{ ...cssVars, background: theme.bg, color: theme.ink }}
     >
-      <main className="w-full max-w-[480px] px-5 pt-10 sm:pt-14 pb-6 flex flex-col">
+      {/* Thin top bar — persistent Log-in entry point so a returning
+          subscriber doesn't have to trip the paywall first. Stays
+          quiet visually: just a small text affordance, themed to the
+          creator's palette via the accent var. */}
+      <div className="w-full flex justify-end px-5 sm:px-8 pt-4">
+        <NavAuth
+          signedIn={Boolean(session)}
+          className="text-[12px] tracking-[0.04em] opacity-65 hover:opacity-100 transition-opacity bg-transparent border-0 cursor-pointer"
+          signedInClassName="text-[11px] tracking-[0.04em] opacity-55 px-3 py-1 rounded-full border border-current/15"
+          modalAccent={theme.accent}
+        />
+      </div>
+      <main className="w-full max-w-[480px] px-5 pt-6 sm:pt-8 pb-6 flex flex-col">
         <header className="text-center">
           <CreatorAvatar
             src={creator.avatar_url}

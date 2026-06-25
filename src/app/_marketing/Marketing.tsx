@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useRef } from "react";
+import NavAuth from "../_components/NavAuth";
 import "./landing.css";
 
 // ---------------------------------------------------------------
@@ -172,7 +173,7 @@ const SKIN_BOARD: { hero: MockupRec; finishers: MockupRec[] } = {
 
 // ---------------------------------------------------------------
 
-export default function Marketing() {
+export default function Marketing({ signedIn }: { signedIn: boolean }) {
   // Scroll-triggered reveals — sections fade in on intersect. Kept
   // from the prior page so the atmosphere is consistent.
   const observerRef = useRef<IntersectionObserver | null>(null);
@@ -205,6 +206,12 @@ export default function Marketing() {
           ask<em>mai</em>
         </span>
         <nav className="lp-nav-right">
+          <NavAuth
+            signedIn={signedIn}
+            className="lp-nav-link lp-nav-link-btn"
+            signedInClassName="lp-nav-signedin"
+            modalAccent="#1a1610"
+          />
           <Link href="/creator-signup" className="lp-nav-cta">
             Creator Sign Up
           </Link>
