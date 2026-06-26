@@ -512,7 +512,7 @@ function PaywallModal({
                 </span>
               </div>
               <p className="text-[11.5px] opacity-65 mt-0.5">
-                two months free
+                Best value · Save $90/yr
               </p>
             </button>
             {planError && (
