@@ -47,6 +47,19 @@ export default function SignInModal({
       ? window.location.pathname + window.location.search
       : "/";
 
+  // Capture ?ref=CODE off the landing URL so the inviter gets credit
+  // even if the visitor signs up via this modal. Strict 7-char Crockford
+  // alphabet so a random param can't pollute the magic-link redirect.
+  // Invalid → silently undefined; signup proceeds normally without a
+  // referral.
+  const ref = (() => {
+    if (typeof window === "undefined") return undefined;
+    const raw = new URLSearchParams(window.location.search).get("ref");
+    if (!raw) return undefined;
+    const code = raw.trim().toUpperCase();
+    return /^[2-9A-HJKM-NP-TV-Z]{7}$/.test(code) ? code : undefined;
+  })();
+
   async function sendLink(e: React.FormEvent) {
     e.preventDefault();
     if (!email.includes("@") || busy) return;
@@ -56,7 +69,7 @@ export default function SignInModal({
       const r = await fetch("/api/auth/send-link", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, returnTo }),
+        body: JSON.stringify({ email, returnTo, ref }),
       });
       if (r.status === 429) {
         const { error } = (await r.json().catch(() => ({}))) as {

@@ -36,7 +36,7 @@ const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
 export async function POST(request: Request) {
-  let body: { email?: string; returnTo?: string };
+  let body: { email?: string; returnTo?: string; ref?: string };
   try {
     body = await request.json();
   } catch {
@@ -52,6 +52,17 @@ export async function POST(request: Request) {
     typeof body.returnTo === "string" && body.returnTo.startsWith("/")
       ? body.returnTo
       : "/";
+  // Referral code: strict 7-char Crockford alphabet. The same regex
+  // runs on the client, in this route, and again in the callback —
+  // defense in depth so a tampered URL can't smuggle anything weird
+  // into the magic-link redirect or the claim_referral RPC. Invalid
+  // → silently dropped, signup still succeeds.
+  const ref = (() => {
+    const raw = body.ref;
+    if (typeof raw !== "string") return null;
+    const code = raw.trim().toUpperCase();
+    return /^[2-9A-HJKM-NP-TV-Z]{7}$/.test(code) ? code : null;
+  })();
 
   // Prefer the explicit env var, otherwise fall back to the request's
   // own origin. On Vercel the origin is https://askmai.co for prod
@@ -70,7 +81,8 @@ export async function POST(request: Request) {
   }
 
   const callback =
-    `${siteUrl}/api/auth/callback?next=${encodeURIComponent(returnTo)}`;
+    `${siteUrl}/api/auth/callback?next=${encodeURIComponent(returnTo)}` +
+    (ref ? `&ref=${encodeURIComponent(ref)}` : "");
 
   // SSR client with writable cookie adapter. The PKCE verifier
   // cookie that signInWithOtp wants to store lands on the response

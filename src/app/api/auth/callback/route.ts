@@ -78,21 +78,72 @@ export async function GET(request: NextRequest) {
 
   const email = exchange.data.session.user.email.toLowerCase();
   const admin = supabaseAdmin();
-  const upsert = await admin
+  // Insert-then-select-on-conflict so we can tell new signup from a
+  // returning user. Only NEW signups can claim a referral; an existing
+  // user clicking a magic link with a ?ref param can't retroactively
+  // credit themselves to an inviter. This matches the "create an
+  // account via an inviter's link" semantics of the referral spec and
+  // also makes the callback idempotent — a re-clicked magic link
+  // produces isNewUser=false and the claim_referral RPC is skipped.
+  let userId: string | null = null;
+  let isNewUser = false;
+  const ins = await admin
     .from("users")
-    .upsert({ email }, { onConflict: "email" })
+    .insert({ email })
     .select("id")
-    .single();
-  if (upsert.error || !upsert.data) {
-    console.error("[auth] users upsert failed:", upsert.error?.message);
+    .maybeSingle();
+  if (ins.error) {
+    // 23505 = unique_violation → user already exists. Look it up.
+    if (ins.error.code === "23505") {
+      const sel = await admin
+        .from("users")
+        .select("id")
+        .eq("email", email)
+        .single();
+      if (sel.error || !sel.data) {
+        console.error(
+          "[auth] users select-after-conflict failed:",
+          sel.error?.message
+        );
+        return NextResponse.redirect(`${siteUrl}/?auth=user_upsert_failed`);
+      }
+      userId = sel.data.id as string;
+    } else {
+      console.error("[auth] users insert failed:", ins.error.message);
+      return NextResponse.redirect(`${siteUrl}/?auth=user_upsert_failed`);
+    }
+  } else if (ins.data) {
+    userId = ins.data.id as string;
+    isNewUser = true;
+  }
+  if (!userId) {
     return NextResponse.redirect(`${siteUrl}/?auth=user_upsert_failed`);
+  }
+
+  // Referral claim: strictly first-signup, validated ref code only.
+  // RPC is itself idempotent (only fires if referred_by IS NULL) so a
+  // duplicate callback can't double-credit. Pattern check mirrors the
+  // send-link and client-side validation; defense in depth.
+  if (isNewUser) {
+    const rawRef = request.nextUrl.searchParams.get("ref");
+    const refCode = rawRef?.trim().toUpperCase();
+    if (refCode && /^[2-9A-HJKM-NP-TV-Z]{7}$/.test(refCode)) {
+      const claim = await admin.rpc("claim_referral", {
+        p_new_user_id: userId,
+        p_ref_code: refCode,
+      });
+      if (claim.error) {
+        // Log + continue — a referral failure must never block signup.
+        console.error("[auth] claim_referral RPC failed:", claim.error.message);
+      }
+    }
   }
 
   const deviceId = cookieStore.get(DEVICE_COOKIE_NAME)?.value;
   if (deviceId) {
     await attachCounterToUser({
       deviceId,
-      userId: upsert.data.id as string,
+      userId,
     });
   }
 

@@ -383,6 +383,19 @@ function PaywallModal({
       ? window.location.pathname + window.location.search
       : "/";
 
+  // ?ref=CODE survives off the landing URL into this paywall modal too —
+  // a visitor who hit a creator page through a referral link and then
+  // gets paywalled still gets their inviter credited on signup. Strict
+  // 7-char Crockford alphabet so a random param can't pollute the
+  // magic-link redirect; invalid silently becomes undefined.
+  const ref = (() => {
+    if (typeof window === "undefined") return undefined;
+    const raw = new URLSearchParams(window.location.search).get("ref");
+    if (!raw) return undefined;
+    const code = raw.trim().toUpperCase();
+    return /^[2-9A-HJKM-NP-TV-Z]{7}$/.test(code) ? code : undefined;
+  })();
+
   async function sendLink(e: React.FormEvent) {
     e.preventDefault();
     if (!email.includes("@") || busy) return;
@@ -392,7 +405,7 @@ function PaywallModal({
       const r = await fetch("/api/auth/send-link", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, returnTo }),
+        body: JSON.stringify({ email, returnTo, ref }),
       });
       if (!r.ok) {
         setEmailError("couldn't send the link. try again?");
