@@ -78,7 +78,8 @@ const SLIDES: Slide[] = [
   // direction.
   {
     tab: "Travel",
-    query: "alaska trip — Alyeska, restaurants, packing",
+    query:
+      "planning an Alaska trip. need some help with the itinerary — give me a hotel, a couple restaurants, and the right suitcase",
     prose: (
       <>
         ok this is my JAM — <em>alaska</em> is so underrated as a trip and
