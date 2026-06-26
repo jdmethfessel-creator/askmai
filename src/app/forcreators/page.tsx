@@ -22,10 +22,42 @@ import DemoCarousel from "./DemoCarousel";
 import "../_marketing/landing.css";
 import "./forcreators.css";
 
+// OG / Twitter card metadata: when a creator pastes this URL into
+// iMessage, Slack, DMs, etc., the link unfurls with the branded share
+// card at /og/forcreators.png. metadataBase is set in layout.tsx so
+// the image URL renders absolute. robots stays noindex/nofollow —
+// the page is still unlisted; the share preview is for human-to-human
+// sharing only.
+const OG_TITLE = "AskMai";
+const OG_DESC =
+  "Better engagement with your followers. More revenue from your affiliate links.";
+const OG_URL = "https://www.askmai.co/forcreators";
+const OG_IMAGE = "/og/forcreators.png";
+
 export const metadata: Metadata = {
   title: "AskMai for Creators",
-  description: "Your taste, working while you sleep.",
+  description: OG_DESC,
   robots: { index: false, follow: false, nocache: true },
+  openGraph: {
+    title: OG_TITLE,
+    description: OG_DESC,
+    url: OG_URL,
+    type: "website",
+    images: [
+      {
+        url: OG_IMAGE,
+        width: 1200,
+        height: 630,
+        alt: "AskMai for Creators",
+      },
+    ],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: OG_TITLE,
+    description: OG_DESC,
+    images: [OG_IMAGE],
+  },
 };
 
 export default function ForCreatorsPage() {

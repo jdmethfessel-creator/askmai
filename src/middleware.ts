@@ -24,17 +24,21 @@ import { createServerClient, type CookieOptions } from "@supabase/ssr";
  * (Stripe today, others later) authenticate via their own signed
  * payload, never with HTTP Basic.
  *
- * /forcreators and /demo/* are also excluded. /forcreators is the
- * unlisted creator pitch page — it stays public so creators we share
- * the URL with don't hit a Basic Auth prompt. Its noindex meta still
- * keeps it out of search engines, and the homepage doesn't link it,
- * so reach is via direct URL share only. /demo/* hosts the static
+ * /forcreators, /demo/*, and /og/* are also excluded. /forcreators is
+ * the unlisted creator pitch page — it stays public so creators we
+ * share the URL with don't hit a Basic Auth prompt. Its noindex meta
+ * still keeps it out of search engines, and the homepage doesn't link
+ * it, so reach is via direct URL share only. /demo/* hosts the static
  * image assets that page needs (place photos for the TRAVEL slide,
- * product photos for the PACKING slide) — same reasoning as
- * /api/img: images must serve without credentials to render in the
- * browser. The matcher exemption applies to those paths only; every
- * non-consented creator page (/[slug]) and the homepage still pass
- * through the Basic Auth gate.
+ * product photos for the PACKING slide). /og/* hosts the social
+ * share-card images that iMessage / Slack / Twitter / etc. fetch when
+ * unfurling links — those unfurlers can't pass Basic Auth, so the
+ * image must serve credential-free or the link preview just shows a
+ * broken icon. Same reasoning as /api/img: images must serve without
+ * credentials to render in the browser or an unfurler. The matcher
+ * exemption applies to those paths only; every non-consented creator
+ * page (/[slug]) and the homepage still pass through the Basic Auth
+ * gate.
  */
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -132,11 +136,11 @@ export const config = {
   matcher: [
     // Match every path EXCEPT the public ones. The negative lookahead
     // runs against the rest of the path after the leading slash.
-    // Added forcreators + demo: see the doc block at the top of the
-    // file for rationale. The exemption is intentionally narrow —
-    // only those two prefixes plus the pre-existing static / API
+    // Added forcreators + demo + og: see the doc block at the top of
+    // the file for rationale. The exemption is intentionally narrow —
+    // only those three prefixes plus the pre-existing static / API
     // exclusions; every other route, including /[slug] creator
     // pages, still hits the Basic Auth gate.
-    "/((?!api/img|api/webhooks|_next/static|_next/image|favicon|icon|apple-icon|forcreators|demo).*)",
+    "/((?!api/img|api/webhooks|_next/static|_next/image|favicon|icon|apple-icon|forcreators|demo|og).*)",
   ],
 };
