@@ -1583,7 +1583,12 @@ async function loadCatalog(
     .from("products")
     .select("id, name, brand, category, price")
     .eq("creator_id", creatorId)
-    .order("price", { ascending: false })
+    // nullsFirst:false — Postgres default puts NULLs FIRST on DESC sort,
+    // which was letting unpriced rows eat slots in the top-80 and pushing
+    // real priced items out of the in-prompt catalog. With NULLs LAST the
+    // top-80 is actually the 80 highest-priced rows the augmenters
+    // expect to scan against.
+    .order("price", { ascending: false, nullsFirst: false })
     .limit(80);
   if (matched.size > 0) {
     query = query.in("category", Array.from(matched));
