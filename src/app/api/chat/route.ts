@@ -137,7 +137,13 @@ export async function POST(request: Request) {
     taste_profile: creator.taste_profile,
   };
   const budgetCeiling = extractBudgetCeiling(message);
-  const systemPrompt = buildSystemPrompt(creator, catalog, budgetCeiling);
+  const productRequest = isProductRequest(message);
+  const systemPrompt = buildSystemPrompt(
+    creator,
+    catalog,
+    budgetCeiling,
+    productRequest
+  );
   const history = sanitizeHistory(body.history ?? []);
 
   const client = new Anthropic();
@@ -213,7 +219,8 @@ export async function POST(request: Request) {
           catalogAugmented,
           proseText,
           creatorRef,
-          budgetCeiling
+          budgetCeiling,
+          productRequest
         );
         // Place-prose scanner: when the model names a place + city in
         // prose but skips the JSON rec, synthesize a place card and route
@@ -307,6 +314,36 @@ function extractBudgetCeiling(message: string): number | null {
     }
   }
   return null;
+}
+
+/**
+ * Single source of truth for "is this a product request" intent. Used by:
+ *   - buildSystemPrompt: renders the verb list in the OUTPUT FORMAT
+ *     escape-hatch rule, and injects a "PRODUCT REQUEST DETECTED" hint
+ *     when there's a verb match but no budget.
+ *   - augmentWithOffCatalogMentions: skips brand+noun prose synthesis
+ *     when the user wasn't shopping, so philosophy and general-chat
+ *     don't get spurious cards from incidental brand mentions in voice.
+ *
+ * Each entry pairs the prose phrase (rendered into the prompt verbatim)
+ * with the regex that detects it at runtime. Adding a shopping phrase =
+ * edit this list once — the prompt prose and the runtime classifier
+ * stay in lock-step automatically.
+ */
+const SHOPPING_VERBS: { phrase: string; pattern: RegExp }[] = [
+  { phrase: "give me an outfit / pieces / things to wear", pattern: /\bgive me\b/i },
+  { phrase: "what should I pack", pattern: /\bwhat should I pack\b/i },
+  { phrase: "what should I buy", pattern: /\bwhat should I buy\b/i },
+  { phrase: "what's your pick", pattern: /\bwhat'?s your pick\b/i },
+];
+
+function isProductRequest(message: string): boolean {
+  if (!message) return false;
+  if (extractBudgetCeiling(message) !== null) return true;
+  for (const v of SHOPPING_VERBS) {
+    if (v.pattern.test(message)) return true;
+  }
+  return false;
 }
 
 function parsePriceNumber(s: string | undefined): number | null {
@@ -961,9 +998,15 @@ async function augmentWithOffCatalogMentions(
   enriched: Rec[],
   proseText: string,
   creator: { id: string; slug: string },
-  budgetCeiling: number | null
+  budgetCeiling: number | null,
+  productRequest: boolean
 ): Promise<Rec[]> {
   if (!proseText || !proseText.trim()) return enriched;
+  // Intent gate: only synthesize off-catalog cards from prose when the
+  // user's message was a product request. Philosophy / general-chat
+  // queries naturally name brands in voice ("a Reformation dress for a
+  // dinner night out") and we don't want those mints to spawn cards.
+  if (!productRequest) return enriched;
 
   const allNouns = [
     ...OFF_CATALOG_NOUNS.beauty,
@@ -1620,7 +1663,8 @@ function describeOwnedBrands(taste: Creator["taste_profile"]): string {
 function buildSystemPrompt(
   c: Pick<Creator, "name" | "bio" | "voice_prompt" | "taste_profile">,
   catalog: CatalogRow[],
-  budgetCeiling: number | null
+  budgetCeiling: number | null,
+  productRequest: boolean
 ) {
   const tasteJson = c.taste_profile
     ? JSON.stringify(c.taste_profile, null, 2)
@@ -1732,6 +1776,11 @@ USER-STATED BUDGET: $${budgetCeiling}.
 - Catalog (feed) items priced above $${budgetCeiling} are NOT eligible for cards in this reply, no exceptions for "her real pick."
 - The platform will drop any rec whose price exceeds $${budgetCeiling}, even if you emit it. Save the tokens — don't emit them.
 - You MAY still reference an over-budget piece in prose as a styling note, but it stays in prose only.`
+      : productRequest
+      ? `
+
+PRODUCT REQUEST DETECTED (no budget stated):
+- The user's message matches a shopping verb pattern. This reply MUST emit a ---RECS--- block with at least one carded, in-voice piece — marker-less prose is FORBIDDEN. If catalog doesn't fit, mass-brand fallback applies (Zara, Mango, H&M, & Other Stories, COS, Reformation, Madewell, Sezane, Everlane, Aritzia, Abercrombie, Free People, Anthropologie, Uniqlo).`
       : ""
   }
 
@@ -1844,5 +1893,5 @@ LOCATION RELEVANCE (non-negotiable — applies to ALL places: restaurants, hotel
 - If ${c.name} has no strong specific picks in the user's named location, give a genuinely good general recommendation for THAT location in her style and taste (e.g. she'd lean to small Italian / Mediterranean / design-forward places — find some in the city the user actually asked about). Do not redirect to a city she knows better.
 - Every place card's "location" field must include or align with the user's stated city. A Miami query → location like "Miami, FL" or "Wynwood, Miami." A Charleston query → "Charleston, SC." Never "Palm Beach" on a Miami query.
 
-For pure conversational replies (general chat, clarifying questions, opinions, anecdotes, styling philosophy with no shoppable item named), write text only and do not include the marker or any JSON. A stated budget or an explicit "give me an outfit / pieces / things to wear / what should I pack / what should I buy / what's your pick" ask is a PRODUCT REQUEST — the marker is REQUIRED. Mass-brand fallback is always preferred over going marker-less.`;
+For pure conversational replies (general chat, clarifying questions, opinions, anecdotes, styling philosophy with no shoppable item named), write text only and do not include the marker or any JSON. A stated budget or an explicit "${SHOPPING_VERBS.map((v) => v.phrase).join(" / ")}" ask is a PRODUCT REQUEST — the marker is REQUIRED. Mass-brand fallback is always preferred over going marker-less.`;
 }
