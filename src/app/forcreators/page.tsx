@@ -111,28 +111,29 @@ export default function ForCreatorsPage() {
         </div>
       </section>
 
-      {/* ----------- MONEY ----------- */}
+      {/* ----------- REACH (formerly MONEY) -----------
+           Headline reframed from earnings to creator surface area —
+           money appears once as a calm fact in the closing line, not
+           as the pitch. */}
       <section className="fc-money">
-        <p className="fc-money-eyebrow">The money</p>
+        <p className="fc-money-eyebrow">Reach</p>
         <h2 className="fc-money-h2">
-          The revenue your current setup <em>can&apos;t reach.</em>
+          Every recommendation, <em>shoppable.</em>
         </h2>
         <p className="fc-money-body">
-          Keep your LTK and ShopMy links exactly as they are, nothing changes,
-          nothing to relearn. Your twin makes them work harder by surfacing
-          them on demand instead of letting them expire in your feed.
+          Keep your LTK and ShopMy links exactly as they are. Your twin
+          surfaces them the second a follower asks — no expired stories,
+          no scrolling your blog from eight months ago.
         </p>
         <p className="fc-money-body">
-          Then it opens the doors those platforms keep shut. The hotels you
-          stayed at. The restaurants you booked. The experiences your
-          followers constantly ask about and you can&apos;t currently
-          monetize. Your twin turns your travel and lifestyle taste — the
-          stuff that&apos;s pure word-of-mouth today — into a revenue stream
-          that&apos;s been sitting on the table this whole time.
+          And the questions those platforms can&apos;t carry — the hotel
+          you stayed at, the restaurants you booked, the experiences they
+          ask about constantly — your twin handles those too. In your
+          voice, with real picks, on demand.
         </p>
-        <p className="fc-money-punch">
-          Most of your influence is unmonetized right now.{" "}
-          <em>Your twin changes that.</em>
+        <p className="fc-money-body">
+          Every one of those recommendations earns the same way your
+          product links already do. Same mechanic, broader surface.
         </p>
       </section>
 

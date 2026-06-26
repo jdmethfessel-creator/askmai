@@ -648,7 +648,10 @@ html, body {
   font-size: 11px;
   letter-spacing: 0.18em;
   text-transform: uppercase;
-  color: var(--accent);
+  /* Muted (was accent) so the section reads as calm/factual rather
+     than as the page's monetization peak. Matches the "The shift" and
+     "How it works" eyebrow style. */
+  color: var(--muted);
   margin: 0 0 22px;
 }
 .fc-money-h2 {
