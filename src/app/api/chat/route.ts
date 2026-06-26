@@ -233,8 +233,15 @@ export async function POST(request: Request) {
           creatorRef,
           budgetCeiling
         );
-        const offCatalogAugmented = await augmentWithOffCatalogMentions(
+        const brandFuzzyAugmented = await augmentWithBrandFuzzyMentions(
           catalogAugmented,
+          proseText,
+          catalog,
+          creatorRef,
+          budgetCeiling
+        );
+        const offCatalogAugmented = await augmentWithOffCatalogMentions(
+          brandFuzzyAugmented,
           proseText,
           creatorRef,
           budgetCeiling,
@@ -740,6 +747,266 @@ async function augmentWithMissingMentions(
       });
     }
     seenNames.add(k.template.name.toLowerCase());
+  }
+
+  return [...enriched, ...additions];
+}
+
+// =====================================================================
+// Brand-aware fuzzy augmenter
+//
+// augmentWithMissingMentions handles the case where the model's prose
+// contains a catalog product name as an exact lowercase substring. That
+// substring scan is conservative and has near-zero false positives, but
+// it misses paraphrased prose — "the Cult Gaia Caldera is right there"
+// (dropped "Clutch"), "Cult Gaia's Caldera in a warm tone" (word order
+// shift). The fuzzy scanner below picks those up by matching on the
+// product's brand + unique identifying tokens, with a strict precision
+// gate so an ambiguous mention NEVER cards a wrong product.
+// =====================================================================
+
+// Tokens that are NOT product-identifying signal. Brands ship many
+// products containing these words, so seeing them in prose alongside
+// the brand doesn't disambiguate which product the model meant. Only
+// the leftover tokens (catalog name MINUS these) count as a real
+// fingerprint of a specific product.
+const FUZZY_GENERIC_NOUNS = new Set<string>([
+  // Articles, prepositions, conjunctions
+  "the", "a", "an", "and", "or", "but", "with", "for", "in", "on", "of",
+  "at", "by", "from", "to", "as",
+  // Generic clothing/accessory nouns
+  "bag", "tote", "clutch", "purse", "handbag", "backpack", "crossbody",
+  "mini", "midi", "maxi",
+  "shoe", "shoes", "heel", "heels", "boot", "boots", "sandal", "sandals",
+  "sneaker", "sneakers", "loafer", "loafers", "flat", "flats", "mule",
+  "mules", "pump", "pumps", "slide", "slides",
+  "dress", "skirt", "top", "tee", "shirt", "blouse", "tank", "bodysuit",
+  "jumpsuit", "romper", "cami", "camisole",
+  "pant", "pants", "trouser", "trousers", "jean", "jeans", "denim",
+  "short", "shorts",
+  "jacket", "blazer", "coat", "trench", "vest", "sweater", "cardigan",
+  "knit", "pullover", "hoodie",
+  "earring", "earrings", "necklace", "bracelet", "ring", "hoop", "hoops",
+  "stud", "studs",
+  "watch", "belt", "scarf", "hat", "sunglasses",
+  // Generic descriptors (color / material / cut)
+  "light", "soft", "dark", "deep", "warm", "cool", "long", "short",
+  "leather", "suede", "linen", "cotton", "silk", "satin", "wool",
+  "cashmere",
+  "gold", "silver", "black", "white", "tan", "cream", "ivory", "navy",
+  "blue", "red", "green", "brown", "beige",
+]);
+
+const FUZZY_WINDOW_WORDS = 5;
+const FUZZY_MIN_TOKEN_LEN = 4;
+
+function fuzzyUniqueTokens(name: string): Set<string> {
+  return new Set(
+    name
+      .toLowerCase()
+      .split(/[\s\-]+/)
+      .map((t) => t.replace(/[^\w]/g, ""))
+      .filter(
+        (t) =>
+          t.length >= FUZZY_MIN_TOKEN_LEN && !FUZZY_GENERIC_NOUNS.has(t)
+      )
+  );
+}
+
+function fuzzyNormalizeName(s: string): string {
+  return s.toLowerCase().replace(/^the\s+/, "").replace(/\s+/g, " ").trim();
+}
+
+function fuzzyWindowAfter(
+  proseLower: string,
+  brandIdx: number,
+  brandLen: number
+): Set<string> {
+  const slice = proseLower.slice(
+    brandIdx + brandLen,
+    brandIdx + brandLen + 120
+  );
+  const words = slice
+    .split(/[\s\-,;.!?]+/)
+    .map((t) => t.replace(/[^\w]/g, ""))
+    .filter((t) => t.length > 0)
+    .slice(0, FUZZY_WINDOW_WORDS);
+  return new Set(words);
+}
+
+/**
+ * Brand-aware fuzzy fallback for prose mentions augmentWithMissingMentions
+ * missed. Runs AFTER the strict scanner so it only fires on paraphrased
+ * mentions where the model dropped or moved a token from the catalog
+ * name. Precision-biased by construction:
+ *
+ *   - Brand must be in the loaded catalog and appear in prose with word
+ *     boundaries on both sides (apostrophe-s allowed).
+ *   - Window is the 5 word-tokens immediately after the brand mention.
+ *   - Each catalog product contributes only its "unique" tokens — at
+ *     least 4 characters, not in FUZZY_GENERIC_NOUNS. Generic words like
+ *     "bag" or "mini" can never themselves trigger a match.
+ *   - Score = count of a product's unique tokens that appear in the
+ *     window. score=0 → not a candidate.
+ *   - If two or more products tie for the top score under the same
+ *     brand mention, the prose is ambiguous and the augmenter skips
+ *     rather than guess. A wrong card is worse than a missing one.
+ *   - Otherwise the lone top scorer is resolved through the feed tier
+ *     (it has a product_id) and the card is added.
+ *
+ * Standard budget filter and standard dedup (by product_id AND by
+ * normalized brand|name key, so "The Caldera Clutch" and
+ * "Caldera Clutch" don't both land).
+ */
+async function augmentWithBrandFuzzyMentions(
+  enriched: Rec[],
+  proseText: string,
+  catalog: CatalogRow[],
+  creator: { id: string; slug: string },
+  budgetCeiling: number | null
+): Promise<Rec[]> {
+  if (!proseText || catalog.length === 0) return enriched;
+
+  const proseLower = proseText.toLowerCase();
+  const brandIdx = new Map<string, CatalogRow[]>();
+  for (const p of catalog) {
+    const brand = (p.brand ?? "").trim().toLowerCase();
+    if (!brand) continue;
+    if (!brandIdx.has(brand)) brandIdx.set(brand, []);
+    brandIdx.get(brand)!.push(p);
+  }
+  if (brandIdx.size === 0) return enriched;
+
+  const seenIds = new Set<string>();
+  const seenNameKeys = new Set<string>();
+  for (const r of enriched) {
+    if (r.product_id) seenIds.add(r.product_id);
+    if (r.name && r.brand) {
+      seenNameKeys.add(
+        r.brand.toLowerCase() + "|" + fuzzyNormalizeName(r.name)
+      );
+    }
+  }
+
+  const additions: Rec[] = [];
+
+  for (const [brandLower, products] of brandIdx) {
+    let searchFrom = 0;
+    while (true) {
+      const idx = proseLower.indexOf(brandLower, searchFrom);
+      if (idx === -1) break;
+      searchFrom = idx + brandLower.length;
+
+      // Word boundary check on both sides of the brand mention so
+      // "cultgaia" (no space) or "cult gaiabox" doesn't false-match.
+      // Apostrophe is allowed AFTER the brand so "Cult Gaia's" still
+      // matches "Cult Gaia".
+      const before = idx > 0 ? proseLower[idx - 1] : " ";
+      const afterChar =
+        idx + brandLower.length < proseLower.length
+          ? proseLower[idx + brandLower.length]
+          : " ";
+      if (/\w/.test(before)) continue;
+      if (/\w/.test(afterChar) && afterChar !== "'") continue;
+
+      const windowTokens = fuzzyWindowAfter(
+        proseLower,
+        idx,
+        brandLower.length
+      );
+      if (windowTokens.size === 0) continue;
+
+      // Score every candidate product under this brand against the
+      // window. Generic-only catalog names (tokens.size === 0) can
+      // never card under fuzzy — they need the strict scanner's
+      // substring match instead.
+      const candidates: { product: CatalogRow; score: number }[] = [];
+      for (const p of products) {
+        if (seenIds.has(p.id)) continue;
+        const key =
+          (p.brand ?? "").toLowerCase() + "|" + fuzzyNormalizeName(p.name);
+        if (seenNameKeys.has(key)) continue;
+        const tokens = fuzzyUniqueTokens(p.name);
+        if (tokens.size === 0) continue;
+        let shared = 0;
+        for (const t of tokens) if (windowTokens.has(t)) shared++;
+        if (shared > 0) candidates.push({ product: p, score: shared });
+      }
+      if (candidates.length === 0) continue;
+
+      // Precision gate — the entire risk of this scanner. If two or
+      // more products tie for the highest score, we cannot disambiguate
+      // which the model meant. Skip rather than guess.
+      candidates.sort((a, b) => b.score - a.score);
+      if (
+        candidates.length >= 2 &&
+        candidates[0].score === candidates[1].score
+      ) {
+        console.warn(
+          `[fuzzy] ambiguous brand="${brandLower}" — tied at score=${
+            candidates[0].score
+          }: ${candidates
+            .filter((c) => c.score === candidates[0].score)
+            .map((c) => c.product.name)
+            .join(", ")}`
+        );
+        continue;
+      }
+
+      const winner = candidates[0].product;
+      if (
+        winner.category !== "travel" &&
+        winner.category !== "dining" &&
+        budgetCeiling != null &&
+        winner.price != null &&
+        winner.price > budgetCeiling
+      ) {
+        continue;
+      }
+
+      const synth: Rec = {
+        name: winner.name,
+        brand: winner.brand ?? undefined,
+        category: (winner.category ?? "fashion").toLowerCase(),
+        price: winner.price != null ? `$${winner.price}` : undefined,
+        product_id: winner.id,
+        why: "Named in her reply.",
+      };
+      try {
+        const resolved = await resolveLink(synth, creator, {
+          source: "brand_fuzzy_augment",
+        });
+        if (
+          (resolved.tier === "feed" || resolved.tier === "owned_feed") &&
+          resolved.feed_product
+        ) {
+          const fp = resolved.feed_product;
+          additions.push({
+            ...synth,
+            name: fp.name,
+            brand: fp.brand ?? synth.brand,
+            price: fp.price ?? synth.price,
+            image_url: fp.image_url ?? undefined,
+            affiliate_url: resolved.url,
+            tier: resolved.tier,
+            product_id: resolved.matched_product_id,
+          });
+          seenIds.add(resolved.matched_product_id ?? winner.id);
+          if (winner.brand && winner.name) {
+            seenNameKeys.add(
+              winner.brand.toLowerCase() +
+                "|" +
+                fuzzyNormalizeName(winner.name)
+            );
+          }
+        }
+      } catch (err) {
+        console.error(
+          `[fuzzy] resolveLink failed brand="${winner.brand}" name="${winner.name}":`,
+          err
+        );
+      }
+    }
   }
 
   return [...enriched, ...additions];
