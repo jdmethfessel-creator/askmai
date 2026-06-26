@@ -7,6 +7,13 @@
   min-height: 100dvh;
   overflow-x: hidden;
 }
+/* Safety net — prevent any oversized descendant from giving the whole
+   page a horizontal scrollbar on mobile. The .fc-root rule above already
+   has it, but Next.js wraps the page in its own body / html elements,
+   so we belt-and-suspender at the root. */
+html, body {
+  overflow-x: hidden;
+}
 
 /* ------------------------------------------------------------------ */
 /* HERO                                                                */
@@ -117,6 +124,125 @@
   color: var(--accent);
 }
 
+/* ------------------------------------------------------------------ */
+/* Carousel chrome — tabs above the phone, pips below                  */
+/* ------------------------------------------------------------------ */
+.fc-carousel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.fc-tabs {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 6px;
+  margin: 0 auto 0;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: rgba(241, 232, 216, 0.025);
+  backdrop-filter: blur(8px);
+  justify-content: center;
+  max-width: 100%;
+}
+.fc-tab {
+  position: relative;
+  appearance: none;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  padding: 9px 18px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+  transition: color 0.2s, background 0.2s;
+  font-family: inherit;
+}
+.fc-tab:hover {
+  color: var(--ink-soft);
+}
+.fc-tab-active {
+  background: var(--ink);
+  color: var(--bg);
+}
+.fc-tab-active:hover {
+  color: var(--bg);
+}
+
+.fc-pips {
+  display: inline-flex;
+  gap: 8px;
+  margin-top: 18px;
+}
+.fc-pip {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--muted-dim);
+  transition: background 0.3s, transform 0.3s, width 0.3s;
+}
+.fc-pip-active {
+  background: var(--accent);
+  width: 22px;
+  border-radius: 999px;
+}
+
+/* The phone holds N slides stacked; only the active one is rendered
+   visible via opacity + transform. The CSS grid trick (single cell,
+   all slides on top of each other) means the phone height naturally
+   matches whichever slide is tallest, so cross-fading doesn't cause
+   layout shift. */
+.fc-phone-chat {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1fr;
+  padding: 40px 16px 18px;
+  overflow: hidden;
+}
+.fc-slide {
+  grid-area: 1 / 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  opacity: 0;
+  transform: translateY(8px);
+  pointer-events: none;
+  transition: opacity 0.5s ease, transform 0.5s ease;
+}
+.fc-slide-active {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+/* Action label color variants — Reserve uses accent (primary
+   transactional action); Directions is muted; View is for hotels —
+   secondary, muted-ish so it never reads as a checkout. */
+.fc-place-action-reserve {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.fc-place-action-directions,
+.fc-place-action-view {
+  color: var(--ink-soft);
+  border-color: var(--line-strong);
+}
+
+/* 3- and 4-finisher variants on the bottom grid */
+.fc-board-finishers-2 {
+  grid-template-columns: 1fr 1fr;
+}
+.fc-board-finishers-3 {
+  grid-template-columns: 1fr 1fr 1fr;
+}
+.fc-board-finishers-4 {
+  grid-template-columns: 1fr 1fr;
+}
+
 /* Phone framing — visually framed; not a perfect device chrome
    replica, but reads as a phone screen at a glance. */
 .fc-phone-wrap {
@@ -124,6 +250,12 @@
   display: flex;
   justify-content: center;
   padding: 32px 0 56px;
+  /* pan-y so the page can still vertically scroll when fingers land
+     on the phone, while our own swipe-left/right handlers in
+     DemoCarousel.tsx own the horizontal gesture. Without this, iOS
+     Safari sometimes treats the horizontal swipe as a back-gesture
+     edge-pull, or hijacks it for its own scroll. */
+  touch-action: pan-y;
 }
 .fc-phone-aura {
   position: absolute;
@@ -194,14 +326,9 @@
 .fc-phone-statusbar svg {
   display: block;
 }
-.fc-phone-chat {
-  flex: 1;
-  overflow: hidden;
-  padding: 40px 16px 18px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
+/* .fc-phone-chat layout is redefined in the carousel block above to use
+   CSS grid (single cell, slides stack on top of each other for cross-
+   fade). The flex variant was the pre-carousel single-slide layout. */
 .fc-msg-user {
   align-self: flex-end;
   max-width: 86%;
@@ -257,6 +384,32 @@
   background: rgba(0, 0, 0, 0.32);
   border: 1px solid rgba(241, 232, 216, 0.06);
   border-radius: 14px;
+}
+/* Variant with a real photo on the left. Photo + meta + action sit in a
+   horizontal row; the photo crops to a fixed square so different image
+   aspect ratios all read consistent. The photos are local static assets
+   under /public/demo/<slide>/ — never live Bing thumbnails. */
+.fc-place-photo {
+  gap: 10px;
+  padding: 8px 10px 8px 8px;
+}
+.fc-place-imgwrap {
+  width: 48px;
+  height: 48px;
+  flex-shrink: 0;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #1a160f;
+}
+.fc-place-imgwrap img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.fc-place-photo .fc-place-meta {
+  flex: 1;
+  min-width: 0;
 }
 .fc-place-meta {
   display: flex;
@@ -668,4 +821,181 @@
   letter-spacing: 0.04em;
   color: var(--muted);
   text-transform: uppercase;
+}
+
+/* ==================================================================== */
+/* MOBILE — 375–414px is the priority viewport                          */
+/*                                                                       */
+/* This page is opened almost entirely from phone DMs. Desktop is the   */
+/* secondary viewport; mobile fidelity is the whole point. Everything   */
+/* in this block targets ≤ 480px so the design at 375/390/414 is        */
+/* explicitly designed, not auto-shrunk.                                 */
+/* ==================================================================== */
+@media (max-width: 480px) {
+  /* HERO ----------------------------------------------------------- */
+  .fc-hero {
+    padding: 32px 20px 56px;
+  }
+  .fc-hero-h1 {
+    font-size: clamp(40px, 11vw, 60px);
+    margin-bottom: 24px;
+  }
+  .fc-hero-body {
+    font-size: 15px;
+    line-height: 1.55;
+    margin-bottom: 28px;
+  }
+  .fc-hero-cta {
+    padding: 14px 22px;
+    font-size: 14px;
+    min-height: 44px; /* thumb target */
+  }
+
+  /* DEMO ----------------------------------------------------------- */
+  .fc-demo {
+    padding: 56px 16px 56px;
+  }
+  .fc-demo-label {
+    font-size: 14px;
+  }
+  .fc-demo-h2 {
+    font-size: clamp(24px, 6.4vw, 32px);
+    margin-bottom: 36px;
+  }
+  .fc-demo-caption {
+    font-size: 14.5px;
+    line-height: 1.55;
+    margin-top: 28px;
+  }
+
+  /* TABS — four pills must fit one row at 375px ------------------- */
+  .fc-tabs {
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+    justify-content: space-between;
+    padding: 4px;
+    gap: 2px;
+    flex-wrap: nowrap;
+  }
+  .fc-tab {
+    /* flex-1 splits available width evenly across all 4 tabs so they
+       always fit on one row regardless of label length. min-height
+       44px gives a real thumb target. */
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: 44px;
+    padding: 12px 8px;
+    font-size: 10.5px;
+    letter-spacing: 0.08em;
+    text-align: center;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .fc-tab > span {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* PHONE FRAME --------------------------------------------------- */
+  .fc-phone-wrap {
+    padding: 24px 0 40px;
+  }
+  .fc-phone {
+    width: min(380px, 92vw);
+    padding: 10px;
+    border-radius: 44px;
+  }
+  .fc-phone-screen {
+    border-radius: 36px;
+  }
+  /* Allow vertical scroll inside the phone screen for slides whose
+     content (especially the TRAVEL slide with hero + 3 place cards)
+     exceeds the screen height. Scrollbar hidden for cleanliness. */
+  .fc-phone-chat {
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 36px 14px 16px;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .fc-phone-chat::-webkit-scrollbar {
+    display: none;
+  }
+  /* Hero photo aspect — slightly squarer on mobile so more of the
+     slide is visible above the fold inside the phone. */
+  .fc-board-hero {
+    aspect-ratio: 4 / 4.4;
+  }
+  .fc-board-hero-name {
+    font-size: 13.5px;
+  }
+  .fc-board-shop {
+    padding: 6px 12px;
+    font-size: 10.5px;
+  }
+
+  /* PLACE CARDS --------------------------------------------------- */
+  .fc-place-action {
+    padding: 7px 13px;
+    font-size: 10.5px;
+  }
+
+  /* SHIFT (three contrasts) --------------------------------------- */
+  .fc-shift {
+    padding: 56px 20px;
+  }
+  .fc-shift-h2 {
+    font-size: clamp(26px, 7vw, 36px);
+    margin-bottom: 48px;
+  }
+  .fc-contrast-h3 {
+    font-size: clamp(22px, 5.6vw, 28px);
+  }
+  .fc-contrast-body {
+    font-size: 15px;
+  }
+
+  /* MONEY --------------------------------------------------------- */
+  .fc-money {
+    padding: 72px 20px;
+  }
+  .fc-money-h2 {
+    font-size: clamp(30px, 7.8vw, 44px);
+  }
+  .fc-money-body {
+    font-size: 15.5px;
+  }
+  .fc-money-punch {
+    font-size: clamp(18px, 5.2vw, 24px);
+  }
+
+  /* HOW IT WORKS -------------------------------------------------- */
+  .fc-how {
+    padding: 56px 20px;
+  }
+  .fc-how-h2 {
+    font-size: clamp(26px, 6.4vw, 36px);
+  }
+  .fc-step-body {
+    font-size: 15px;
+  }
+
+  /* CLOSE / final CTA -------------------------------------------- */
+  .fc-close {
+    padding: 80px 20px 64px;
+  }
+  .fc-close-h2 {
+    font-size: clamp(32px, 8vw, 48px);
+  }
+  .fc-close-cta {
+    padding: 15px 24px;
+    font-size: 15px;
+    min-height: 44px; /* thumb target */
+  }
+  .fc-close-sub {
+    font-size: 13px;
+  }
 }

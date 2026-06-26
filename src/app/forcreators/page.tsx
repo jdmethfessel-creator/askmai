@@ -13,6 +13,7 @@
 
 import Link from "next/link";
 import type { Metadata } from "next";
+import DemoCarousel from "./DemoCarousel";
 import "../_marketing/landing.css";
 import "./forcreators.css";
 
@@ -21,68 +22,6 @@ export const metadata: Metadata = {
   description: "Your taste, working while you sleep.",
   robots: { index: false, follow: false, nocache: true },
 };
-
-const DEMO_QUESTION =
-  "going to mexico city for a long weekend, where should I eat and what do I pack?";
-
-const DEMO_PROSE = (
-  <>
-    okay <em>mexico city</em> in the long-weekend window is the BEST — dinner
-    plans are the whole assignment. i&apos;d eat my way through Roma + Polanco
-    and pack things that go from a daytime market to a sit-down dinner without
-    you having to think about it.
-  </>
-);
-
-const DEMO_PLACES = [
-  {
-    name: "Pujol",
-    location: "Polanco",
-    action: "Reserve",
-  },
-  {
-    name: "Contramar",
-    location: "Roma Norte",
-    action: "Reserve",
-  },
-  {
-    name: "Panadería Rosetta",
-    location: "Roma Norte",
-    action: "Directions",
-  },
-] as const;
-
-const DEMO_HERO = {
-  brand: "Reformation",
-  name: "Balia Linen Dress",
-  price: "$278",
-  image:
-    "/api/img?url=" +
-    encodeURIComponent("https://static.shopmy.us/uploads/img-product-1751903970581"),
-} as const;
-
-const DEMO_FINISHERS = [
-  {
-    brand: "Quince",
-    name: "Italian Leather Tote",
-    price: "$154",
-    image:
-      "/api/img?url=" +
-      encodeURIComponent(
-        "https://static.shopmy.us/uploads/pretty-prod-1768227109565"
-      ),
-  },
-  {
-    brand: "Tony Bianco",
-    name: "Florida Sandal",
-    price: "$156",
-    image:
-      "/api/img?url=" +
-      encodeURIComponent(
-        "https://static.shopmy.us/uploads/pretty-prod-1772155844398"
-      ),
-  },
-] as const;
 
 export default function ForCreatorsPage() {
   return (
@@ -110,85 +49,12 @@ export default function ForCreatorsPage() {
 
       {/* ----------- DEMO (centerpiece) ----------- */}
       <section id="demo" className="fc-demo">
-        <p className="fc-demo-label">a real exchange on Madison&apos;s twin</p>
+        <p className="fc-demo-label">real exchanges on Madison&apos;s twin</p>
         <h2 className="fc-demo-h2">
-          One question. <em>Restaurants, packing, all of it.</em>
+          One link. <em>Travel, packing, beauty, fashion — all of it.</em>
         </h2>
 
-        <div className="fc-phone-wrap">
-          <div className="fc-phone-aura" aria-hidden />
-          <div className="fc-phone">
-            <div className="fc-phone-screen">
-              <div className="fc-phone-island" aria-hidden />
-              <div className="fc-phone-statusbar">
-                <span>9:41</span>
-                <span className="fc-status-icons" aria-hidden>
-                  <SignalIcon />
-                  <WifiIcon />
-                  <BatteryIcon />
-                </span>
-              </div>
-
-              <div className="fc-phone-chat">
-                <div className="fc-msg-user">{DEMO_QUESTION}</div>
-
-                <div className="fc-msg-twin">
-                  <p className="fc-twin-prose">{DEMO_PROSE}</p>
-
-                  <p className="fc-section-label">Where to eat</p>
-                  <div className="fc-place-stack">
-                    {DEMO_PLACES.map((p) => (
-                      <div key={p.name} className="fc-place">
-                        <div className="fc-place-meta">
-                          <span className="fc-place-name">{p.name}</span>
-                          <span className="fc-place-loc">
-                            {p.location} · Mexico City
-                          </span>
-                        </div>
-                        <span className="fc-place-action">{p.action}</span>
-                      </div>
-                    ))}
-                  </div>
-
-                  <p className="fc-section-label">What to pack</p>
-                  <div className="fc-board-hero">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={DEMO_HERO.image} alt="" />
-                    <div className="fc-board-hero-overlay">
-                      <div className="fc-board-hero-meta">
-                        <span className="fc-board-hero-brand">
-                          {DEMO_HERO.brand}
-                        </span>
-                        <h3 className="fc-board-hero-name">{DEMO_HERO.name}</h3>
-                        <span className="fc-board-hero-price">
-                          {DEMO_HERO.price}
-                        </span>
-                      </div>
-                      <span className="fc-board-shop" aria-hidden>
-                        Shop →
-                      </span>
-                    </div>
-                  </div>
-                  <div className="fc-board-finishers">
-                    {DEMO_FINISHERS.map((f) => (
-                      <article key={f.name} className="fc-board-fin">
-                        <div className="fc-board-fin-imgwrap">
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img src={f.image} alt="" />
-                        </div>
-                        <div className="fc-board-fin-meta">
-                          <span className="fc-board-fin-brand">{f.brand}</span>
-                          <h4 className="fc-board-fin-name">{f.name}</h4>
-                          <span className="fc-board-fin-price">{f.price}</span>
-                        </div>
-                      </article>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
+        <DemoCarousel />
 
         <p className="fc-demo-caption">
           Try asking yours anything. Your Tulum hotel. Your go-to airport
@@ -362,62 +228,3 @@ function ArrowRight() {
   );
 }
 
-function SignalIcon() {
-  return (
-    <svg width="16" height="10" viewBox="0 0 16 10" fill="none" aria-hidden>
-      <rect x="0" y="6" width="2.5" height="4" rx="0.5" fill="currentColor" />
-      <rect x="4" y="4" width="2.5" height="6" rx="0.5" fill="currentColor" />
-      <rect x="8" y="2" width="2.5" height="8" rx="0.5" fill="currentColor" />
-      <rect x="12" y="0" width="2.5" height="10" rx="0.5" fill="currentColor" />
-    </svg>
-  );
-}
-
-function WifiIcon() {
-  return (
-    <svg width="14" height="10" viewBox="0 0 14 10" fill="none" aria-hidden>
-      <path
-        d="M1 3.5A9 9 0 0 1 13 3.5"
-        stroke="currentColor"
-        strokeWidth="1.2"
-        strokeLinecap="round"
-        fill="none"
-      />
-      <path
-        d="M3 5.5A6 6 0 0 1 11 5.5"
-        stroke="currentColor"
-        strokeWidth="1.2"
-        strokeLinecap="round"
-        fill="none"
-      />
-      <path
-        d="M5 7.5A3 3 0 0 1 9 7.5"
-        stroke="currentColor"
-        strokeWidth="1.2"
-        strokeLinecap="round"
-        fill="none"
-      />
-      <circle cx="7" cy="9" r="0.8" fill="currentColor" />
-    </svg>
-  );
-}
-
-function BatteryIcon() {
-  return (
-    <svg width="22" height="11" viewBox="0 0 22 11" fill="none" aria-hidden>
-      <rect
-        x="0.5"
-        y="0.5"
-        width="18"
-        height="10"
-        rx="2.5"
-        stroke="currentColor"
-        strokeWidth="1"
-        fill="none"
-        opacity="0.5"
-      />
-      <rect x="2" y="2" width="14" height="7" rx="1.2" fill="currentColor" />
-      <rect x="19.5" y="3.5" width="2" height="4" rx="0.8" fill="currentColor" />
-    </svg>
-  );
-}
