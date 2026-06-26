@@ -7,8 +7,13 @@
  * question rendering both restaurant picks and a shoppable packing
  * board — the gap-category demo that's the whole pitch).
  *
- * Real catalog images from Madison's feed so what's shown is exactly
- * what the chat produces, not idealized stand-ins.
+ * The displayed creator name on this page is the generic demo persona
+ * "Hailey" (no real handle), so the pitch reads as a representative
+ * example rather than a specific named creator. The underlying card
+ * content and prose still come verbatim from real chat captures off
+ * Madison's catalog — that's how we keep "no fabricated cards"
+ * honest. Only the displayed creator name is anonymized for the
+ * pitch context.
  */
 
 import Link from "next/link";
@@ -49,7 +54,7 @@ export default function ForCreatorsPage() {
 
       {/* ----------- DEMO (centerpiece) ----------- */}
       <section id="demo" className="fc-demo">
-        <p className="fc-demo-label">real exchanges on Madison&apos;s twin</p>
+        <p className="fc-demo-label">real exchanges on Hailey&apos;s twin</p>
         <h2 className="fc-demo-h2">
           One link. <em>Travel, packing, beauty, fashion — all of it.</em>
         </h2>

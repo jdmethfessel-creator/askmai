@@ -1,10 +1,14 @@
 "use client";
 
 /**
- * /forcreators demo carousel — four real captured exchanges from
- * Madison's live Sonnet twin, each chosen for a different category so
- * a non-swiping visitor still understands the twin handles travel,
- * packing, beauty, and fashion.
+ * /forcreators demo carousel — four real captured exchanges, each
+ * chosen for a different category so a non-swiping visitor still
+ * understands the twin handles travel, packing, beauty, and fashion.
+ *
+ * Page-level display name is the generic "Hailey" (no handle), so
+ * the pitch reads as a representative demo. Card content + prose are
+ * still verbatim from real captures off Madison's catalog — only the
+ * displayed creator name is anonymized for the pitch context.
  *
  * Real content rules (per the brief):
  *   - Every slide's prose + cards come from a real chat capture, not
