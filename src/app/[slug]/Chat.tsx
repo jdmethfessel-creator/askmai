@@ -653,24 +653,36 @@ function countReliableImages(products: Rec[]): number {
 function pickHeroCandidate(products: Rec[]): Rec | null {
   const eligible = products.filter((p) => !!p.image_url && !p.synth);
   if (eligible.length === 0) return null;
-  // Prefer real catalog tiers (Shopify image, highest confidence); within
-  // the pool, prefer the highest-priced piece — usually the centerpiece
-  // garment. Aggregator items only become the hero when no feed/owned
-  // candidate exists.
+  // Prefer real catalog tiers (Shopify image, highest confidence).
+  // Aggregator items only become the hero when no feed/owned candidate
+  // exists.
   const feedFirst = eligible.filter(
     (p) => p.tier === "feed" || p.tier === "owned_feed"
   );
   const pool = feedFirst.length > 0 ? feedFirst : eligible;
-  let best = pool[0];
-  let bestPrice = parsePriceNum(best.price);
-  for (const p of pool.slice(1)) {
-    const n = parsePriceNum(p.price);
-    if (n != null && (bestPrice == null || n > bestPrice)) {
-      best = p;
-      bestPrice = n;
-    }
-  }
-  return best;
+  // Second-highest-priced piece — leading with the most expensive item
+  // made boards feel unapproachable (it's usually the aspirational
+  // outlier). Picking #2 keeps centerpiece-garment energy without the
+  // price-sticker shock. Items with no parseable price drop out of the
+  // ranking; if only one item has a price we return it (no "second"
+  // exists), and if nothing is priced we fall back to pool[0] so the
+  // visual board still fires.
+  //
+  // Known limitation: hero is chosen on PRICE alone, so an accessory
+  // (e.g. sandals on a tiny beach-outfit board) can land as the hero
+  // when its price happens to sit at second-highest. The proper fix is
+  // category-aware preference — pick from {fashion, dress, top, bottom,
+  // jacket} before {accessories} for outfit-type requests. Deferred.
+  const priced = pool
+    .map((p, origIndex) => ({ p, n: parsePriceNum(p.price), origIndex }))
+    .filter(
+      (x): x is { p: Rec; n: number; origIndex: number } => x.n !== null
+    );
+  if (priced.length === 0) return pool[0];
+  if (priced.length === 1) return priced[0].p;
+  // Descending by price; ties broken by original (model-emitted) order.
+  priced.sort((a, b) => b.n - a.n || a.origIndex - b.origIndex);
+  return priced[1].p;
 }
 
 function parsePriceNum(s: string | undefined): number | null {
