@@ -238,11 +238,10 @@ export default function Marketing({ signedIn }: { signedIn: boolean }) {
               className="lp-sub lp-fade-in"
               style={{ animationDelay: "400ms" }}
             >
-              Engages your followers in your{" "}
-              <span className="lp-accent-ink">voice,</span> and monetizes
-              the{" "}
-              <span className="lp-accent-ink">links</span> you already
-              have.
+              Engage your followers in your{" "}
+              <span className="lp-accent-ink">voice,</span> and{" "}
+              <span className="lp-accent-ink">earn more</span> from what
+              you already recommend.
             </p>
             <div
               className="lp-cta-row lp-fade-in"
