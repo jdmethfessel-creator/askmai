@@ -95,3 +95,31 @@ export async function attachCounterToUser(args: {
     console.error("[usage] attach_counter_to_user RPC failed:", error.message);
   }
 }
+
+/**
+ * Atomic decrement of users.bonus_questions. Called from the chat route
+ * when the per-device cap is exhausted AND the requester has a
+ * signed-in session — gives the user one extra chat per consumed bonus,
+ * independent of which device they're on. RPC returns true iff the
+ * decrement actually happened (bonus_questions > 0 before the call).
+ *
+ * Failing open if the RPC errors keeps the existing FREE_LIMIT behavior
+ * intact under infrastructure hiccups: a missing RPC or transient DB
+ * blip won't let a free user past the cap unexpectedly, because the
+ * caller only invokes this AFTER checkAndIncrementUsage has already
+ * denied — a false return here just falls through to the existing 402.
+ */
+export async function consumeBonusQuestion(
+  userId: string
+): Promise<boolean> {
+  if (!userId) return false;
+  const sb = supabaseAdmin();
+  const { data, error } = await sb.rpc("consume_bonus_question", {
+    p_user_id: userId,
+  });
+  if (error) {
+    console.error("[usage] consume_bonus_question RPC failed:", error.message);
+    return false;
+  }
+  return Boolean(data);
+}

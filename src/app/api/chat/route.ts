@@ -10,6 +10,7 @@ import {
 } from "@/lib/deviceId";
 import {
   checkAndIncrementUsage,
+  consumeBonusQuestion,
   findCounterByFingerprint,
 } from "@/lib/usage";
 import { getServerSession } from "@/lib/session";
@@ -112,21 +113,38 @@ export async function POST(request: Request) {
     ? { "Set-Cookie": deviceCookieHeader(identity.deviceId) }
     : {};
   if (!gate.allowed) {
-    return new Response(
-      JSON.stringify({
-        paywalled: true,
-        used: gate.used,
-        limit: gate.limit,
-      }),
-      {
-        status: 402,
-        headers: {
-          "Content-Type": "application/json",
-          "Cache-Control": "no-store",
-          ...setCookieHeader,
-        },
-      }
-    );
+    // Per-device cap is exhausted. Before falling through to the
+    // paywall, give a signed-in user the chance to spend a
+    // bonus_question — the account-level pool earned via referrals.
+    // Bonus follows the user across devices, which is the whole
+    // point of an account-level credit (different from the
+    // per-device counter that resets on a new device cookie).
+    //
+    // Order is deliberate: device cap FIRST, bonus AFTER. A fresh
+    // device for the same user still burns its 3 base queries before
+    // touching bonus, so the bonus pool isn't drained by routine
+    // device-cycling.
+    let bonusUsed = false;
+    if (session?.userId && session.bonusQuestions > 0) {
+      bonusUsed = await consumeBonusQuestion(session.userId);
+    }
+    if (!bonusUsed) {
+      return new Response(
+        JSON.stringify({
+          paywalled: true,
+          used: gate.used,
+          limit: gate.limit,
+        }),
+        {
+          status: 402,
+          headers: {
+            "Content-Type": "application/json",
+            "Cache-Control": "no-store",
+            ...setCookieHeader,
+          },
+        }
+      );
+    }
   }
 
   const catalog = await loadCatalog(creatorId, message);

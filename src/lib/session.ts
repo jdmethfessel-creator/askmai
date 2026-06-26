@@ -22,6 +22,15 @@ export type ServerSession = {
   userId: string;
   email: string;
   subscriptionStatus: "none" | "active" | "canceled";
+  /**
+   * Account-level bonus question pool. Earned +2 per successful
+   * referral signup (see /api/auth/callback → claim_referral). Used
+   * by the chat route as a fallback when the per-device free cap is
+   * exhausted: a signed-in user with bonus remaining gets one extra
+   * query per consumed bonus. Decremented atomically via
+   * consume_bonus_question RPC; never reset.
+   */
+  bonusQuestions: number;
 };
 
 /**
@@ -49,16 +58,20 @@ export async function getServerSession(): Promise<ServerSession | null> {
   const admin = supabaseAdmin();
   const userRow = await admin
     .from("users")
-    .select("id, email, subscription_status")
+    .select("id, email, subscription_status, bonus_questions")
     .eq("email", data.user.email)
     .maybeSingle();
 
   if (userRow.error || !userRow.data) return null;
   const status = userRow.data.subscription_status;
+  const bonusRaw = userRow.data.bonus_questions;
+  const bonusQuestions =
+    typeof bonusRaw === "number" && bonusRaw > 0 ? bonusRaw : 0;
   return {
     userId: userRow.data.id as string,
     email: userRow.data.email as string,
     subscriptionStatus:
       status === "active" || status === "canceled" ? status : "none",
+    bonusQuestions,
   };
 }
