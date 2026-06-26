@@ -239,9 +239,9 @@ export default function Marketing({ signedIn }: { signedIn: boolean }) {
               style={{ animationDelay: "400ms" }}
             >
               Engage your followers in your{" "}
-              <span className="lp-accent-ink">voice,</span> and{" "}
-              <span className="lp-accent-ink">earn more</span> from what
-              you already recommend.
+              <span className="lp-accent-ink">voice,</span> and earn more
+              from the affiliate links you already{" "}
+              <span className="lp-accent-ink">share</span>.
             </p>
             <div
               className="lp-cta-row lp-fade-in"
