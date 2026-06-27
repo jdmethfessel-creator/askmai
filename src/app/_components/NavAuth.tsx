@@ -12,6 +12,7 @@
  * style or the lighter creator-page chip style without forking.
  */
 
+import Link from "next/link";
 import { useState } from "react";
 import SignInModal from "./SignInModal";
 
@@ -29,14 +30,19 @@ export default function NavAuth({
   const [open, setOpen] = useState(false);
 
   if (signedIn) {
+    // Signed-in pill links to /profile so the profile page is
+    // reachable from any nav surface. Inherits the same styling
+    // class as the passive pill; only behavior change is href.
     return (
-      <span
+      <Link
+        href="/profile"
         className={signedInClassName ?? className}
-        aria-label="Signed in"
-        title="Signed in"
+        style={{ textDecoration: "none" }}
+        aria-label="Profile"
+        title="Profile"
       >
-        Signed in
-      </span>
+        Profile
+      </Link>
     );
   }
 

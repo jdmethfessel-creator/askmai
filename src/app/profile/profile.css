@@ -1,0 +1,253 @@
+/* /profile page styles. Standalone palette: light surface, dark ink,
+   warm accent. Intentionally simpler than the dark editorial landing
+   so this feels like a settings page, not a marketing surface. */
+
+.profile-root {
+  min-height: 100dvh;
+  background: #fbf7ef;
+  color: #1a1610;
+  padding: 32px 20px 80px;
+}
+.profile-inner {
+  max-width: 640px;
+  margin: 0 auto;
+}
+.profile-h1 {
+  font-family: var(--font-display, Georgia), serif;
+  font-weight: 500;
+  font-size: clamp(28px, 4vw, 36px);
+  letter-spacing: -0.02em;
+  margin: 0 0 32px;
+}
+.profile-section {
+  background: #ffffff;
+  border: 1px solid rgba(26, 22, 16, 0.08);
+  border-radius: 18px;
+  padding: 20px 22px;
+  margin-bottom: 18px;
+}
+.profile-h2 {
+  font-family: var(--font-display, Georgia), serif;
+  font-weight: 500;
+  font-size: 18px;
+  letter-spacing: -0.01em;
+  margin: 0 0 12px;
+}
+
+/* Display name row */
+.profile-name-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.profile-input {
+  flex: 1;
+  font: inherit;
+  font-size: 14.5px;
+  padding: 11px 13px;
+  border-radius: 12px;
+  border: 1px solid rgba(26, 22, 16, 0.14);
+  background: #ffffff;
+  color: inherit;
+  outline: none;
+  transition: border-color 0.2s;
+}
+.profile-input:focus {
+  border-color: #c89863;
+}
+
+/* Buttons */
+.profile-btn {
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 500;
+  border: 0;
+  padding: 11px 18px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.18s, color 0.18s, transform 0.18s,
+    opacity 0.18s;
+}
+.profile-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.profile-btn-primary {
+  background: #1a1610;
+  color: #fbf7ef;
+}
+.profile-btn-primary:not(:disabled):hover {
+  background: #c89863;
+  color: #1a1610;
+  transform: translateY(-1px);
+}
+.profile-btn-ghost {
+  background: transparent;
+  color: #1a1610;
+  border: 1px solid rgba(26, 22, 16, 0.18);
+}
+.profile-btn-ghost:not(:disabled):hover {
+  background: rgba(26, 22, 16, 0.04);
+}
+.profile-btn-block {
+  width: 100%;
+  padding: 13px 18px;
+  font-size: 14.5px;
+  margin-top: 6px;
+}
+
+/* Helpers */
+.profile-helper {
+  margin: 10px 0 0;
+  font-size: 12.5px;
+  color: rgba(26, 22, 16, 0.6);
+}
+.profile-helper-success {
+  margin: 8px 0 0;
+  font-size: 12.5px;
+  color: #2f7a4f;
+}
+.profile-helper-error {
+  margin: 8px 0 0;
+  font-size: 12.5px;
+  color: #b03434;
+}
+.profile-mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12.5px;
+  color: rgba(26, 22, 16, 0.7);
+}
+
+/* Followed creators list */
+.profile-followlist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.profile-followitem {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 10px 0;
+  border-bottom: 1px solid rgba(26, 22, 16, 0.06);
+}
+.profile-followitem:last-child {
+  border-bottom: 0;
+}
+.profile-followname {
+  font-size: 14.5px;
+  font-weight: 500;
+}
+.profile-followmeta {
+  font-size: 12.5px;
+  color: rgba(26, 22, 16, 0.55);
+}
+
+/* Photo block */
+.profile-photo-wrap {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  margin-top: 12px;
+}
+.profile-photo {
+  width: 96px;
+  height: 128px;
+  object-fit: cover;
+  border-radius: 12px;
+  border: 1px solid rgba(26, 22, 16, 0.08);
+  flex-shrink: 0;
+}
+.profile-file-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Age gate modal (and blocked modal share the same shell) */
+.profile-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(2px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+.profile-modal {
+  background: #fbf7ef;
+  color: #1a1610;
+  border-radius: 22px;
+  padding: 28px 26px 24px;
+  width: 100%;
+  max-width: 380px;
+  position: relative;
+  box-shadow: 0 20px 40px -12px rgba(0, 0, 0, 0.3);
+}
+.profile-modal-close {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  background: transparent;
+  border: 0;
+  font-size: 16px;
+  cursor: pointer;
+  color: rgba(26, 22, 16, 0.4);
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+}
+.profile-modal-close:hover {
+  color: rgba(26, 22, 16, 0.8);
+  background: rgba(26, 22, 16, 0.05);
+}
+.profile-modal-h3 {
+  font-family: var(--font-display, Georgia), serif;
+  font-weight: 500;
+  font-size: 22px;
+  letter-spacing: -0.015em;
+  margin: 0 0 8px;
+}
+.profile-modal-sub {
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: rgba(26, 22, 16, 0.7);
+  margin: 0 0 18px;
+}
+.profile-dob-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.profile-dob-input {
+  text-align: center;
+}
+.profile-dob-year {
+  flex: 1.4;
+}
+
+/* Mobile tightening */
+@media (max-width: 480px) {
+  .profile-root {
+    padding: 24px 16px 64px;
+  }
+  .profile-section {
+    padding: 16px 18px;
+  }
+  .profile-photo {
+    width: 80px;
+    height: 110px;
+  }
+  .profile-btn {
+    min-height: 44px;
+    padding: 12px 18px;
+  }
+}
