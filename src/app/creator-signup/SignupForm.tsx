@@ -4,6 +4,15 @@ import { useState } from "react";
 
 type FormState = "idle" | "sending" | "done" | "error";
 
+export const FOLLOWER_RANGES = [
+  "Under 10K",
+  "10K – 50K",
+  "50K – 250K",
+  "250K – 1M",
+  "1M+",
+] as const;
+type FollowerRange = (typeof FOLLOWER_RANGES)[number];
+
 export function SignupForm() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -11,6 +20,12 @@ export function SignupForm() {
   const [ltkUrl, setLtkUrl] = useState("");
   const [igHandle, setIgHandle] = useState("");
   const [tiktokHandle, setTiktokHandle] = useState("");
+  // Newer fields per the onboarding-form spec — captured for the
+  // founder email; not stored in creator_applications (no schema
+  // column for them, and they're decision-time signal, not record-
+  // of-truth data).
+  const [followerRange, setFollowerRange] = useState<FollowerRange | "">("");
+  const [affiliateNetworks, setAffiliateNetworks] = useState("");
   const [note, setNote] = useState("");
   const [state, setState] = useState<FormState>("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -43,6 +58,8 @@ export function SignupForm() {
           ltk_url: ltkUrl.trim() || null,
           ig_handle: igHandle.trim() || null,
           tiktok_handle: tiktokHandle.trim() || null,
+          follower_range: followerRange || null,
+          affiliate_networks: affiliateNetworks.trim() || null,
           note: note.trim() || null,
         }),
       });
@@ -132,6 +149,27 @@ export function SignupForm() {
         />
       </div>
 
+      <div className="signup-grid">
+        <FieldSelect
+          id="follower_range"
+          label="Follower range"
+          value={followerRange}
+          onChange={(v) => setFollowerRange(v as FollowerRange | "")}
+          options={[
+            { value: "", label: "Select…" },
+            ...FOLLOWER_RANGES.map((r) => ({ value: r, label: r })),
+          ]}
+        />
+        <Field
+          id="affiliate_networks"
+          label="Affiliate networks you use"
+          placeholder="e.g. ShopMy, LTK, RewardStyle, Skimlinks…"
+          value={affiliateNetworks}
+          onChange={setAffiliateNetworks}
+          maxLength={300}
+        />
+      </div>
+
       <FieldTextarea
         id="note"
         label="Anything else worth knowing? (optional)"
@@ -198,6 +236,38 @@ function Field({
         required={required}
         className="signup-input"
       />
+    </label>
+  );
+}
+
+function FieldSelect({
+  id,
+  label,
+  value,
+  onChange,
+  options,
+}: {
+  id: string;
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  options: { value: string; label: string }[];
+}) {
+  return (
+    <label className="signup-field" htmlFor={id}>
+      <span className="signup-field-label">{label}</span>
+      <select
+        id={id}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="signup-input"
+      >
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
     </label>
   );
 }

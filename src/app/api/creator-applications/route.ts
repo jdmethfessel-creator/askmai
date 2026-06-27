@@ -25,6 +25,12 @@ type Payload = {
   ltk_url?: string;
   ig_handle?: string;
   tiktok_handle?: string;
+  /** Newer fields per the onboarding-form spec. Captured for the
+   *  founder email only; not stored in creator_applications because
+   *  the table doesn't have columns for them. They're decision-time
+   *  signal (size + tooling), not record-of-truth data. */
+  follower_range?: string;
+  affiliate_networks?: string;
   note?: string;
 };
 
@@ -62,6 +68,8 @@ export async function POST(request: Request) {
   const ltk_url = cleanRequired(body.ltk_url, 400);
   const ig_handle = cleanRequired(body.ig_handle, 120);
   const tiktok_handle = cleanRequired(body.tiktok_handle, 120);
+  const follower_range = cleanRequired(body.follower_range, 50);
+  const affiliate_networks = cleanRequired(body.affiliate_networks, 300);
   const note = cleanRequired(body.note, 1200);
 
   // At least ONE of (shopmy, ltk, ig, tiktok) so we have something
@@ -106,6 +114,8 @@ export async function POST(request: Request) {
       ltk_url,
       ig_handle,
       tiktok_handle,
+      follower_range,
+      affiliate_networks,
       note,
     });
   } catch (err) {
@@ -126,6 +136,8 @@ async function sendFounderNotification(app: {
   ltk_url: string | null;
   ig_handle: string | null;
   tiktok_handle: string | null;
+  follower_range: string | null;
+  affiliate_networks: string | null;
   note: string | null;
 }) {
   const apiKey = process.env.RESEND_API_KEY;
@@ -151,10 +163,12 @@ async function sendFounderNotification(app: {
   const rows: [string, string][] = [
     ["Name", app.name],
     ["Email", app.email],
-    ["ShopMy", app.shopmy_url ?? "—"],
-    ["LTK", app.ltk_url ?? "—"],
     ["Instagram", app.ig_handle ?? "—"],
     ["TikTok", app.tiktok_handle ?? "—"],
+    ["Follower range", app.follower_range ?? "—"],
+    ["Affiliate networks", app.affiliate_networks ?? "—"],
+    ["ShopMy", app.shopmy_url ?? "—"],
+    ["LTK", app.ltk_url ?? "—"],
     ["Note", app.note ?? "—"],
     ["Application id", app.id],
   ];
@@ -177,7 +191,9 @@ async function sendFounderNotification(app: {
   await resend.emails.send({
     from,
     to,
-    subject: `New creator application: ${app.name}`,
+    // Subject text per the onboarding-form spec — matches the exact
+    // phrasing requested so a quick scan of the inbox is unambiguous.
+    subject: `New AskMai creator request: ${app.name}`,
     replyTo: app.email,
     text,
     html,
