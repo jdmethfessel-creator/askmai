@@ -1962,19 +1962,31 @@ function pruneIncoherentOutfit(recs: Rec[]): Rec[] {
  * stays prose-only (preferable to a single-item "outfit").
  */
 async function assembleFallbackOutfit(
-  catalog: CatalogRow[],
+  _catalogIgnored: CatalogRow[],
   budgetCeiling: number,
   creator: { id: string; slug: string; taste_profile?: unknown }
 ): Promise<Rec[]> {
-  // Filter to fashion+accessories under budget. The catalog query
-  // already pre-filtered to those categories when CATEGORY_HINTS
-  // matched the user's message, but be defensive: skip beauty/etc.
-  const eligible = catalog.filter((p) => {
-    if (p.price == null || p.price > budgetCeiling) return false;
-    const c = (p.category ?? "").toLowerCase();
-    if (c !== "fashion" && c !== "accessories") return false;
-    return true;
-  });
+  // IMPORTANT: do NOT use the pre-loaded `catalog` from loadCatalog
+  // here. That catalog is top-80 by price DESC; for a luxury-skewed
+  // creator catalog (e.g. Madison's, where the cheapest top-80 item
+  // is $369), there's literally nothing under $200 in it. The
+  // fallback would always return empty.
+  //
+  // Do our own budget-filtered query: fashion+accessories under the
+  // ceiling, ordered cheapest-first so the picker has the widest
+  // selection to assemble a coherent outfit.
+  void _catalogIgnored;
+  const sb = supabaseAdmin();
+  const { data } = await sb
+    .from("products")
+    .select("id, name, brand, category, price")
+    .eq("creator_id", creator.id)
+    .in("category", ["fashion", "accessories"])
+    .not("price", "is", null)
+    .lte("price", budgetCeiling)
+    .order("price", { ascending: false, nullsFirst: false })
+    .limit(60);
+  const eligible = (data ?? []) as CatalogRow[];
   if (eligible.length === 0) return [];
 
   type Bucket = { row: CatalogRow; kind: GarmentKind };
@@ -2064,9 +2076,14 @@ const CATEGORY_HINTS: { keywords: RegExp; categories: string[] }[] = [
     categories: ["fashion", "accessories"],
   },
   {
+    // Outfit-shape vocabulary. Includes "accessories" alongside
+    // fashion because a real outfit is dress/top/bottom + shoes + bag
+    // — pulling fashion-only into the prompt context starves the
+    // fallback assembler of the accessory items it needs to build a
+    // coherent outfit board.
     keywords:
       /\b(dress|skirt|top|tee|tshirt|t-shirt|trousers?|pants?|jeans?|denim|jacket|coat|blazer|sweater|knit|outfit|wear|wardrobe)\b/i,
-    categories: ["fashion"],
+    categories: ["fashion", "accessories"],
   },
 ];
 
