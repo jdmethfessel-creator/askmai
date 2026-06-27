@@ -79,9 +79,19 @@ export default function ForCreatorsPage() {
           followers can ask anything, and shop everything, in your voice,
           instantly, forever.
         </p>
-        <a href="#demo" className="fc-hero-cta">
-          See your twin <ArrowRight />
-        </a>
+        <div className="fc-hero-cta-row">
+          <a href="#demo" className="fc-hero-cta">
+            See your twin <ArrowRight />
+          </a>
+          {/* Secondary CTA — same href + same class as the bottom
+              "Get early access" so both buttons share style and
+              destination. Adding a top entry-point because creators
+              who get the link via DM often want to apply
+              immediately, not scroll the full pitch first. */}
+          <Link href="/creator-signup" className="fc-close-cta">
+            Get early access <ArrowRight />
+          </Link>
+        </div>
       </section>
 
       {/* ----------- DEMO (centerpiece) ----------- */}

@@ -64,6 +64,15 @@ html, body {
   font-weight: 300;
   margin: 0 0 38px;
 }
+/* Hero CTA row — wraps "See your twin" + "Get early access" so they
+   sit side by side. Mobile media query at the bottom of the file
+   stacks them vertically so two pills don't get cramped at 375px. */
+.fc-hero-cta-row {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
 .fc-hero-cta {
   display: inline-flex;
   align-items: center;
@@ -847,6 +856,21 @@ html, body {
     font-size: 15px;
     line-height: 1.55;
     margin-bottom: 28px;
+  }
+  .fc-hero-cta-row {
+    /* Stack the two pills vertically on narrow viewports so neither
+       gets crowded out by the other. Fixed max-width keeps them from
+       getting too wide for a thumb tap. */
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+    max-width: 320px;
+  }
+  .fc-hero-cta-row .fc-hero-cta,
+  .fc-hero-cta-row .fc-close-cta {
+    width: 100%;
+    justify-content: space-between;
   }
   .fc-hero-cta {
     padding: 14px 22px;
