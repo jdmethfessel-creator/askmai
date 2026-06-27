@@ -7,10 +7,21 @@
   background: #fbf7ef;
   color: #1a1610;
   padding: 32px 20px 80px;
+  /* Defensive: stop any single flex child (e.g. a long input or
+     unbroken slug text) from forcing the body horizontally past the
+     viewport. Without this, modal-open can render with the page
+     scrolled right and section headings clipped on the left edge. */
+  overflow-x: hidden;
+  width: 100%;
+  box-sizing: border-box;
 }
 .profile-inner {
   max-width: 640px;
   margin: 0 auto;
+  width: 100%;
+  /* min-width:0 inside a flex column lets descendants honor max-width
+     constraints instead of expanding to their intrinsic content size. */
+  min-width: 0;
 }
 .profile-h1 {
   font-family: var(--font-display, Georgia), serif;
@@ -25,6 +36,10 @@
   border-radius: 18px;
   padding: 20px 22px;
   margin-bottom: 18px;
+  /* Prevent any interior flex row (name input + Save button, photo
+     row, etc.) from forcing the section past its container width. */
+  min-width: 0;
+  box-sizing: border-box;
 }
 .profile-h2 {
   font-family: var(--font-display, Georgia), serif;
@@ -39,9 +54,18 @@
   display: flex;
   gap: 8px;
   align-items: center;
+  /* min-width:0 + flex-wrap let the row collapse instead of overflow
+     when the input's intrinsic width + button width exceeds the
+     section's content width (happens on narrow 375px viewports). */
+  flex-wrap: wrap;
+  min-width: 0;
 }
 .profile-input {
   flex: 1;
+  /* Without min-width:0, flex inputs refuse to shrink past their
+     content-derived intrinsic width and push the parent past the
+     viewport. This is the most common left-edge clip root cause. */
+  min-width: 0;
   font: inherit;
   font-size: 14.5px;
   padding: 11px 13px;
@@ -125,22 +149,51 @@
   padding: 0;
 }
 .profile-followitem {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  padding: 10px 0;
   border-bottom: 1px solid rgba(26, 22, 16, 0.06);
 }
 .profile-followitem:last-child {
   border-bottom: 0;
 }
+/* The whole row is a link to the creator page at /[slug]. Display
+   reset on the anchor restores baseline + gap behavior; min-width:0
+   stops a long slug from forcing horizontal overflow. */
+.profile-followlink {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 8px;
+  margin: 0 -8px;
+  border-radius: 10px;
+  color: inherit;
+  text-decoration: none;
+  min-width: 0;
+  transition: background 0.15s, transform 0.15s;
+}
+.profile-followlink:hover,
+.profile-followlink:focus-visible {
+  background: rgba(26, 22, 16, 0.04);
+  transform: translateX(2px);
+  outline: none;
+}
 .profile-followname {
   font-size: 14.5px;
   font-weight: 500;
+  /* Truncate, don't overflow, if a display name is unusually long. */
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .profile-followmeta {
   font-size: 12.5px;
   color: rgba(26, 22, 16, 0.55);
+  flex-shrink: 0;
+}
+.profile-followchevron {
+  font-size: 12.5px;
+  color: rgba(26, 22, 16, 0.45);
+  flex-shrink: 0;
 }
 
 /* Photo block */
@@ -226,12 +279,35 @@
   display: flex;
   gap: 8px;
   margin-bottom: 14px;
+  min-width: 0;
+}
+/* Each {label + input} pair stacks vertically so the field label is
+   always visible above the box. Month / Day / Year order is locked
+   left-to-right to match the YYYY-MM-DD assembly in submitAgeGate. */
+.profile-dob-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.profile-dob-field-month,
+.profile-dob-field-day {
+  flex: 1;
+}
+.profile-dob-field-year {
+  flex: 1.4;
+}
+.profile-dob-label {
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: rgba(26, 22, 16, 0.6);
+  padding-left: 2px;
 }
 .profile-dob-input {
   text-align: center;
-}
-.profile-dob-year {
-  flex: 1.4;
+  width: 100%;
 }
 
 /* Mobile tightening */

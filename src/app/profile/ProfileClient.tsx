@@ -15,6 +15,7 @@
  * the gate modal copy to a polite block and never open the picker.
  */
 
+import Link from "next/link";
 import { useRef, useState } from "react";
 
 type Props = {
@@ -246,8 +247,13 @@ export function ProfileClient({
           <h2 className="profile-h2">Creators you follow</h2>
           <ul className="profile-followlist">
             <li className="profile-followitem">
-              <span className="profile-followname">Madison Waller</span>
-              <span className="profile-followmeta">/madisonwaller</span>
+              <Link href="/madisonwaller" className="profile-followlink">
+                <span className="profile-followname">Madison Waller</span>
+                <span className="profile-followmeta">/madisonwaller</span>
+                <span className="profile-followchevron" aria-hidden>
+                  ›
+                </span>
+              </Link>
             </li>
           </ul>
         </section>
@@ -328,43 +334,59 @@ export function ProfileClient({
               date of birth. We use it for this check only and do not
               store it.
             </p>
+            {/* DOB inputs stacked with visible micro-labels. Order is
+                locked to match the YYYY-MM-DD assembly in submitAgeGate:
+                Month box -> dob.m, Day box -> dob.d, Year box -> dob.y.
+                The string sent to /api/profile/age-verify is built as
+                `${y}-${m}-${d}`, which the server splits on '-' as
+                [year, month, day]. A July 1 1989 entry (M=07 D=01
+                Y=1989) becomes "1989-07-01", never misread. */}
             <div className="profile-dob-row">
-              <input
-                type="text"
-                inputMode="numeric"
-                placeholder="MM"
-                maxLength={2}
-                value={dob.m}
-                onChange={(e) =>
-                  setDob({ ...dob, m: e.target.value.replace(/\D/g, "") })
-                }
-                className="profile-input profile-dob-input"
-                aria-label="Month"
-              />
-              <input
-                type="text"
-                inputMode="numeric"
-                placeholder="DD"
-                maxLength={2}
-                value={dob.d}
-                onChange={(e) =>
-                  setDob({ ...dob, d: e.target.value.replace(/\D/g, "") })
-                }
-                className="profile-input profile-dob-input"
-                aria-label="Day"
-              />
-              <input
-                type="text"
-                inputMode="numeric"
-                placeholder="YYYY"
-                maxLength={4}
-                value={dob.y}
-                onChange={(e) =>
-                  setDob({ ...dob, y: e.target.value.replace(/\D/g, "") })
-                }
-                className="profile-input profile-dob-input profile-dob-year"
-                aria-label="Year"
-              />
+              <label className="profile-dob-field profile-dob-field-month">
+                <span className="profile-dob-label">Month</span>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  placeholder="MM"
+                  maxLength={2}
+                  value={dob.m}
+                  onChange={(e) =>
+                    setDob({ ...dob, m: e.target.value.replace(/\D/g, "") })
+                  }
+                  className="profile-input profile-dob-input"
+                  aria-label="Month"
+                />
+              </label>
+              <label className="profile-dob-field profile-dob-field-day">
+                <span className="profile-dob-label">Day</span>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  placeholder="DD"
+                  maxLength={2}
+                  value={dob.d}
+                  onChange={(e) =>
+                    setDob({ ...dob, d: e.target.value.replace(/\D/g, "") })
+                  }
+                  className="profile-input profile-dob-input"
+                  aria-label="Day"
+                />
+              </label>
+              <label className="profile-dob-field profile-dob-field-year">
+                <span className="profile-dob-label">Year</span>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  placeholder="YYYY"
+                  maxLength={4}
+                  value={dob.y}
+                  onChange={(e) =>
+                    setDob({ ...dob, y: e.target.value.replace(/\D/g, "") })
+                  }
+                  className="profile-input profile-dob-input"
+                  aria-label="Year"
+                />
+              </label>
             </div>
             <button
               type="button"
