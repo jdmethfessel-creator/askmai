@@ -3,88 +3,30 @@ import type { NextRequest } from "next/server";
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 
 /**
- * Two-layer middleware.
+ * Supabase session refresh middleware.
  *
- *   1) Site-wide HTTP Basic Auth gate. Credentials live in
- *      SITE_AUTH_USER / SITE_AUTH_PASS. When either is missing we
- *      fail open and log — a misconfigured deploy should be obvious,
- *      not silently brick the entire site.
+ * Runs on every page request that isn't on the matcher exclusion list,
+ * and asks Supabase to refresh the auth token cookies. Without this,
+ * Supabase Auth's access token can fall out of sync between the cookie
+ * jar and the JWT signature, and getServerSession() in /[slug]/page.tsx
+ * starts returning null intermittently — the "modal shows plans for a
+ * moment, then reverts to email form" bug.
  *
- *   2) Supabase session refresh. Runs on every let-through request
- *      so the page handler reads cookies that are already
- *      revalidated/refreshed. Without this, Supabase Auth's access
- *      token can fall out of sync between the cookie jar and the
- *      JWT signature, and getServerSession() in /[slug]/page.tsx
- *      starts returning null intermittently — the "modal shows
- *      plans for a moment, then reverts to email form" bug.
+ * Was previously a two-layer middleware that also enforced site-wide
+ * HTTP Basic Auth via SITE_AUTH_USER / SITE_AUTH_PASS. That gate has
+ * been removed per direction — the site now loads fully open. The
+ * env vars are no longer read by anything; leaving them set or
+ * unset has no effect. Safe to delete from Vercel later.
  *
- * /api/img and /api/webhooks/* are intentionally excluded by the
- * matcher: the image proxy must stay open (browsers serve product
- * photos without cached credentials) and external webhook callers
- * (Stripe today, others later) authenticate via their own signed
- * payload, never with HTTP Basic.
- *
- * /forcreators, /demo/*, and /og/* are also excluded. /forcreators is
- * the unlisted creator pitch page — it stays public so creators we
- * share the URL with don't hit a Basic Auth prompt. Its noindex meta
- * still keeps it out of search engines, and the homepage doesn't link
- * it, so reach is via direct URL share only. /demo/* hosts the static
- * image assets that page needs (place photos for the TRAVEL slide,
- * product photos for the PACKING slide). /og/* hosts the social
- * share-card images that iMessage / Slack / Twitter / etc. fetch when
- * unfurling links — those unfurlers can't pass Basic Auth, so the
- * image must serve credential-free or the link preview just shows a
- * broken icon. Same reasoning as /api/img: images must serve without
- * credentials to render in the browser or an unfurler. The matcher
- * exemption applies to those paths only; every non-consented creator
- * page (/[slug]) and the homepage still pass through the Basic Auth
- * gate.
+ * The matcher exclusions are kept as a no-op-cost performance
+ * optimization: static assets and webhook endpoints don't need a
+ * Supabase session refresh round-trip on every request.
  */
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
 export async function middleware(request: NextRequest) {
-  // ---- (1) Basic Auth gate ------------------------------------
-  const user = process.env.SITE_AUTH_USER;
-  const pass = process.env.SITE_AUTH_PASS;
-  const basicAuthConfigured = Boolean(user && pass);
-
-  if (basicAuthConfigured) {
-    const header = request.headers.get("authorization");
-    let allowed = false;
-    if (header) {
-      const [scheme, encoded] = header.split(" ");
-      if (scheme === "Basic" && encoded) {
-        try {
-          const decoded = atob(encoded);
-          const idx = decoded.indexOf(":");
-          if (idx > -1) {
-            const u = decoded.slice(0, idx);
-            const p = decoded.slice(idx + 1);
-            if (u === user && p === pass) allowed = true;
-          }
-        } catch {
-          // Malformed base64 — fall through to 401.
-        }
-      }
-    }
-    if (!allowed) {
-      return new NextResponse("Authentication required", {
-        status: 401,
-        headers: {
-          "WWW-Authenticate": 'Basic realm="askmai"',
-          "Content-Type": "text/plain; charset=utf-8",
-        },
-      });
-    }
-  } else {
-    console.warn(
-      "[middleware] SITE_AUTH_USER / SITE_AUTH_PASS not set — failing open"
-    );
-  }
-
-  // ---- (2) Supabase session refresh ---------------------------
   // No-op if Supabase isn't configured — keeps things resilient if
   // an env var hasn't been wired yet.
   if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
@@ -134,13 +76,11 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    // Match every path EXCEPT the public ones. The negative lookahead
-    // runs against the rest of the path after the leading slash.
-    // Added forcreators + demo + og: see the doc block at the top of
-    // the file for rationale. The exemption is intentionally narrow —
-    // only those three prefixes plus the pre-existing static / API
-    // exclusions; every other route, including /[slug] creator
-    // pages, still hits the Basic Auth gate.
+    // Match every path EXCEPT the static / webhook ones. The
+    // exclusions are a perf optimization now (no point doing a
+    // Supabase session refresh round-trip on a webhook callback or
+    // an image asset); they no longer guard auth, because there's
+    // no site-wide auth gate any more.
     "/((?!api/img|api/webhooks|_next/static|_next/image|favicon|icon|apple-icon|forcreators|demo|og).*)",
   ],
 };
