@@ -147,14 +147,15 @@ export async function POST(request: Request) {
     }
   }
 
-  const catalog = await loadCatalog(creatorId, message);
+  const budgetCeilingPrefetch = extractBudgetCeiling(message);
+  const catalog = await loadCatalog(creatorId, message, budgetCeilingPrefetch);
   const knownProducts = buildKnownProducts(catalog, creator.taste_profile);
   const creatorRef = {
     id: creatorId,
     slug: creator.slug,
     taste_profile: creator.taste_profile,
   };
-  const budgetCeiling = extractBudgetCeiling(message);
+  const budgetCeiling = budgetCeilingPrefetch;
   const productRequest = isProductRequest(message);
   const systemPrompt = buildSystemPrompt(
     creator,
@@ -2087,12 +2088,42 @@ const CATEGORY_HINTS: { keywords: RegExp; categories: string[] }[] = [
   },
 ];
 
+// Total items we want to show the model. With a 200K-token prompt
+// budget, 80 catalog lines is comfortable headroom; cap stays here.
+const CATALOG_PROMPT_CAP = 80;
+
+/**
+ * Catalog candidate selection. The previous implementation pulled the
+ * top-80 rows by price DESC, which on a real catalog (Madison has 167
+ * fashion + 95 accessories spanning $0–$1000+) silently surfaced only
+ * the 80 most expensive items. For a budget query like "miami dinner
+ * outfit for $400" the model then saw an all-aspirational prompt and
+ * had nothing in-budget to pick from — the empty-recs bug.
+ *
+ * New behavior:
+ *
+ *   1. Pull every candidate row that matches the query's category hint
+ *      (capped at 500 — sized for the largest creator catalog we
+ *      expect; cheap on Postgres because creator_id + category is
+ *      indexed).
+ *   2. If the query stated a budget, slice the rows by ceiling-relative
+ *      price bands (50–100% of budget = sweet spot, 25–50% = backups,
+ *      below 25% = cheap accessory floor). The over-budget tail is
+ *      EXCLUDED entirely — the model never sees items it can't pick,
+ *      so the "tempted past the ceiling" failure mode is impossible.
+ *   3. If no budget was stated, sample across the catalog's actual
+ *      percentile bands (top quartile + median + lower quartile) so
+ *      the model sees breadth, not just the aspirational tail.
+ *
+ * Within each band the rows are emitted price-DESC so the strongest
+ * options at that band appear first. Deterministic for now;
+ * anti-repeat varying-shuffle is a separate concern (see Step 2 plan).
+ */
 async function loadCatalog(
   creatorId: string,
-  userMessage: string
+  userMessage: string,
+  budgetCeiling: number | null
 ): Promise<CatalogRow[]> {
-  // For now, pull the entire catalog. With only ~50 items this fits comfortably
-  // in the system prompt. If the message clearly maps to a category, narrow it.
   const sb = supabaseAdmin();
   const matched = new Set<string>();
   for (const hint of CATEGORY_HINTS) {
@@ -2104,18 +2135,131 @@ async function loadCatalog(
     .from("products")
     .select("id, name, brand, category, price")
     .eq("creator_id", creatorId)
-    // nullsFirst:false — Postgres default puts NULLs FIRST on DESC sort,
-    // which was letting unpriced rows eat slots in the top-80 and pushing
-    // real priced items out of the in-prompt catalog. With NULLs LAST the
-    // top-80 is actually the 80 highest-priced rows the augmenters
-    // expect to scan against.
     .order("price", { ascending: false, nullsFirst: false })
-    .limit(80);
+    .limit(500);
   if (matched.size > 0) {
     query = query.in("category", Array.from(matched));
   }
   const { data } = await query;
-  return (data ?? []) as CatalogRow[];
+  const rows = (data ?? []) as CatalogRow[];
+  if (budgetCeiling != null) {
+    return selectCatalogForBudget(rows, budgetCeiling, CATALOG_PROMPT_CAP);
+  }
+  return selectCatalogRepresentative(rows, CATALOG_PROMPT_CAP);
+}
+
+/**
+ * Budget-aware candidate selection. Slice the rows into ceiling-
+ * relative tiers and fill the prompt's catalog window proportionally:
+ *
+ *   tier1 (50–100% of budget): the sweet spot, primary picks.
+ *   tier2 (25–50%): solid mid-tier alternatives for budget assembly.
+ *   tier3 (below 25%): cheap accessories (jewelry, belts, basics)
+ *                      that round out an outfit and leave headroom
+ *                      for one anchor piece.
+ *
+ * Targets: 50% tier1, 30% tier2, 15% tier3, balance from any in-budget
+ * leftovers. The under-budget priced rows always come first — over-
+ * budget rows are dropped entirely, then unpriced rows fill any
+ * remaining tail slots (catalog has them for a reason but we don't
+ * want them to crowd out priced picks).
+ */
+function selectCatalogForBudget(
+  rows: CatalogRow[],
+  budget: number,
+  cap: number
+): CatalogRow[] {
+  const inBudget = rows.filter((r) => r.price != null && r.price <= budget);
+  const unpriced = rows.filter((r) => r.price == null);
+  const tier1 = inBudget.filter((r) => (r.price as number) >= budget * 0.5);
+  const tier2 = inBudget.filter(
+    (r) => (r.price as number) >= budget * 0.25 && (r.price as number) < budget * 0.5
+  );
+  const tier3 = inBudget.filter((r) => (r.price as number) < budget * 0.25);
+  // Sort each band by price DESC so the model sees strongest options
+  // first within tier.
+  const sortDesc = (a: CatalogRow, b: CatalogRow) =>
+    (b.price as number) - (a.price as number);
+  tier1.sort(sortDesc);
+  tier2.sort(sortDesc);
+  tier3.sort(sortDesc);
+  const out: CatalogRow[] = [];
+  const seen = new Set<string>();
+  const take = (arr: CatalogRow[], n: number) => {
+    for (const r of arr) {
+      if (out.length >= cap) return;
+      if (n <= 0) return;
+      if (!seen.has(r.id)) {
+        out.push(r);
+        seen.add(r.id);
+        n--;
+      }
+    }
+  };
+  take(tier1, Math.round(cap * 0.5));
+  take(tier2, Math.round(cap * 0.3));
+  take(tier3, Math.round(cap * 0.15));
+  // Fill any remaining slots with leftover in-budget items so the
+  // prompt window is never under-filled.
+  take(inBudget, cap - out.length);
+  // Unpriced rows last; they're catalog truth but the budget filter
+  // can't reason about them.
+  if (out.length < cap) {
+    take(unpriced, cap - out.length);
+  }
+  return out;
+}
+
+/**
+ * Representative selection for queries with no stated budget. Hit
+ * each percentile band (top quartile, median, lower quartile) so the
+ * model sees breadth instead of always opening with the aspirational
+ * tail. Unpriced rows go in last.
+ */
+function selectCatalogRepresentative(
+  rows: CatalogRow[],
+  cap: number
+): CatalogRow[] {
+  const priced = rows
+    .filter((r) => r.price != null)
+    .sort((a, b) => (b.price as number) - (a.price as number));
+  const unpriced = rows.filter((r) => r.price == null);
+  if (priced.length === 0) return unpriced.slice(0, cap);
+  // Percentile breakpoints. Indexing into the price-DESC array so:
+  //   idx(0) = max, idx(len-1) = min.
+  const pctIdx = (frac: number) =>
+    Math.min(priced.length - 1, Math.max(0, Math.floor((priced.length - 1) * frac)));
+  const p75 = priced[pctIdx(0.25)].price as number; // 75th percentile
+  const p50 = priced[pctIdx(0.5)].price as number; // median
+  const p25 = priced[pctIdx(0.75)].price as number; // 25th percentile
+  const t1 = priced.filter((r) => (r.price as number) >= p75); // top quartile
+  const t2 = priced.filter(
+    (r) => (r.price as number) >= p50 && (r.price as number) < p75
+  );
+  const t3 = priced.filter(
+    (r) => (r.price as number) >= p25 && (r.price as number) < p50
+  );
+  const t4 = priced.filter((r) => (r.price as number) < p25);
+  const out: CatalogRow[] = [];
+  const seen = new Set<string>();
+  const take = (arr: CatalogRow[], n: number) => {
+    for (const r of arr) {
+      if (out.length >= cap) return;
+      if (n <= 0) return;
+      if (!seen.has(r.id)) {
+        out.push(r);
+        seen.add(r.id);
+        n--;
+      }
+    }
+  };
+  take(t1, Math.round(cap * 0.2));
+  take(t2, Math.round(cap * 0.3));
+  take(t3, Math.round(cap * 0.3));
+  take(t4, Math.round(cap * 0.2));
+  take(priced, cap - out.length);
+  if (out.length < cap) take(unpriced, cap - out.length);
+  return out;
 }
 
 function formatCatalogForPrompt(catalog: CatalogRow[]): string {
