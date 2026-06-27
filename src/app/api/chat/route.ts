@@ -275,9 +275,49 @@ export async function POST(request: Request) {
         // attribution model. Stable sort preserves the model's
         // intra-rank ordering, so its "best first" intent survives.
         const rankedRecs = rankProductsByAttributionThenImage(enrichedRecs);
-        if (rankedRecs.length > 0) {
+        // Outfit coherence pruning. If the response includes a full-body
+        // anchor (dress, gown, jumpsuit, romper) AND a standalone top
+        // or bottom, the model emitted an impossible combination — you
+        // can't wear a dress AND a tee. Drop the standalone pieces and
+        // keep the anchor + layers + accessories. No-op for non-outfit
+        // responses (skincare, places, single items).
+        const coherentRecs = pruneIncoherentOutfit(rankedRecs);
+        // Budget-board fallback. When the user asked a budget product
+        // request and the model+augmenters produced zero cards (Haiku
+        // sometimes leaves the prose vague and never names specific
+        // pieces), build a coherent outfit straight from catalog
+        // items under the ceiling. This guarantees a budget product
+        // request always returns a board with something shoppable.
+        let finalOutfitRecs = coherentRecs;
+        if (
+          finalOutfitRecs.length === 0 &&
+          productRequest &&
+          budgetCeiling != null
+        ) {
+          console.warn(
+            `[outfit] budget product request returned 0 recs from model+augmenters; firing catalog fallback for budget=$${budgetCeiling}`
+          );
+          const fallback = await assembleFallbackOutfit(
+            catalog,
+            budgetCeiling,
+            creatorRef
+          );
+          if (fallback.length > 0) {
+            console.log(
+              `[outfit] catalog fallback assembled ${fallback.length} items: ${fallback.map((r) => r.name).join(", ")}`
+            );
+            finalOutfitRecs = fallback;
+          } else {
+            console.warn(
+              `[outfit] catalog fallback could not assemble a coherent outfit under $${budgetCeiling}`
+            );
+          }
+        }
+        if (finalOutfitRecs.length > 0) {
           controller.enqueue(
-            encoder.encode(`\n${RECS_MARKER}\n${JSON.stringify(rankedRecs)}`)
+            encoder.encode(
+              `\n${RECS_MARKER}\n${JSON.stringify(finalOutfitRecs)}`
+            )
           );
         }
         // Log truncation diagnostics so we can spot recurring max_tokens
@@ -1813,6 +1853,203 @@ async function prefetchAggregatorImages(recs: Rec[]): Promise<Rec[]> {
       return url ? { ...rec, image_url: url } : rec;
     })
   );
+}
+
+// =====================================================================
+// Outfit coherence + budget-board fallback
+//
+// Two related fixes:
+//   pruneIncoherentOutfit — when the model emits a dress AND a
+//     standalone top in the same response, those can't be worn
+//     together. Drop the standalone tops/bottoms; keep the anchor.
+//   assembleFallbackOutfit — when a budget product request returns
+//     zero recs from the model+augmenters (Haiku sometimes goes
+//     vague-prose with no specific brand+product mentions, leaving
+//     all the augmenters with nothing to scan), build a coherent
+//     outfit straight from catalog items under the budget ceiling.
+//
+// Both rely on inferring garment "kind" from name+category so we can
+// reason about coherence (one anchor, optional layer, accessories
+// always fine).
+// =====================================================================
+
+type GarmentKind =
+  | "anchor_full" // dress, gown, jumpsuit, romper, caftan
+  | "top" // tee, blouse, tank, bodysuit, sweater (body-fit knits)
+  | "bottom" // pant, jean, skirt, short
+  | "layer" // jacket, blazer, coat, cardigan, vest (outerwear-ish)
+  | "shoe"
+  | "bag"
+  | "jewelry"
+  | "other"; // everything else: beauty, lifestyle, place, ambiguous
+
+function inferGarmentKind(
+  name: string | undefined,
+  category: string | undefined
+): GarmentKind {
+  const n = (name ?? "").toLowerCase();
+  const cat = (category ?? "").toLowerCase();
+  if (cat === "beauty" || cat === "dining" || cat === "travel") return "other";
+  if (cat === "accessories") {
+    if (/\b(necklace|earring|earrings|bracelet|ring|hoop|hoops|stud|studs|watch|cuff|charm)\b/.test(n)) return "jewelry";
+    if (/\b(bag|tote|clutch|purse|handbag|backpack|crossbody|hobo|sling|wallet|pouch|satchel)\b/.test(n)) return "bag";
+    if (/\b(sandal|sandals|heel|heels|boot|boots|sneaker|sneakers|loafer|loafers|flat|flats|mule|mules|pump|pumps|slide|slides|shoe|shoes|espadrille|espadrilles|clog|clogs)\b/.test(n)) return "shoe";
+    return "other";
+  }
+  // Fashion subdivision by name. Dress family wins as the anchor.
+  if (/\b(dress|gown|jumpsuit|romper|caftan|kaftan)\b/.test(n)) return "anchor_full";
+  // Layers / outerwear — checked BEFORE tops so a "blazer" doesn't get
+  // misclassified as a top-ish item.
+  if (/\b(jacket|blazer|coat|trench|cardigan|vest|parka|puffer)\b/.test(n)) return "layer";
+  if (/\b(tee|t-shirt|tshirt|top|blouse|shirt|tank|bodysuit|cami|camisole|sweater|knit|pullover|hoodie|halter|corset|crop)\b/.test(n)) return "top";
+  if (/\b(pant|pants|trouser|trousers|jean|jeans|denim|short|shorts|skirt|legging|leggings|cargo|chino|chinos)\b/.test(n)) return "bottom";
+  return "other";
+}
+
+/**
+ * Drop standalone tops/bottoms when the response includes a full-body
+ * anchor garment (dress, gown, jumpsuit, romper). You can't wear a
+ * dress AND a tee in the same outfit — that combination is what the
+ * user flagged as "incoherent" on the board.
+ *
+ * Layers (jacket/blazer/cardigan) and all accessories (bag/shoe/
+ * jewelry) are kept either way — both are coherent over a dress AND
+ * with a separates outfit.
+ *
+ * If no anchor is present, the recs pass through unchanged — a
+ * top+bottom outfit is coherent on its own.
+ *
+ * Places (dining/travel) bypass the prune entirely.
+ */
+function pruneIncoherentOutfit(recs: Rec[]): Rec[] {
+  if (recs.length === 0) return recs;
+  const classified = recs.map((r) => ({
+    rec: r,
+    kind: inferGarmentKind(r.name, r.category),
+  }));
+  const hasAnchor = classified.some((c) => c.kind === "anchor_full");
+  if (!hasAnchor) return recs;
+  const kept = classified
+    .filter((c) => c.kind !== "top" && c.kind !== "bottom")
+    .map((c) => c.rec);
+  if (kept.length < recs.length) {
+    const dropped = classified
+      .filter((c) => c.kind === "top" || c.kind === "bottom")
+      .map((c) => c.rec.name)
+      .join(", ");
+    console.log(
+      `[outfit] coherence prune: anchor_full present, dropped ${dropped}`
+    );
+  }
+  return kept;
+}
+
+/**
+ * Build a coherent outfit straight from catalog when the model+
+ * augmenters couldn't produce any cards for a budget product
+ * request. Selection rules:
+ *
+ *   PREFERRED  dress + shoe + bag   (anchor-led, 2-3 items)
+ *   FALLBACK   top + bottom + shoe  (separates, 2-3 items)
+ *
+ * Per-item filters: under budgetCeiling, has an image_url so the
+ * board renders without a placeholder tile, fashion/accessories
+ * category only. Items without a parseable price are skipped — we
+ * can only honor the budget when we know the price.
+ *
+ * Returns an empty array if neither pattern can fill at least 2
+ * items; the caller then doesn't emit a marker and the response
+ * stays prose-only (preferable to a single-item "outfit").
+ */
+async function assembleFallbackOutfit(
+  catalog: CatalogRow[],
+  budgetCeiling: number,
+  creator: { id: string; slug: string; taste_profile?: unknown }
+): Promise<Rec[]> {
+  // Filter to fashion+accessories under budget. The catalog query
+  // already pre-filtered to those categories when CATEGORY_HINTS
+  // matched the user's message, but be defensive: skip beauty/etc.
+  const eligible = catalog.filter((p) => {
+    if (p.price == null || p.price > budgetCeiling) return false;
+    const c = (p.category ?? "").toLowerCase();
+    if (c !== "fashion" && c !== "accessories") return false;
+    return true;
+  });
+  if (eligible.length === 0) return [];
+
+  type Bucket = { row: CatalogRow; kind: GarmentKind };
+  const classified: Bucket[] = eligible.map((p) => ({
+    row: p,
+    kind: inferGarmentKind(p.name, p.category ?? undefined),
+  }));
+
+  function pick(kind: GarmentKind): Bucket | undefined {
+    // Highest-priced item of that kind within budget — reads as the
+    // most intentional pick rather than a basic-tier filler.
+    const pool = classified.filter((c) => c.kind === kind);
+    if (pool.length === 0) return undefined;
+    return pool.reduce((best, c) =>
+      (c.row.price ?? 0) > (best.row.price ?? 0) ? c : best
+    );
+  }
+
+  let picks: Bucket[] = [];
+  const dress = pick("anchor_full");
+  if (dress) {
+    picks = [dress];
+    const shoe = pick("shoe");
+    if (shoe) picks.push(shoe);
+    const bag = pick("bag");
+    if (bag) picks.push(bag);
+  } else {
+    const top = pick("top");
+    const bottom = pick("bottom");
+    if (top && bottom) {
+      picks = [top, bottom];
+      const shoe = pick("shoe");
+      if (shoe) picks.push(shoe);
+    }
+  }
+  if (picks.length < 2) return [];
+
+  const additions: Rec[] = [];
+  for (const p of picks) {
+    const synth: Rec = {
+      name: p.row.name,
+      brand: p.row.brand ?? undefined,
+      category: (p.row.category ?? "fashion").toLowerCase(),
+      price: p.row.price != null ? `$${p.row.price}` : undefined,
+      product_id: p.row.id,
+      why: "From her catalog under budget.",
+    };
+    try {
+      const resolved = await resolveLink(synth, creator, {
+        source: "budget_fallback_assembly",
+      });
+      if (
+        (resolved.tier === "feed" || resolved.tier === "owned_feed") &&
+        resolved.feed_product
+      ) {
+        const fp = resolved.feed_product;
+        additions.push({
+          ...synth,
+          name: fp.name,
+          brand: fp.brand ?? synth.brand,
+          price: fp.price ?? synth.price,
+          image_url: fp.image_url ?? undefined,
+          affiliate_url: resolved.url,
+          tier: resolved.tier,
+          product_id: resolved.matched_product_id,
+        });
+      }
+    } catch (err) {
+      console.error(
+        `[outfit] fallback resolveLink failed for ${p.row.brand} ${p.row.name}:`,
+        err
+      );
+    }
+  }
+  return additions;
 }
 
 const CATEGORY_HINTS: { keywords: RegExp; categories: string[] }[] = [
