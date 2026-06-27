@@ -162,7 +162,7 @@ export function SignupForm() {
         />
         <Field
           id="affiliate_networks"
-          label="Affiliate networks you use"
+          label="Other affiliate networks"
           placeholder="e.g. ShopMy, LTK, RewardStyle, Skimlinks…"
           value={affiliateNetworks}
           onChange={setAffiliateNetworks}
@@ -172,7 +172,7 @@ export function SignupForm() {
 
       <FieldTextarea
         id="note"
-        label="Anything else worth knowing? (optional)"
+        label="Other links to get to know you (blogs, other link networks, interviews, etc.)"
         value={note}
         onChange={setNote}
         maxLength={1200}
