@@ -39,8 +39,24 @@
 import sharp from "sharp";
 import { readEnv } from "./env";
 
+// HF deprecated and removed `api-inference.huggingface.co` in late
+// 2025 — the host no longer has a DNS A record, and our old URL
+// surfaced in the render lambda as
+// `getaddrinfo ENOTFOUND api-inference.huggingface.co`. The model
+// is still available via the new Inference Providers router under
+// the hf-inference provider:
+//
+//   https://router.huggingface.co/hf-inference/models/{model_id}
+//
+// Per HF's current image-segmentation API spec:
+//   - Authorization: Bearer hf_*** (unchanged)
+//   - body: raw image bytes (when no `parameters` are sent)
+//   - response: [{ label, score, mask: <base64 PNG> }, ...]
+//
+// All of those match what segmentClothingMask already does, so this
+// is a pure endpoint swap.
 const SEGFORMER_URL =
-  "https://api-inference.huggingface.co/models/mattmdjaga/segformer_b2_clothes";
+  "https://router.huggingface.co/hf-inference/models/mattmdjaga/segformer_b2_clothes";
 
 // Classes we want OR-merged into the editable mask. Labels match the
 // model's training set verbatim — capitalization and hyphenation are
