@@ -2010,24 +2010,7 @@ function RenderModalBody({
   onClose: () => void;
 }) {
   if (state.phase === "loading") {
-    return (
-      <div className="py-6 text-center space-y-3">
-        <h2 className="font-serif text-[20px] leading-tight">
-          {state.kind === "outfit" ? "Putting the look together…" : "Rendering…"}
-        </h2>
-        <p className="text-[13px] opacity-70 leading-relaxed">
-          This takes about a minute. We&apos;ll only charge a credit if it
-          finishes successfully.
-        </p>
-        <div className="flex justify-center pt-3">
-          <span
-            className="inline-block h-2 w-2 rounded-full animate-pulse"
-            style={{ background: accent }}
-            aria-hidden
-          />
-        </div>
-      </div>
-    );
+    return <LoadingPanel accent={accent} />;
   }
 
   if (state.phase === "result") {
@@ -2087,6 +2070,134 @@ function RenderModalBody({
   }
 
   return null;
+}
+
+/**
+ * LoadingPanel — replaces the static "Rendering…" copy with a
+ * rotating set of fashion/styling-flavored anticipation lines and an
+ * editorial shimmer bar that holds visual interest across the full
+ * ~60s render.
+ *
+ * Design choices considered:
+ *   - Three-dot outfit-assembly motif: too "loader," not editorial.
+ *   - Soft expanding ring: generic spinner energy, off-brand.
+ *   - Editorial shimmer bar (this one): a thin accent-colored sweep
+ *     across a hairline ground. Reads like luxury page-load shimmer
+ *     (Vogue / Net-a-Porter). Premium, quiet, doesn't distract from
+ *     the rotating headline.
+ *
+ * Long-tail behavior: after 60s the rotation pool gains two extra
+ * lines so the copy never feels stalled. The shimmer keeps running
+ * at the same cadence so the rhythm stays consistent.
+ *
+ * Pure client side, no libs, no localStorage. Cleans up its own
+ * interval + timeout on unmount.
+ */
+function LoadingPanel({ accent }: { accent: string }) {
+  // Eight rotating lines. Fashion / styling flavor, present-tense,
+  // no em dashes. Each is short enough to read in a glance (the
+  // crossfade between lines runs every ~3.5s).
+  const baseLines = [
+    "Steaming the silk",
+    "Finding your angles",
+    "Pulling the look together",
+    "Checking the fit",
+    "Choosing the right shoe",
+    "Pinning the hem",
+    "Adjusting the drape",
+    "One last look in the mirror",
+  ];
+  // Long-tail additions: only enter the rotation after ~60s so the
+  // wait never starts to feel stuck. Quieter, "we know it's taking
+  // a beat" energy without saying so explicitly.
+  const longTailLines = ["Worth the wait", "Almost there"];
+
+  // Start at a random index so two renders in a row don't both open
+  // with "Steaming the silk." Keeps repeat sessions feeling fresh.
+  const [idx, setIdx] = useState(() => Math.floor(Math.random() * baseLines.length));
+  const [longTail, setLongTail] = useState(false);
+
+  useEffect(() => {
+    const ROTATE_MS = 3500;
+    const LONG_TAIL_AFTER_MS = 60_000;
+    const rotate = setInterval(() => {
+      setIdx((i) => i + 1);
+    }, ROTATE_MS);
+    const longTailTimer = setTimeout(() => setLongTail(true), LONG_TAIL_AFTER_MS);
+    return () => {
+      clearInterval(rotate);
+      clearTimeout(longTailTimer);
+    };
+  }, []);
+
+  const pool = longTail ? [...baseLines, ...longTailLines] : baseLines;
+  const currentLine = pool[idx % pool.length];
+
+  return (
+    <div className="py-6 text-center space-y-5">
+      {/* Headline crossfades on every rotation. The `key` change
+          re-mounts the element so the fadeIn keyframe runs cleanly
+          without React having to manage the transition state. */}
+      <div className="min-h-[2.2em] flex items-center justify-center">
+        <h2
+          key={currentLine}
+          className="font-serif text-[20px] leading-tight loading-fade"
+          style={{ color: "var(--ink)" }}
+        >
+          {currentLine}
+        </h2>
+      </div>
+
+      {/* Editorial shimmer bar. Hairline ground tinted from the
+          creator's accent so it ties to the rest of the modal; a
+          translucent gradient highlight sweeps across left to right
+          on a 1.8s loop. The highlight uses the full accent at its
+          centerline and fades to transparent at the edges so the
+          sweep reads as light moving across silk. */}
+      <div
+        className="relative h-[2px] w-full overflow-hidden rounded-full mx-auto"
+        style={{ background: `${accent}1f`, maxWidth: "240px" }}
+        aria-hidden
+      >
+        <span
+          className="loading-shimmer absolute top-0 bottom-0"
+          style={{
+            background: `linear-gradient(90deg, transparent 0%, ${accent} 50%, transparent 100%)`,
+          }}
+        />
+      </div>
+
+      {/* Single subtle reassurance line. Muted, small — not the
+          headline. The rotating copy carries the experience; this
+          is just a quiet footer for someone who looks twice. */}
+      <p className="text-[11.5px] opacity-50 leading-relaxed">
+        We only use a credit if it finishes.
+      </p>
+
+      <style>{`
+        @keyframes loadingFadeIn {
+          0% { opacity: 0; transform: translateY(4px); }
+          100% { opacity: 1; transform: translateY(0); }
+        }
+        .loading-fade {
+          animation: loadingFadeIn 0.55s ease-out both;
+        }
+        @keyframes loadingShimmerSweep {
+          0% { left: -40%; }
+          100% { left: 100%; }
+        }
+        .loading-shimmer {
+          width: 40%;
+          left: -40%;
+          animation: loadingShimmerSweep 1.8s ease-in-out infinite;
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .loading-fade { animation: none; }
+          .loading-shimmer { animation: none; left: 30%; }
+        }
+      `}</style>
+    </div>
+  );
 }
 
 function ResultPanel({

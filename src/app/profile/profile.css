@@ -203,6 +203,108 @@
   align-items: flex-start;
   margin-top: 12px;
 }
+
+/* Try-on upload guidance */
+.profile-tryon-tip {
+  margin: 14px 0 12px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: rgba(26, 22, 16, 0.78);
+  background: rgba(200, 152, 99, 0.08);
+  border-left: 2px solid #c89863;
+  padding: 10px 12px;
+  border-radius: 8px;
+}
+.profile-tryon-examples {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin: 8px 0 16px;
+}
+.profile-tryon-example {
+  min-width: 0;
+}
+.profile-tryon-example-art {
+  position: relative;
+  aspect-ratio: 1 / 1.25;
+  border-radius: 8px;
+  background: linear-gradient(180deg, #f3ece1 0%, #ebe1d2 100%);
+  border: 1px solid rgba(26, 22, 16, 0.08);
+  overflow: hidden;
+}
+.profile-tryon-example-art-dark {
+  background: linear-gradient(180deg, #4a3f33 0%, #2c241c 100%);
+  border-color: rgba(26, 22, 16, 0.2);
+}
+/* Full-body figure: a stylized standing silhouette built from
+   pure CSS so the do/don't examples need no extra image assets. */
+.profile-tryon-example-figure {
+  position: absolute;
+  bottom: 8%;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 22%;
+  height: 78%;
+  background: linear-gradient(180deg, #8a6f5a 0%, #6d5746 100%);
+  border-radius: 60% 60% 30% 30% / 24% 24% 6% 6%;
+}
+/* Cropped variant: figure top is clipped (head/torso missing). */
+.profile-tryon-example-figure-cropped {
+  bottom: 0;
+  height: 48%;
+  border-radius: 60% 60% 30% 30% / 8% 8% 6% 6%;
+}
+/* Group: two smaller figures side by side. */
+.profile-tryon-example-figure-small {
+  width: 16%;
+  height: 60%;
+  bottom: 14%;
+  left: 32%;
+  transform: none;
+}
+.profile-tryon-example-figure-second {
+  left: 52%;
+  background: linear-gradient(180deg, #a08770 0%, #816553 100%);
+}
+/* Dim variant: figure low contrast against dark ground. */
+.profile-tryon-example-figure-dim {
+  background: linear-gradient(180deg, #5b4a3c 0%, #43362b 100%);
+  opacity: 0.7;
+}
+.profile-tryon-example-label {
+  margin: 6px 0 0;
+  font-size: 11px;
+  line-height: 1.3;
+  color: rgba(26, 22, 16, 0.72);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.profile-tryon-example-mark {
+  display: inline-flex;
+  width: 14px;
+  height: 14px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  font-size: 9px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.profile-tryon-mark-good {
+  background: rgba(47, 122, 79, 0.15);
+  color: #2f7a4f;
+}
+.profile-tryon-mark-bad {
+  background: rgba(176, 52, 52, 0.12);
+  color: #b03434;
+}
+@media (max-width: 480px) {
+  .profile-tryon-examples {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+}
 .profile-photo {
   width: 96px;
   height: 128px;

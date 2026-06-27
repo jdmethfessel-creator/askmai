@@ -256,11 +256,15 @@ async function fetchItemBlob(
  * symmetric padding. Translucent black so white text stays legible on
  * any photo without dominating the composition. SVG is fine here:
  * sharp renders it as a vector primitive, no font path involved.
+ *
+ * Pill opacity is tuned for "magazine credit," not "watermark":
+ * 0.22 reads as a refined overlay that supports the text rather
+ * than a heavy black box.
  */
 function pillSvg(width: number, height: number): Buffer {
   const radius = Math.round(height / 2);
   return Buffer.from(
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><rect x="0" y="0" width="${width}" height="${height}" rx="${radius}" ry="${radius}" fill="black" fill-opacity="0.42"/></svg>`
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><rect x="0" y="0" width="${width}" height="${height}" rx="${radius}" ry="${radius}" fill="black" fill-opacity="0.22"/></svg>`
   );
 }
 
@@ -323,11 +327,11 @@ async function applyBranding(pngBuffer: Buffer): Promise<Buffer> {
   const urlRaw = await getUrlAsset();
 
   // Resize each asset to a target width that holds proportion across
-  // input sizes. ~22% of image width for the wordmark, ~28% for the
-  // URL. The pre-rendered sources are ~800px wide so resize-down
-  // stays sharp.
-  const wordmarkTargetW = Math.round(width * 0.22);
-  const urlTargetW = Math.round(width * 0.28);
+  // input sizes. Magazine-credit scale: 13% of image width for the
+  // wordmark, 17% for the URL. The pre-rendered sources are ~800px
+  // wide so resize-down to ~130-175px stays crisp.
+  const wordmarkTargetW = Math.round(width * 0.13);
+  const urlTargetW = Math.round(width * 0.17);
 
   const wordmark = await sharp(wmRaw.buffer)
     .resize({ width: wordmarkTargetW })
@@ -344,19 +348,18 @@ async function applyBranding(pngBuffer: Buffer): Promise<Buffer> {
   const urlW = urlMeta.width ?? urlTargetW;
   const urlH = urlMeta.height ?? 0;
 
-  // Pill padding scaled with image width so the visual weight stays
-  // in proportion across sizes. The pill sits behind the text only,
-  // not edge-to-edge — keeps the overlay feeling tasteful.
-  const padX = Math.round(width * 0.035);
-  const padY = Math.round(width * 0.012);
+  // Pill padding tightened. Magazine credit, not banner.
+  const padX = Math.round(width * 0.022);
+  const padY = Math.round(width * 0.008);
   const topPillW = wordmarkW + padX * 2;
   const topPillH = wordmarkH + padY * 2;
   const botPillW = urlW + padX * 2;
   const botPillH = urlH + padY * 2;
 
-  // Inset from each edge. 3% of height keeps both elements clear of
-  // the natural framing without floating in space.
-  const edgeMargin = Math.round(height * 0.03);
+  // Inset from each edge. 1.8% of height keeps both labels tight to
+  // the top and bottom edges (not floating into the body of the
+  // image) while staying symmetrical.
+  const edgeMargin = Math.round(height * 0.018);
 
   const topPillLeft = Math.round((width - topPillW) / 2);
   const topPillTop = edgeMargin;

@@ -267,6 +267,66 @@ export function ProfileClient({
             model, and you can delete it any time.
           </p>
 
+          <p className="profile-tryon-tip">
+            For best results, upload a full-length solo photo: just you,
+            head to toe, standing and facing the camera, in good lighting.
+          </p>
+
+          <div
+            className="profile-tryon-examples"
+            role="group"
+            aria-label="Photo examples"
+          >
+            <div className="profile-tryon-example profile-tryon-example-good">
+              <div className="profile-tryon-example-art" aria-hidden>
+                <span className="profile-tryon-example-figure" />
+              </div>
+              <p className="profile-tryon-example-label">
+                <span className="profile-tryon-example-mark profile-tryon-mark-good">
+                  ✓
+                </span>
+                Solo, full length
+              </p>
+            </div>
+            <div className="profile-tryon-example profile-tryon-example-bad">
+              <div className="profile-tryon-example-art" aria-hidden>
+                <span className="profile-tryon-example-figure profile-tryon-example-figure-cropped" />
+              </div>
+              <p className="profile-tryon-example-label">
+                <span className="profile-tryon-example-mark profile-tryon-mark-bad">
+                  ✕
+                </span>
+                Cropped
+              </p>
+            </div>
+            <div className="profile-tryon-example profile-tryon-example-bad">
+              <div className="profile-tryon-example-art" aria-hidden>
+                <span className="profile-tryon-example-figure profile-tryon-example-figure-small" />
+                <span className="profile-tryon-example-figure profile-tryon-example-figure-small profile-tryon-example-figure-second" />
+              </div>
+              <p className="profile-tryon-example-label">
+                <span className="profile-tryon-example-mark profile-tryon-mark-bad">
+                  ✕
+                </span>
+                Group photo
+              </p>
+            </div>
+            <div className="profile-tryon-example profile-tryon-example-bad">
+              <div
+                className="profile-tryon-example-art profile-tryon-example-art-dark"
+                aria-hidden
+              >
+                <span className="profile-tryon-example-figure profile-tryon-example-figure-dim" />
+              </div>
+              <p className="profile-tryon-example-label">
+                <span className="profile-tryon-example-mark profile-tryon-mark-bad">
+                  ✕
+                </span>
+                Dim lighting
+              </p>
+            </div>
+          </div>
+
           {currentPhotoUrl ? (
             <div className="profile-photo-wrap">
               {/* eslint-disable-next-line @next/next/no-img-element */}
