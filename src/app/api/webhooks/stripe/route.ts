@@ -261,6 +261,87 @@ export async function POST(request: Request) {
       case "checkout.session.completed": {
         const s = event.data.object as Stripe.Checkout.Session;
         const userId = s.client_reference_id;
+
+        // ====================================================
+        // PACK MODE FULFILLMENT (Phase 2)
+        // One-time payment, isolated from subscription state.
+        // Triggered by metadata.kind = 'pack' on the session
+        // (set in /api/checkout when pack=pack_20 / pack_50).
+        // We credit pack_render_balance via credit_render_pack
+        // RPC and return early — pack purchases never touch the
+        // subscription branch or referral logic.
+        //
+        // Idempotency: Stripe re-delivery of the same event
+        // would double-credit the pack. Guard with a row insert
+        // into render_pack_fulfillments keyed on the Stripe
+        // session id; ON CONFLICT DO NOTHING ensures only the
+        // first delivery actually credits. Falls back to a
+        // direct credit if the table is missing (migration not
+        // applied yet) with a loud log.
+        // ====================================================
+        if (s.metadata?.kind === "pack") {
+          const packId = s.metadata?.pack_id as string | undefined;
+          const packUserId = userId ?? (s.metadata?.user_id as string | undefined);
+          if (!packUserId || (packId !== "pack_20" && packId !== "pack_50")) {
+            console.warn(
+              "[stripe-webhook] pack session missing mapping fields",
+              { userId: packUserId, packId, sessionId: s.id }
+            );
+            break;
+          }
+          const credit = packId === "pack_20" ? 20 : 50;
+          // Idempotency latch via the pack_fulfillments table — see
+          // the migration below. Insert wins exactly once per Stripe
+          // session id. If the latch insert errors with a duplicate,
+          // we skip the credit entirely.
+          const latch = await sb
+            .from("render_pack_fulfillments")
+            .insert({
+              stripe_session_id: s.id,
+              user_id: packUserId,
+              pack_id: packId,
+              credit,
+            })
+            .select("id")
+            .maybeSingle();
+          if (latch.error) {
+            // 23505 = duplicate; skip silently. Any other error means
+            // the table is missing or RLS rejected — log and skip the
+            // credit so a partial state can be recovered manually
+            // rather than auto-double-crediting.
+            const code = (latch.error as { code?: string }).code;
+            if (code === "23505") {
+              console.log(
+                `[stripe-webhook] pack already fulfilled session=${s.id}`
+              );
+              break;
+            }
+            console.error(
+              "[stripe-webhook] pack latch insert failed:",
+              latch.error.message
+            );
+            break;
+          }
+          const rpc = await sb.rpc("credit_render_pack", {
+            p_user_id: packUserId,
+            p_amount: credit,
+          });
+          if (rpc.error) {
+            console.error(
+              "[stripe-webhook] credit_render_pack RPC failed:",
+              rpc.error.message
+            );
+            break;
+          }
+          console.log(
+            `[stripe-webhook] PACK CREDITED user=${packUserId} pack=${packId} +${credit} balance=${rpc.data}`
+          );
+          break;
+        }
+
+        // ====================================================
+        // SUBSCRIPTION MODE (original, unchanged behavior)
+        // ====================================================
         const customerId =
           typeof s.customer === "string" ? s.customer : s.customer?.id;
         const subscriptionId =

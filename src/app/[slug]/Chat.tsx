@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ChatMessage, Rec } from "@/lib/types";
+import SignInModal from "@/app/_components/SignInModal";
 
 const SUGGESTIONS = [
   "summer dinner outfit, easy but elevated",
@@ -57,6 +58,50 @@ function splitResponse(raw: string): { text: string; recs?: Rec[] } {
   return { text };
 }
 
+/**
+ * Render-button category gate. Catalog-driven only, no title-keyword
+ * matching: a card qualifies when its model-supplied `category` field
+ * (lowercased + trimmed) is exactly "fashion" or "accessories". Beauty,
+ * lifestyle, travel, dining, and null/other never get a render pill.
+ *
+ * Stays in sync with the server-side prompt's category enum so the
+ * client and server agree on what's renderable.
+ */
+export function qualifiesForRender(rec: Rec): boolean {
+  const cat = (rec.category ?? "").trim().toLowerCase();
+  return cat === "fashion" || cat === "accessories";
+}
+
+type RenderQuota = {
+  total: number;
+  included: number;
+  pack: number;
+  ageVerified: boolean;
+  hasPhoto: boolean;
+};
+
+type RenderState =
+  | { phase: "closed" }
+  | { phase: "loading"; kind: "single" | "outfit" }
+  | { phase: "result"; url: string; kind: "single" | "outfit" }
+  | { phase: "gate"; reason: "signin" | "age" | "photo" | "pack" }
+  | { phase: "error"; message: string };
+
+/**
+ * Bundle of the props every card-level render pill needs. Plumbed
+ * through EditorialBoard / LookSection / HeroProduct / FinisherCard /
+ * RecCard so each card can fire the same `startSingle` / `startOutfit`
+ * callback. The label flip ("Show This Item" vs "Buy Image Package")
+ * is owned by the parent so all pills agree on which they show.
+ */
+type RenderHooks = {
+  accent: string;
+  quota: RenderQuota | null;
+  busy: boolean;
+  startSingle: (rec: Rec) => void;
+  startOutfit: (recs: Rec[]) => void;
+};
+
 export default function Chat({
   slug,
   accent,
@@ -82,6 +127,194 @@ export default function Chat({
   );
   const [paywallOpen, setPaywallOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // ----- Render quota + modal state ---------------------------------
+  // Quota is read once on mount when signed in. The label-flip rule
+  // for the render pills ("Show This Item" vs "Buy Image Package")
+  // keys off this. The actual gate is always re-checked server-side
+  // in POST /api/render — this state only drives the UI.
+  const [renderQuota, setRenderQuota] = useState<RenderQuota | null>(null);
+  const [renderState, setRenderState] = useState<RenderState>({
+    phase: "closed",
+  });
+
+  useEffect(() => {
+    if (!signedIn) return;
+    let cancelled = false;
+    fetch("/api/render/quota", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then(
+        (
+          d: {
+            signed_in?: boolean;
+            age_verified?: boolean;
+            has_photo?: boolean;
+            included_remaining?: number;
+            pack_balance?: number;
+            total_remaining?: number;
+          } | null
+        ) => {
+          if (cancelled || !d || !d.signed_in) return;
+          setRenderQuota({
+            total: Number(d.total_remaining ?? 0),
+            included: Number(d.included_remaining ?? 0),
+            pack: Number(d.pack_balance ?? 0),
+            ageVerified: Boolean(d.age_verified),
+            hasPhoto: Boolean(d.has_photo),
+          });
+        }
+      )
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [signedIn]);
+
+  const renderBusy =
+    renderState.phase === "loading" || renderState.phase === "gate" || renderState.phase === "result";
+
+  const runRender = useCallback(
+    async (kind: "single" | "outfit", recs: Rec[]) => {
+      // Filter to qualifying items with a usable reference image URL.
+      // No image_url means we have nothing to send as a garment
+      // reference, so silently drop.
+      const items = recs
+        .filter(qualifiesForRender)
+        .filter((r) => typeof r.image_url === "string" && r.image_url.length > 0)
+        .map((r) => ({
+          image_url: r.image_url as string,
+          name: r.name,
+          brand: r.brand,
+        }));
+      if (items.length === 0) {
+        setRenderState({ phase: "error", message: "Nothing to render here." });
+        return;
+      }
+      // Signed-out short-circuit: open sign-in before spending a
+      // second. The server would 401 anyway; doing it client-side
+      // avoids a wasted round trip.
+      if (!signedIn) {
+        setRenderState({ phase: "gate", reason: "signin" });
+        return;
+      }
+      // Zero-quota short-circuit: route straight to pack picker.
+      if (renderQuota && renderQuota.total <= 0) {
+        setRenderState({ phase: "gate", reason: "pack" });
+        return;
+      }
+      setRenderState({ phase: "loading", kind });
+      try {
+        const r = await fetch("/api/render", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            kind,
+            creatorSlug: slug,
+            items: kind === "single" ? items.slice(0, 1) : items,
+          }),
+        });
+        if (r.status === 401) {
+          setRenderState({ phase: "gate", reason: "signin" });
+          return;
+        }
+        if (r.status === 403) {
+          setRenderState({ phase: "gate", reason: "age" });
+          return;
+        }
+        if (r.status === 412) {
+          setRenderState({ phase: "gate", reason: "photo" });
+          return;
+        }
+        if (r.status === 402) {
+          // Server-side quota race (someone else's tab consumed the
+          // last credit between mount and click). Same path as the
+          // pre-empted zero-quota case: open the pack picker.
+          const data = (await r.json().catch(() => null)) as {
+            included_remaining?: number;
+            pack_balance?: number;
+          } | null;
+          if (data) {
+            setRenderQuota((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    included: Number(data.included_remaining ?? 0),
+                    pack: Number(data.pack_balance ?? 0),
+                    total:
+                      Number(data.included_remaining ?? 0) +
+                      Number(data.pack_balance ?? 0),
+                  }
+                : prev
+            );
+          }
+          setRenderState({ phase: "gate", reason: "pack" });
+          return;
+        }
+        const data = (await r.json().catch(() => null)) as {
+          ok?: boolean;
+          signed_url?: string;
+          included_remaining?: number;
+          pack_balance?: number;
+        } | null;
+        if (!r.ok || !data?.ok || !data.signed_url) {
+          setRenderState({
+            phase: "error",
+            message:
+              "Render failed. Try again in a sec? Your credits aren't touched on failures.",
+          });
+          return;
+        }
+        if (typeof data.included_remaining === "number") {
+          setRenderQuota((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  included: data.included_remaining as number,
+                  pack: Number(data.pack_balance ?? prev.pack),
+                  total:
+                    (data.included_remaining as number) +
+                    Number(data.pack_balance ?? prev.pack),
+                }
+              : prev
+          );
+        }
+        setRenderState({
+          phase: "result",
+          url: data.signed_url,
+          kind,
+        });
+      } catch {
+        setRenderState({
+          phase: "error",
+          message: "Network blip. Try again?",
+        });
+      }
+    },
+    [signedIn, renderQuota, slug]
+  );
+
+  const startSingle = useCallback(
+    (rec: Rec) => {
+      if (renderBusy) return;
+      runRender("single", [rec]);
+    },
+    [runRender, renderBusy]
+  );
+  const startOutfit = useCallback(
+    (recs: Rec[]) => {
+      if (renderBusy) return;
+      runRender("outfit", recs);
+    },
+    [runRender, renderBusy]
+  );
+
+  const renderHooks: RenderHooks = {
+    accent,
+    quota: renderQuota,
+    busy: renderBusy,
+    startSingle,
+    startOutfit,
+  };
 
   useEffect(() => {
     scrollRef.current?.scrollTo({
@@ -290,6 +523,7 @@ export default function Chat({
                           }
                           onRefine={send}
                           streaming={streaming}
+                          renderHooks={renderHooks}
                         />
                       ) : (
                         partitioned.products.map((rec, j) => (
@@ -297,6 +531,7 @@ export default function Chat({
                             key={recKey(rec, j)}
                             rec={rec}
                             accent={accent}
+                            renderHooks={renderHooks}
                           />
                         ))
                       )}
@@ -305,8 +540,14 @@ export default function Chat({
                           key={recKey(rec, partitioned.products.length + j)}
                           rec={rec}
                           accent={accent}
+                          renderHooks={renderHooks}
                         />
                       ))}
+                      <OutfitRenderPill
+                        recs={partitioned.products}
+                        hooks={renderHooks}
+                        streaming={streaming && isLast}
+                      />
                     </div>
                   )}
                 </li>
@@ -357,6 +598,14 @@ export default function Chat({
           onClose={() => setPaywallOpen(false)}
         />
       )}
+
+      {renderState.phase !== "closed" && (
+        <RenderModal
+          state={renderState}
+          accent={accent}
+          onClose={() => setRenderState({ phase: "closed" })}
+        />
+      )}
     </div>
   );
 }
@@ -377,6 +626,27 @@ function PaywallModal({
   const [emailError, setEmailError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [planError, setPlanError] = useState<string | null>(null);
+
+  // Exit-intent winback flow. When the user tries to dismiss the
+  // paywall (X click, backdrop click, ESC), if they haven't been
+  // offered the winback discount yet on this device, we intercept and
+  // show a discount modal instead of closing. Once shown, the cookie
+  // flag below ensures we never re-nag on subsequent paywall hits.
+  // Dismissing the winback closes everything.
+  const [showingWinback, setShowingWinback] = useState(false);
+  const [winbackAvailable, setWinbackAvailable] = useState<boolean | null>(
+    null
+  );
+  useEffect(() => {
+    if (typeof document === "undefined") {
+      setWinbackAvailable(false);
+      return;
+    }
+    const seen = document.cookie
+      .split(";")
+      .some((c) => c.trim().startsWith("askmai_winback_offered=1"));
+    setWinbackAvailable(!seen);
+  }, []);
 
   const returnTo =
     typeof window !== "undefined"
@@ -419,7 +689,59 @@ function PaywallModal({
     }
   }
 
-  async function startCheckout(plan: "monthly" | "annual") {
+  // Intercept dismiss intents. First dismiss (when winback available
+  // AND user has already signed in) diverts to the winback modal;
+  // second dismiss (or any dismiss when winback already shown / not
+  // available / user not signed in) closes the paywall for real.
+  // Cookie is set when the winback is FIRST shown so even a hard
+  // reload won't re-offer.
+  //
+  // The signed-in gate matters: most paywall hits start anonymous,
+  // and the meaningful "cold feet" moment is AFTER sign-in when the
+  // user is staring at the plan picker. Offering the discount to an
+  // anonymous visitor who's never even given an email wastes the
+  // one-shot offer on people who weren't going to convert anyway.
+  function handleDismiss() {
+    if (signedIn && winbackAvailable && !showingWinback) {
+      if (typeof document !== "undefined") {
+        document.cookie =
+          "askmai_winback_offered=1; Path=/; Max-Age=" +
+          60 * 60 * 24 * 365 +
+          "; SameSite=Lax";
+      }
+      setShowingWinback(true);
+      setWinbackAvailable(false);
+      return;
+    }
+    onClose();
+  }
+  function handleWinbackDismiss() {
+    setShowingWinback(false);
+    onClose();
+  }
+  // ESC key dismisses the paywall (and routes through handleDismiss so
+  // it triggers winback intercept on first ESC). Re-registers when
+  // dismiss-related state changes so the closure stays current.
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        if (showingWinback) handleWinbackDismiss();
+        else handleDismiss();
+      }
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+    // handleDismiss/handleWinbackDismiss are defined inline above and
+    // read state directly, so re-registering on state change keeps
+    // the listener pointing at the latest closure.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showingWinback, winbackAvailable]);
+
+  async function startCheckout(
+    plan: "monthly" | "annual",
+    coupon?: "winback"
+  ) {
     if (busy) return;
     setBusy(true);
     setPlanError(null);
@@ -427,7 +749,7 @@ function PaywallModal({
       const r = await fetch("/api/checkout", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ plan, returnTo }),
+        body: JSON.stringify({ plan, returnTo, coupon }),
       });
       if (r.status === 401) {
         // Session expired between modal open and click — drop back to
@@ -449,11 +771,23 @@ function PaywallModal({
     }
   }
 
+  if (showingWinback) {
+    return (
+      <WinbackModal
+        accent={accent}
+        busy={busy}
+        planError={planError}
+        onAccept={() => startCheckout("monthly", "winback")}
+        onDismiss={handleWinbackDismiss}
+      />
+    );
+  }
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-end sm:items-center justify-center px-4 pb-4 pt-10 sm:p-6"
       style={{ background: "rgba(0,0,0,0.5)", backdropFilter: "blur(2px)" }}
-      onClick={onClose}
+      onClick={handleDismiss}
       role="dialog"
       aria-modal="true"
     >
@@ -469,7 +803,7 @@ function PaywallModal({
       >
         <button
           type="button"
-          onClick={onClose}
+          onClick={handleDismiss}
           aria-label="Close"
           className="absolute top-3 right-3 h-8 w-8 rounded-full flex items-center justify-center text-[18px] opacity-50 hover:opacity-90"
         >
@@ -611,6 +945,121 @@ function PaywallModal({
 
 function recKey(rec: Rec, fallback: number) {
   return `${rec.tier ?? "?"}-${rec.product_id ?? ""}-${rec.name ?? ""}-${fallback}`;
+}
+
+/**
+ * Exit-intent winback modal — the second "page" of the paywall flow.
+ * Shown ONCE per device (cookie-gated) when a SIGNED-IN user tries to
+ * dismiss the paywall without subscribing. Anonymous dismisses skip
+ * winback entirely — that one-shot offer is too valuable to burn on
+ * visitors who haven't even given us an email.
+ *
+ * Premium tone: no urgency words, no countdowns, no aggressive
+ * styling — just one quiet line on what's being offered.
+ *
+ * The Accept button funnels the user through the SAME /api/checkout
+ * route as the regular Monthly button, but with coupon="winback" in
+ * the body. That resolves server-side to STRIPE_WINBACK_COUPON_ID
+ * (paywall_winback_50, 50% off for 3 months, repeating).
+ */
+function WinbackModal({
+  accent,
+  busy,
+  planError,
+  onAccept,
+  onDismiss,
+}: {
+  accent: string;
+  busy: boolean;
+  planError: string | null;
+  onAccept: () => void;
+  onDismiss: () => void;
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center px-4 pb-4 pt-10 sm:p-6"
+      style={{ background: "rgba(0,0,0,0.55)", backdropFilter: "blur(3px)" }}
+      onClick={onDismiss}
+      role="dialog"
+      aria-modal="true"
+      aria-label="50% off offer"
+    >
+      <div
+        className="w-full max-w-[400px] rounded-3xl px-7 py-8 relative"
+        style={{
+          background: "var(--surface)",
+          color: "var(--ink)",
+          boxShadow:
+            "0 24px 48px -12px rgba(0,0,0,0.36), 0 4px 16px rgba(0,0,0,0.16)",
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button
+          type="button"
+          onClick={onDismiss}
+          aria-label="Close"
+          className="absolute top-3 right-3 h-8 w-8 rounded-full flex items-center justify-center text-[18px] opacity-50 hover:opacity-90"
+        >
+          ×
+        </button>
+
+        {/* Eyebrow — small accent line above the headline. No "WAIT!"
+            or "DON'T GO!" — just a quiet category-style label. */}
+        <p
+          className="text-[10.5px] mb-3.5"
+          style={{
+            letterSpacing: "0.18em",
+            textTransform: "uppercase",
+            color: accent,
+            opacity: 0.85,
+          }}
+        >
+          One more thing
+        </p>
+
+        <h2
+          className="font-serif text-[24px] leading-[1.15] mb-2.5"
+          style={{ letterSpacing: "-0.01em" }}
+        >
+          Stay for a minute.
+        </h2>
+        <p className="text-[13.5px] opacity-75 leading-relaxed mb-6">
+          50% off your first 3 months. Same access, half the price —
+          that&apos;s it.
+        </p>
+
+        <button
+          type="button"
+          onClick={onAccept}
+          disabled={busy}
+          className="w-full rounded-2xl px-4 py-3.5 text-[14.5px] font-medium text-white disabled:opacity-50 transition-all hover:translate-y-[-1px]"
+          style={{
+            background: accent,
+            boxShadow: "0 4px 12px -4px rgba(0,0,0,0.2)",
+          }}
+        >
+          {busy ? "One moment…" : "Continue at 50% off →"}
+        </button>
+
+        <button
+          type="button"
+          onClick={onDismiss}
+          className="block w-full mt-3 text-[12.5px] opacity-55 hover:opacity-85 transition-opacity"
+        >
+          Not today
+        </button>
+
+        {planError && (
+          <p
+            className="text-[12px] mt-3 text-center"
+            style={{ color: "#c53030" }}
+          >
+            {planError}
+          </p>
+        )}
+      </div>
+    </div>
+  );
 }
 
 // -------- Editorial-board (visual-first) renderer --------
@@ -850,12 +1299,14 @@ function EditorialBoard({
   onHeroFail,
   onRefine,
   streaming,
+  renderHooks,
 }: {
   products: Rec[];
   accent: string;
   onHeroFail: () => void;
   onRefine: (prompt: string) => void;
   streaming: boolean;
+  renderHooks: RenderHooks;
 }) {
   // Quick gate: if we can't even pick a hero for the whole set we
   // demote the whole message rather than render partials.
@@ -873,6 +1324,7 @@ function EditorialBoard({
           products={look}
           accent={accent}
           onHeroFail={onHeroFail}
+          renderHooks={renderHooks}
         />
       ))}
       {total != null && (
@@ -916,10 +1368,12 @@ function LookSection({
   products,
   accent,
   onHeroFail,
+  renderHooks,
 }: {
   products: Rec[];
   accent: string;
   onHeroFail: () => void;
+  renderHooks: RenderHooks;
 }) {
   const hero = pickHeroCandidate(products);
   if (!hero) return null;
@@ -928,7 +1382,12 @@ function LookSection({
   );
   return (
     <div className="space-y-3">
-      <HeroProduct rec={hero} accent={accent} onFail={onHeroFail} />
+      <HeroProduct
+        rec={hero}
+        accent={accent}
+        onFail={onHeroFail}
+        renderHooks={renderHooks}
+      />
       {finishers.length > 0 && (
         <div className="grid grid-cols-2 gap-2.5">
           {finishers.map((rec, i) => (
@@ -936,6 +1395,7 @@ function LookSection({
               key={`fin-${i}-${rec.name}`}
               rec={rec}
               accent={accent}
+              renderHooks={renderHooks}
             />
           ))}
         </div>
@@ -948,10 +1408,12 @@ function HeroProduct({
   rec,
   accent,
   onFail,
+  renderHooks,
 }: {
   rec: Rec;
   accent: string;
   onFail: () => void;
+  renderHooks: RenderHooks;
 }) {
   if (!rec.image_url) {
     // Should never happen given eligibility, but if image_url disappears
@@ -995,6 +1457,11 @@ function HeroProduct({
               {rec.price}
             </p>
           )}
+          <SingleRenderPill
+            rec={rec}
+            hooks={renderHooks}
+            variant="overlay"
+          />
         </div>
         {rec.affiliate_url && (
           <a
@@ -1014,7 +1481,15 @@ function HeroProduct({
   );
 }
 
-function FinisherCard({ rec, accent }: { rec: Rec; accent: string }) {
+function FinisherCard({
+  rec,
+  accent,
+  renderHooks,
+}: {
+  rec: Rec;
+  accent: string;
+  renderHooks: RenderHooks;
+}) {
   const initial = (rec.brand?.trim()?.[0] ?? rec.name.trim()[0] ?? "?")
     .toUpperCase();
   return (
@@ -1055,6 +1530,7 @@ function FinisherCard({ rec, accent }: { rec: Rec; accent: string }) {
             </a>
           )}
         </div>
+        <SingleRenderPill rec={rec} hooks={renderHooks} variant="compact" />
       </div>
     </article>
   );
@@ -1132,7 +1608,15 @@ function FinisherImage({
   );
 }
 
-function RecCard({ rec, accent }: { rec: Rec; accent: string }) {
+function RecCard({
+  rec,
+  accent,
+  renderHooks,
+}: {
+  rec: Rec;
+  accent: string;
+  renderHooks: RenderHooks;
+}) {
   const initial = (rec.brand?.trim()?.[0] ?? rec.name.trim()[0] ?? "?")
     .toUpperCase();
   return (
@@ -1175,6 +1659,7 @@ function RecCard({ rec, accent }: { rec: Rec; accent: string }) {
           </span>
           <PrimaryAction rec={rec} accent={accent} />
         </div>
+        <SingleRenderPill rec={rec} hooks={renderHooks} />
         {rec.tier === "place" && (
           <PlaceSecondaryLinks rec={rec} accent={accent} />
         )}
@@ -1330,5 +1815,460 @@ function Thumb({
       onError={() => setFailed(true)}
       className="h-20 w-20 sm:h-24 sm:w-24 rounded-xl object-cover shrink-0 bg-black/5"
     />
+  );
+}
+
+// -------------------- Render pills (Phase 2) ----------------------
+//
+// Two pill variants:
+//
+//   SingleRenderPill   - on every qualifying product card. Renders that
+//                        one item onto the user's uploaded photo.
+//
+//   OutfitRenderPill   - one per assistant message that has >=2
+//                        qualifying items. Renders all of them together
+//                        as a single "look."
+//
+// Both share the same label-flip rule: when quota.total <= 0 the label
+// becomes "Buy Image Package" and the click routes to pack checkout
+// instead of /api/render.
+//
+// The pill style intentionally differs from the EditorialBoard refine
+// chips: refine chips are tinted accent on a near-transparent ground;
+// the render pills are solid accent fill, white text — they read as
+// the primary action.
+
+function SingleRenderPill({
+  rec,
+  hooks,
+  variant,
+}: {
+  rec: Rec;
+  hooks: RenderHooks;
+  variant?: "overlay" | "compact";
+}) {
+  if (!qualifiesForRender(rec)) return null;
+  if (!rec.image_url) return null;
+  const outOfQuota = hooks.quota !== null && hooks.quota.total <= 0;
+  const label = outOfQuota ? "Buy Image Package" : "Show This Item on Me";
+  const onClick = () => {
+    if (hooks.busy) return;
+    hooks.startSingle(rec);
+  };
+
+  if (variant === "overlay") {
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        disabled={hooks.busy}
+        className="mt-2 inline-flex items-center gap-1 text-[11px] font-semibold rounded-full px-3 py-1.5 disabled:opacity-50 transition-all hover:translate-y-[-1px]"
+        style={{
+          background: "#ffffff",
+          color: hooks.accent,
+          boxShadow: "0 2px 6px -2px rgba(0,0,0,0.3)",
+        }}
+      >
+        {label}
+      </button>
+    );
+  }
+
+  const compact = variant === "compact";
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={hooks.busy}
+      className={`${compact ? "mt-1.5 text-[10.5px] px-2.5 py-1" : "mt-1.5 text-[11px] px-3 py-1.5"} inline-flex items-center justify-center rounded-full font-semibold text-white disabled:opacity-50 transition-all hover:translate-y-[-1px]`}
+      style={{
+        background: hooks.accent,
+        boxShadow: "0 2px 6px -3px rgba(0,0,0,0.35)",
+      }}
+    >
+      {label}
+    </button>
+  );
+}
+
+function OutfitRenderPill({
+  recs,
+  hooks,
+  streaming,
+}: {
+  recs: Rec[];
+  hooks: RenderHooks;
+  streaming: boolean;
+}) {
+  // Per-response gate: only mount when at least two qualifying items
+  // exist so a 1-item response never gets the outfit button. Single
+  // items keep just their per-card pill.
+  const qualifying = recs.filter(
+    (r) => qualifiesForRender(r) && typeof r.image_url === "string" && r.image_url.length > 0
+  );
+  if (qualifying.length < 2) return null;
+  // Suppress while the message is mid-stream — the outfit pill would
+  // appear before the final card render and look like a flicker.
+  if (streaming) return null;
+  const outOfQuota = hooks.quota !== null && hooks.quota.total <= 0;
+  const label = outOfQuota ? "Buy Image Package" : "Try This Outfit on Me";
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        if (hooks.busy) return;
+        hooks.startOutfit(qualifying);
+      }}
+      disabled={hooks.busy}
+      className="mt-1 w-full rounded-2xl px-4 py-3 text-[13px] font-semibold text-white disabled:opacity-50 transition-all hover:translate-y-[-1px]"
+      style={{
+        background: hooks.accent,
+        boxShadow: "0 4px 12px -4px rgba(0,0,0,0.25)",
+      }}
+    >
+      {label}
+    </button>
+  );
+}
+
+// -------------------- Render result + gate modal ------------------
+//
+// One modal, several phases:
+//
+//   loading -> spinner while gpt-image-1 is running
+//   result  -> finished render with Save / Share / Try another
+//   gate    -> "sign in" | "verify age" | "upload photo" | "buy pack"
+//   error   -> generic try-again
+//
+// Gate routing:
+//   signin  -> reuses SignInModal
+//   age     -> link to /profile
+//   photo   -> link to /profile
+//   pack    -> pack picker (20 or 50). On click, POST /api/checkout
+//              with { pack } and redirect to the Stripe URL.
+
+function RenderModal({
+  state,
+  accent,
+  onClose,
+}: {
+  state: RenderState;
+  accent: string;
+  onClose: () => void;
+}) {
+  if (state.phase === "gate" && state.reason === "signin") {
+    return (
+      <SignInModal
+        accent={accent}
+        title="Sign in to try this on"
+        subtitle="Enter your email and we'll send a one-tap sign-in link. After signing in you can upload your photo and start rendering."
+        onClose={onClose}
+      />
+    );
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-[110] flex items-end sm:items-center justify-center px-4 pb-4 pt-10 sm:p-6"
+      style={{ background: "rgba(0,0,0,0.55)", backdropFilter: "blur(2px)" }}
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Try-on render"
+    >
+      <div
+        className="w-full max-w-[460px] rounded-3xl px-6 py-7 relative"
+        style={{
+          background: "var(--surface)",
+          color: "var(--ink)",
+          boxShadow:
+            "0 24px 48px -12px rgba(0,0,0,0.32), 0 4px 16px rgba(0,0,0,0.12)",
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close"
+          className="absolute top-3 right-3 h-8 w-8 rounded-full flex items-center justify-center text-[18px] opacity-50 hover:opacity-90"
+        >
+          ×
+        </button>
+        <RenderModalBody state={state} accent={accent} onClose={onClose} />
+      </div>
+    </div>
+  );
+}
+
+function RenderModalBody({
+  state,
+  accent,
+  onClose,
+}: {
+  state: RenderState;
+  accent: string;
+  onClose: () => void;
+}) {
+  if (state.phase === "loading") {
+    return (
+      <div className="py-6 text-center space-y-3">
+        <h2 className="font-serif text-[20px] leading-tight">
+          {state.kind === "outfit" ? "Putting the look together…" : "Rendering…"}
+        </h2>
+        <p className="text-[13px] opacity-70 leading-relaxed">
+          This takes about a minute. We&apos;ll only charge a credit if it
+          finishes successfully.
+        </p>
+        <div className="flex justify-center pt-3">
+          <span
+            className="inline-block h-2 w-2 rounded-full animate-pulse"
+            style={{ background: accent }}
+            aria-hidden
+          />
+        </div>
+      </div>
+    );
+  }
+
+  if (state.phase === "result") {
+    return <ResultPanel url={state.url} kind={state.kind} accent={accent} onClose={onClose} />;
+  }
+
+  if (state.phase === "gate") {
+    if (state.reason === "age" || state.reason === "photo") {
+      const headline =
+        state.reason === "age"
+          ? "Quick age check first."
+          : "Add a try-on photo first.";
+      const sub =
+        state.reason === "age"
+          ? "Renders are 18+. Verify your age on your profile and you can try things on."
+          : "Upload a full-body photo on your profile so we have something to dress.";
+      return (
+        <div className="space-y-4">
+          <h2 className="font-serif text-[20px] leading-tight">{headline}</h2>
+          <p className="text-[13px] opacity-70 leading-relaxed">{sub}</p>
+          <a
+            href="/profile"
+            className="block w-full rounded-2xl px-4 py-3 text-[14px] font-medium text-white text-center transition-opacity hover:opacity-95"
+            style={{ background: accent }}
+          >
+            Go to profile
+          </a>
+          <button
+            type="button"
+            onClick={onClose}
+            className="block w-full text-[12px] opacity-60 hover:opacity-90 transition-opacity"
+          >
+            Not now
+          </button>
+        </div>
+      );
+    }
+    // pack
+    return <PackPicker accent={accent} onClose={onClose} />;
+  }
+
+  if (state.phase === "error") {
+    return (
+      <div className="space-y-3">
+        <h2 className="font-serif text-[20px] leading-tight">Something went sideways.</h2>
+        <p className="text-[13px] opacity-70 leading-relaxed">{state.message}</p>
+        <button
+          type="button"
+          onClick={onClose}
+          className="block w-full rounded-2xl px-4 py-3 text-[14px] font-medium text-white transition-opacity hover:opacity-95"
+          style={{ background: accent }}
+        >
+          Close
+        </button>
+      </div>
+    );
+  }
+
+  return null;
+}
+
+function ResultPanel({
+  url,
+  kind,
+  accent,
+  onClose,
+}: {
+  url: string;
+  kind: "single" | "outfit";
+  accent: string;
+  onClose: () => void;
+}) {
+  const [shareError, setShareError] = useState<string | null>(null);
+  const headline =
+    kind === "outfit" ? "Here's the look on you." : "Here it is on you.";
+  async function onShare() {
+    setShareError(null);
+    if (typeof navigator === "undefined") return;
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: "My AskMai try-on",
+          text: "Rendered on askmai.co",
+          url,
+        });
+        return;
+      } catch {
+        // user dismissed or share failed — fall through to copy
+      }
+    }
+    try {
+      await navigator.clipboard.writeText(url);
+      setShareError("Link copied.");
+    } catch {
+      setShareError("Couldn't copy. Long-press the image to save.");
+    }
+  }
+  return (
+    <div className="space-y-4">
+      <h2 className="font-serif text-[20px] leading-tight">{headline}</h2>
+      <div
+        className="w-full overflow-hidden rounded-2xl"
+        style={{ background: "rgba(0,0,0,0.04)" }}
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={url}
+          alt="Your try-on render"
+          className="w-full h-auto block"
+        />
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <a
+          href={url}
+          download="askmai-tryon.png"
+          target="_blank"
+          rel="noopener"
+          className="block text-center rounded-2xl px-4 py-3 text-[13px] font-medium transition-opacity hover:opacity-95"
+          style={{
+            background: "rgba(0,0,0,0.06)",
+            color: "var(--ink)",
+          }}
+        >
+          Save
+        </a>
+        <button
+          type="button"
+          onClick={onShare}
+          className="block rounded-2xl px-4 py-3 text-[13px] font-medium text-white transition-opacity hover:opacity-95"
+          style={{ background: accent }}
+        >
+          Share
+        </button>
+      </div>
+      {shareError && (
+        <p className="text-[12px] opacity-70 text-center">{shareError}</p>
+      )}
+      <button
+        type="button"
+        onClick={onClose}
+        className="block w-full text-[12px] opacity-60 hover:opacity-90 transition-opacity"
+      >
+        Done
+      </button>
+    </div>
+  );
+}
+
+function PackPicker({
+  accent,
+  onClose,
+}: {
+  accent: string;
+  onClose: () => void;
+}) {
+  const [busy, setBusy] = useState<"pack_20" | "pack_50" | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  async function buy(pack: "pack_20" | "pack_50") {
+    if (busy) return;
+    setBusy(pack);
+    setError(null);
+    const returnTo =
+      typeof window !== "undefined"
+        ? window.location.pathname + window.location.search
+        : "/";
+    try {
+      const r = await fetch("/api/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pack, returnTo }),
+      });
+      const data = (await r.json().catch(() => null)) as {
+        url?: string;
+        error?: string;
+      } | null;
+      if (!r.ok || !data?.url) {
+        setError("Couldn't start checkout. Try again?");
+        setBusy(null);
+        return;
+      }
+      window.location.href = data.url;
+    } catch {
+      setError("Network blip. Try again?");
+      setBusy(null);
+    }
+  }
+  return (
+    <div className="space-y-4">
+      <h2 className="font-serif text-[20px] leading-tight">
+        Out of renders for now.
+      </h2>
+      <p className="text-[13px] opacity-70 leading-relaxed">
+        Your monthly 3 included renders are spent. Pick a pack to keep
+        trying things on. Pack credits never expire.
+      </p>
+      <div className="space-y-2.5">
+        <button
+          type="button"
+          onClick={() => buy("pack_20")}
+          disabled={busy !== null}
+          className="w-full rounded-2xl px-4 py-3.5 text-left transition-all hover:translate-y-[-1px] disabled:opacity-50"
+          style={{
+            background: "rgba(0,0,0,0.04)",
+            border: `1px solid ${accent}55`,
+          }}
+        >
+          <div className="flex items-baseline justify-between">
+            <span className="font-serif text-[16px]">20 renders</span>
+            <span className="font-serif text-[18px]">$9.99</span>
+          </div>
+          <p className="text-[11.5px] opacity-65 mt-0.5">never expires</p>
+        </button>
+        <button
+          type="button"
+          onClick={() => buy("pack_50")}
+          disabled={busy !== null}
+          className="w-full rounded-2xl px-4 py-3.5 text-left text-white transition-all hover:translate-y-[-1px] disabled:opacity-50"
+          style={{
+            background: accent,
+            boxShadow: "0 4px 12px -4px rgba(0,0,0,0.2)",
+          }}
+        >
+          <div className="flex items-baseline justify-between">
+            <span className="font-serif text-[16px]">50 renders</span>
+            <span className="font-serif text-[18px]">$20.99</span>
+          </div>
+          <p className="text-[11.5px] opacity-85 mt-0.5">best value</p>
+        </button>
+      </div>
+      {error && (
+        <p className="text-[12px]" style={{ color: "#c53030" }}>
+          {error}
+        </p>
+      )}
+      <button
+        type="button"
+        onClick={onClose}
+        className="block w-full text-[12px] opacity-60 hover:opacity-90 transition-opacity"
+      >
+        Not now
+      </button>
+    </div>
   );
 }
