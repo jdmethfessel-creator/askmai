@@ -183,7 +183,6 @@ export async function POST(request: Request) {
   let pngBuffer: Buffer;
   try {
     pngBuffer = await runRender({
-      kind,
       personBuffer: person.buffer,
       personMime: person.mime,
       itemImageUrls: imageUrls,

@@ -58,30 +58,15 @@ const RENDER_SIGNED_URL_TTL_SECONDS = 60 * 60 * 24 * 7;
 const RENDER_BUCKET = "renders";
 
 /**
- * Prompt template for gpt-image-1. The HARD CONSTRAINTS block is the
- * guardrail layer: keep the person clothed, swap only the garments,
- * never produce nude / lingerie / sexualized output even if a source
- * product photo is swimwear or intimates. Fail closed on anything
- * ambiguous (no model output is better than a borderline output).
+ * Single fixed prompt for the gpt-image-1 /images/edits call. Locked
+ * verbatim by product spec — both "Show This Item" (1 product image
+ * in addition to the user photo) and "Try This Outfit" (N product
+ * images in addition to the user photo) use this exact string. The
+ * input image[] array carries the count distinction; the prompt does
+ * not branch on kind.
  */
-function buildPrompt(kind: "single" | "outfit", itemCount: number): string {
-  const garmentNoun = kind === "outfit" || itemCount > 1 ? "garments" : "garment";
-  return [
-    `Render a photorealistic full-body image of the EXACT person shown in the first image wearing the EXACT ${garmentNoun} shown in the remaining ${itemCount === 1 ? "image" : "images"}.`,
-    "",
-    "HARD CONSTRAINTS:",
-    "  - Preserve the person's face, hairstyle, skin tone, and body proportions identically to the first image. Do not idealize, slim, or restyle the person.",
-    `  - Preserve each ${garmentNoun.replace(/s$/, "")}'s silhouette, fabric, color, neckline, sleeve length, hem, and any visible details exactly as shown in its reference image.`,
-    "  - Studio-quality photographic look. Clean neutral background. Natural daylight. Sharp focus on the person and clothing.",
-    "  - The clothing must fit the person realistically (drape, length, and proportion all consistent with how it would actually wear).",
-    "",
-    "SAFETY (NON-NEGOTIABLE):",
-    "  - This is a clothing-swap render only. The person MUST remain fully clothed in the output. Never produce nude, lingerie-as-result, or sexualized imagery, even if a reference image shows swimwear, intimates, or sheer fabrics. In those cases, render the closest non-revealing equivalent that preserves color and silhouette while keeping the framing modest.",
-    "  - Do not change the person's apparent age. Do not produce minors in any state of undress.",
-    "  - Keep the framing and pose non-sexual: standing or natural stance, neutral expression.",
-    "  - If any reference image is ambiguous or unsafe to render faithfully, fail closed (return the person in their original clothing).",
-  ].join("\n");
-}
+const RENDER_PROMPT =
+  "Dress the person in the first image in the clothing item(s) shown in the other image(s). Keep their face, body, hair, pose, and background exactly the same. Replace only their outfit with the item(s) shown, matching color, pattern, fabric, and cut as closely as possible. Photorealistic, natural fit and draping. Keep the person fully clothed and the image non-sexual.";
 
 /**
  * Read the user's current quota. Calls the get_render_quota RPC which
@@ -281,7 +266,6 @@ async function applyBranding(
  * whether to surface "render failed" vs charging the user.
  */
 export async function runRender(args: {
-  kind: "single" | "outfit";
   personBuffer: Buffer;
   personMime: string;
   itemImageUrls: string[];
@@ -311,7 +295,7 @@ export async function runRender(args: {
 
   const form = new FormData();
   form.append("model", OPENAI_MODEL);
-  form.append("prompt", buildPrompt(args.kind, args.itemImageUrls.length));
+  form.append("prompt", RENDER_PROMPT);
   form.append("size", OPENAI_SIZE);
   form.append("quality", OPENAI_QUALITY);
   form.append("n", "1");
