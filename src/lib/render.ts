@@ -41,6 +41,7 @@
 import path from "path";
 import sharp from "sharp";
 import { supabaseAdmin } from "./supabase";
+import { segmentClothingMask } from "./segmentClothing";
 
 export const INCLUDED_RENDERS_PER_MONTH = 3;
 
@@ -100,8 +101,13 @@ const URL_PNG_PATH = path.join(
  * input image[] array carries the count distinction; the prompt does
  * not branch on kind.
  */
+// Single fixed prompt for the inpaint /images/edits call. The mask
+// is the load-bearing constraint (transparent over clothing only;
+// face, hair, hands, feet, background opaque), so the prompt only
+// describes the desired clothing — not the preservation rules,
+// which the mask now enforces physically.
 const RENDER_PROMPT =
-  "Dress the person in the first image in the clothing item(s) shown in the other image(s). Keep their face, body, hair, pose, and background exactly the same. Replace only their outfit with the item(s) shown, matching color, pattern, fabric, and cut as closely as possible. Photorealistic, natural fit and draping. Keep the person fully clothed and the image non-sexual.";
+  "A photorealistic image of the person from the first image, wearing the clothing shown in the reference image(s). Match the references' color, pattern, fabric, and cut as closely as possible. Natural fit and draping. The image stays non-sexual and the person stays fully clothed.";
 
 /**
  * Read the user's current quota. Calls the get_render_quota RPC which
@@ -383,9 +389,28 @@ async function applyBranding(pngBuffer: Buffer): Promise<Buffer> {
 }
 
 /**
- * Call gpt-image-1 with the person photo plus 1..N garment reference
- * images. Throws on any upstream failure so the caller can decide
- * whether to surface "render failed" vs charging the user.
+ * Inpaint render via gpt-image-1 /v1/images/edits.
+ *
+ * Flow (every step throws on failure; the route catches and returns
+ * 500 render_failed WITHOUT consuming a credit):
+ *
+ *   1. Normalize the user photo to OPENAI_SIZE (1024x1536, portrait),
+ *      contain-fit with a neutral pad so head-to-feet is never
+ *      cropped.
+ *   2. Run SegFormer-B2 clothing on the normalized photo to produce
+ *      a clothing-only mask (transparent over Upper-clothes / Skirt /
+ *      Pants / Dress / Belt / Scarf; opaque over face, hair, arms,
+ *      legs, shoes, bag, hat, background).
+ *   3. Fetch each product reference image.
+ *   4. Call /v1/images/edits with:
+ *        image[]  = [normalized_user_photo, ...product_refs]
+ *        mask     = the clothing mask
+ *        prompt   = RENDER_PROMPT
+ *        size     = OPENAI_SIZE  (fixed; mask must match)
+ *      The mask only applies to image[0] (the user photo). The
+ *      product images are pure references — the model uses them to
+ *      decide what to paint into the masked region.
+ *   5. Composite branding (top wordmark + bottom URL) and return.
  */
 export async function runRender(args: {
   personBuffer: Buffer;
@@ -400,30 +425,57 @@ export async function runRender(args: {
     throw new Error("no item images provided");
   }
 
-  const personExt =
-    args.personMime === "image/png"
-      ? "png"
-      : args.personMime === "image/webp"
-      ? "webp"
-      : "jpg";
-  const personBlob = new Blob([new Uint8Array(args.personBuffer)], {
-    type: args.personMime,
-  });
+  // 1. Normalize the user photo to 1024x1536. fit:"contain" pads with
+  //    a neutral light-gray background so the actual person content is
+  //    NEVER cropped — head-to-feet preservation is baked in here, not
+  //    handled by the model. The pad area lands outside any segmented
+  //    clothing class, so the mask renders it as preserved (opaque)
+  //    and the model cannot repaint it.
+  const normalizedPerson = await sharp(args.personBuffer)
+    .resize({
+      width: 1024,
+      height: 1536,
+      fit: "contain",
+      background: { r: 245, g: 245, b: 245, alpha: 1 },
+    })
+    .png()
+    .toBuffer();
 
+  // 2. Generate the clothing mask from the normalized photo.
+  //    segmentClothingMask throws when HF_API_TOKEN is missing, when
+  //    the model returns no clothing classes, or when coverage falls
+  //    outside the sanity band — all of which become render_failed
+  //    upstream with no credit consumed.
+  const seg = await segmentClothingMask(normalizedPerson);
+  console.log(
+    `[render] mask coverage=${seg.coveragePct.toFixed(1)}% classes=${seg.classesUsed.join(",")}`
+  );
+
+  // 3. Fetch product reference images.
   const itemFetches = await Promise.all(
     args.itemImageUrls.map((u, i) => fetchItemBlob(u, i))
   );
 
+  // 4. Build the multipart form. Person photo first (the mask target),
+  //    then each product as a reference. Mask is a separate field per
+  //    the OpenAI spec — not part of image[].
+  const personBlob = new Blob([new Uint8Array(normalizedPerson)], {
+    type: "image/png",
+  });
+  const maskBlob = new Blob([new Uint8Array(seg.maskPng)], {
+    type: "image/png",
+  });
   const form = new FormData();
   form.append("model", OPENAI_MODEL);
   form.append("prompt", RENDER_PROMPT);
   form.append("size", OPENAI_SIZE);
   form.append("quality", OPENAI_QUALITY);
   form.append("n", "1");
-  form.append("image[]", personBlob, `person.${personExt}`);
+  form.append("image[]", personBlob, "person.png");
   for (const item of itemFetches) {
     form.append("image[]", item.blob, item.filename);
   }
+  form.append("mask", maskBlob, "mask.png");
 
   const resp = await fetch(OPENAI_IMAGES_EDITS_URL, {
     method: "POST",
@@ -443,6 +495,7 @@ export async function runRender(args: {
     throw new Error("gpt-image-1 returned no image data");
   }
   const raw = Buffer.from(b64, "base64");
+  // 5. Brand overlay.
   return applyBranding(raw);
 }
 
