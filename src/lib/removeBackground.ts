@@ -1,64 +1,64 @@
 /**
  * Product-image background removal for the render inpaint pipeline.
  *
- * Calls briaai/RMBG-2.0 on Hugging Face's Inference Providers router
- * (hf-inference provider, image-segmentation pipeline) to strip the
- * background from each product reference image before it goes to
- * gpt-image-1. The cleaned reference becomes a model + garment on a
- * flat white background.
+ * Reuses mattmdjaga/segformer_b2_clothes (the same model the rest of
+ * the pipeline relies on) to segment the product photo into person
+ * vs. background. We OR-merge every class that is NOT `Background`
+ * into a subject mask, apply it as the image's alpha channel, and
+ * flatten onto white so gpt-image-1 sees a clean garment-on-white
+ * reference instead of an editorial scene.
  *
- * Why this matters for try-on:
+ * Why not briaai/RMBG-2.0?
+ * The previous version of this file called RMBG-2.0 via the
+ * hf-inference router. HF docs map RMBG to the fal-ai provider only
+ * — calls to hf-inference for that model return
+ * `400: Model not supported by provider hf-inference`. Switching
+ * providers would mean wiring a second auth path, a different
+ * response shape, and a second per-call billing line. SegFormer-B2
+ * is already on hf-inference, already authed, already paid for,
+ * and produces a subject mask we can use for the same purpose.
  *
- * gpt-image-1 in multi-image edit mode treats the reference images
- * as compositional cues, not just garment cues. Editorial product
- * photos often include scene context — a co-model, a setting, a
- * lighting style — and the model freely incorporates that context
- * into the output. The recurring "suit guy" appearing next to the
- * user's rendered figure is the canonical failure: the product
- * shoot had a male partner, and gpt-image-1 inserted him into the
- * try-on.
+ * Why this helps:
+ * gpt-image-1 in multi-image edit mode treats references as
+ * compositional cues. The "suit guy reappearing" failure was the
+ * model latching onto environmental context in the product photo —
+ * scene partners, lighting setups, props. Stripping the background
+ * removes a substantial chunk of those cues. (If the product photo
+ * contains a second model, both stay as foreground — bg-removal
+ * isn't a complete fix for that case, but neither was RMBG.)
  *
- * By stripping everything except the foreground subject (the model
- * wearing the garment) and flattening onto white, we give the model
- * a clean, unambiguous garment reference with no extraneous scene
- * cues to inherit.
- *
- * Failure mode: bg-removal is a *quality* improvement, not a
- * correctness requirement. If RMBG returns non-200 / empty / errors,
- * we silently fall back to the original product image. The render
- * still succeeds; it just loses this particular cue-stripping pass.
- * No throw, no credit refund decision.
+ * Failure mode: best-effort. On HF non-200, empty mask, wrong-size
+ * buffer, or any sharp error, the function returns the original
+ * buffer untouched. The render proceeds normally — bg-removal is a
+ * quality lever, never a render-blocker.
  */
 
 import sharp from "sharp";
 import { readEnv } from "./env";
 
-const RMBG_URL =
-  "https://router.huggingface.co/hf-inference/models/briaai/RMBG-2.0";
+const SEGFORMER_URL =
+  "https://router.huggingface.co/hf-inference/models/mattmdjaga/segformer_b2_clothes";
+
+// SegFormer-B2 clothing label that represents non-person pixels.
+// Everything else (Face, Hair, Upper-clothes, Skirt, Pants, Dress,
+// Belt, Hat, Sunglasses, Left/Right-arm, Left/Right-leg,
+// Left/Right-shoe, Bag, Scarf) collapses into the subject mask.
+const BACKGROUND_LABEL = "Background";
 
 const FETCH_TIMEOUT_MS = 30_000;
 
-/**
- * Run RMBG-2.0 on a product image and return a white-flattened PNG
- * with the background removed. On any failure, returns the original
- * buffer untouched.
- *
- * @param imageBuffer Raw bytes of the product reference image.
- * @param index Position of this item in the render request — used
- *              only for log lines.
- */
 export async function removeProductBackground(
   imageBuffer: Buffer,
   index: number
 ): Promise<Buffer> {
   const token = readEnv("HF_API_TOKEN");
   if (!token) {
-    console.warn(`[render] RMBG item-${index} skipped: HF_API_TOKEN not set`);
+    console.warn(`[render] bg-remove item-${index} skipped: HF_API_TOKEN not set`);
     return imageBuffer;
   }
 
   try {
-    const resp = await fetch(RMBG_URL, {
+    const resp = await fetch(SEGFORMER_URL, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${token}`,
@@ -70,28 +70,18 @@ export async function removeProductBackground(
     if (!resp.ok) {
       const text = await resp.text().catch(() => "");
       console.warn(
-        `[render] RMBG item-${index} ${resp.status}: ${text.slice(0, 200)}`
+        `[render] bg-remove item-${index} segformer ${resp.status}: ${text.slice(0, 200)}`
       );
       return imageBuffer;
     }
 
-    // HF image-segmentation response: array of {label, score, mask}.
-    // RMBG typically returns a single subject entry; take the highest-
-    // score mask defensively in case the model ever returns multiple.
     const json = (await resp.json()) as Array<{
       label?: string;
       score?: number;
       mask?: string;
     }>;
     if (!Array.isArray(json) || json.length === 0) {
-      console.warn(`[render] RMBG item-${index} returned no entries`);
-      return imageBuffer;
-    }
-    const subject = json.reduce((a, b) =>
-      (a?.score ?? 0) >= (b?.score ?? 0) ? a : b
-    );
-    if (!subject?.mask) {
-      console.warn(`[render] RMBG item-${index} entries had no mask`);
+      console.warn(`[render] bg-remove item-${index} returned no entries`);
       return imageBuffer;
     }
 
@@ -100,39 +90,93 @@ export async function removeProductBackground(
     const height = meta.height;
     if (!width || !height) {
       console.warn(
-        `[render] RMBG item-${index}: could not read product dimensions`
+        `[render] bg-remove item-${index}: could not read product dimensions`
+      );
+      return imageBuffer;
+    }
+    const totalPixels = width * height;
+
+    // OR-merge every NON-Background class mask into a single 1-channel
+    // subject mask. Same `.extractChannel(0)` discipline as the rest of
+    // the segmentation code — sharp's .greyscale() leaves 3 identical
+    // channels in the raw output, and downstream byte-write loops
+    // assume 1 channel; forcing extract here keeps them honest.
+    let subjectMask: Buffer | null = null;
+    let classesUsed = 0;
+    for (const c of json) {
+      if (typeof c.label !== "string" || !c.mask) continue;
+      if (c.label === BACKGROUND_LABEL) continue;
+      const classRaw = Buffer.from(c.mask, "base64");
+      const flat = await sharp(classRaw)
+        .resize({ width, height, fit: "fill" })
+        .greyscale()
+        .extractChannel(0)
+        .raw()
+        .toBuffer();
+      if (flat.length !== totalPixels) {
+        console.warn(
+          `[render] bg-remove item-${index}: class ${c.label} wrong size ${flat.length} vs ${totalPixels}`
+        );
+        return imageBuffer;
+      }
+      if (!subjectMask) {
+        subjectMask = Buffer.from(flat);
+      } else {
+        for (let i = 0; i < totalPixels; i++) {
+          if (flat[i] > subjectMask[i]) subjectMask[i] = flat[i];
+        }
+      }
+      classesUsed++;
+    }
+    if (!subjectMask || classesUsed === 0) {
+      console.warn(
+        `[render] bg-remove item-${index}: no non-Background classes detected`
       );
       return imageBuffer;
     }
 
-    // Mask polarity for RMBG: 255 in subject area, 0 in background.
-    // Apply directly as alpha — opaque subject, transparent background.
-    const maskRaw = await sharp(Buffer.from(subject.mask, "base64"))
-      .resize({ width, height, fit: "fill" })
-      .greyscale()
-      .raw()
-      .toBuffer();
+    // Coverage sanity: if the subject mask covers <2% the product is
+    // probably text or an icon SegFormer can't parse; if it covers
+    // >99% there's no background to remove. In either case skip and
+    // pass the original through.
+    let subjectCount = 0;
+    for (let i = 0; i < totalPixels; i++) {
+      if (subjectMask[i] > 127) subjectCount++;
+    }
+    const coverage = (subjectCount / totalPixels) * 100;
+    if (coverage < 2 || coverage > 99) {
+      console.warn(
+        `[render] bg-remove item-${index} subject coverage ${coverage.toFixed(1)}% outside sanity band; passing original`
+      );
+      return imageBuffer;
+    }
 
-    const { data: rgb } = await sharp(imageBuffer)
+    const { data: rgb, info } = await sharp(imageBuffer)
+      .resize({ width, height, fit: "fill" })
       .removeAlpha()
       .raw()
       .toBuffer({ resolveWithObject: true });
+    if (info.channels !== 3 || rgb.length !== totalPixels * 3) {
+      console.warn(
+        `[render] bg-remove item-${index}: product RGB wrong shape ${rgb.length} channels=${info.channels}`
+      );
+      return imageBuffer;
+    }
 
-    const total = width * height;
-    const rgba = Buffer.alloc(total * 4);
-    for (let i = 0; i < total; i++) {
+    // RGBA: subject mask → alpha. Opaque on the model+garment,
+    // transparent on the original background.
+    const rgba = Buffer.alloc(totalPixels * 4);
+    for (let i = 0; i < totalPixels; i++) {
       const b = i * 4;
       rgba[b] = rgb[i * 3];
       rgba[b + 1] = rgb[i * 3 + 1];
       rgba[b + 2] = rgb[i * 3 + 2];
-      rgba[b + 3] = maskRaw[i];
+      rgba[b + 3] = subjectMask[i];
     }
 
-    // Flatten the alpha-channel image onto white. gpt-image-1's
-    // multi-image edits work best with clean opaque references;
-    // transparency in a reference can be interpreted inconsistently.
-    // White is the typical editorial-product-photo background, so the
-    // model has a familiar visual prior to work from.
+    // Flatten onto white so gpt-image-1 sees a clean opaque reference
+    // (subjects on white floor — the editorial product-photo norm) and
+    // doesn't have to interpret transparency in the reference channel.
     const flattened = await sharp(rgba, {
       raw: { width, height, channels: 4 },
     })
@@ -140,11 +184,13 @@ export async function removeProductBackground(
       .png()
       .toBuffer();
 
-    console.log(`[render] RMBG item-${index} applied (${width}x${height})`);
+    console.log(
+      `[render] bg-remove item-${index} applied (${width}x${height}, subject ${coverage.toFixed(1)}% of frame, ${classesUsed} SegFormer classes)`
+    );
     return flattened;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.warn(`[render] RMBG item-${index} error: ${msg}`);
+    console.warn(`[render] bg-remove item-${index} error: ${msg}`);
     return imageBuffer;
   }
 }

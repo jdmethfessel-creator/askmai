@@ -464,27 +464,53 @@ async function buildFeatheredHeadOverlay(args: {
   width: number;
   height: number;
 }): Promise<Buffer> {
+  const expected1ch = args.width * args.height;
+  const expected3ch = args.width * args.height * 3;
+
+  // Assertion 1: the head mask handed to us must already be a true
+  // 1-channel buffer (W*H bytes). segmentForRender now enforces this,
+  // but we double-check here so a regression in either lib surfaces
+  // as a clear error instead of rainbow scanlines in the output.
+  if (args.headMaskRaw.length !== expected1ch) {
+    throw new Error(
+      `buildFeatheredHeadOverlay: headMaskRaw wrong size: ${args.headMaskRaw.length} vs expected ${expected1ch} (${args.width}x${args.height} 1ch)`
+    );
+  }
+
   // Feather the binary mask. Sigma chosen to span ~8 pixels across the
-  // boundary, which produces a soft neckline gradient at 1024x1536
-  // without bleeding too far into the clothing area.
+  // boundary, producing a soft neckline gradient at 1024x1536 without
+  // bleeding too far into the clothing area. .extractChannel(0) forces
+  // the raw output to a single channel — without it sharp's blur emits
+  // 3 identical channels (W*H*3 bytes) and the downstream byte-write
+  // loop reads at the wrong stride.
   const featheredAlpha = await sharp(args.headMaskRaw, {
     raw: { width: args.width, height: args.height, channels: 1 },
   })
     .blur(8)
+    .extractChannel(0)
     .raw()
     .toBuffer();
+  if (featheredAlpha.length !== expected1ch) {
+    throw new Error(
+      `buildFeatheredHeadOverlay: feathered alpha wrong size: ${featheredAlpha.length} vs expected ${expected1ch}`
+    );
+  }
 
   // Extract the input photo's RGB channels at the same dimensions so
   // we can join the feathered alpha onto them.
-  const { data: rgb } = await sharp(args.normalizedPerson)
+  const { data: rgb, info } = await sharp(args.normalizedPerson)
     .resize({ width: args.width, height: args.height, fit: "fill" })
     .removeAlpha()
     .raw()
     .toBuffer({ resolveWithObject: true });
+  if (info.channels !== 3 || rgb.length !== expected3ch) {
+    throw new Error(
+      `buildFeatheredHeadOverlay: person RGB wrong shape: ${rgb.length} channels=${info.channels} expected ${expected3ch}/3ch`
+    );
+  }
 
-  const total = args.width * args.height;
-  const rgba = Buffer.alloc(total * 4);
-  for (let i = 0; i < total; i++) {
+  const rgba = Buffer.alloc(expected1ch * 4);
+  for (let i = 0; i < expected1ch; i++) {
     const b = i * 4;
     rgba[b] = rgb[i * 3];
     rgba[b + 1] = rgb[i * 3 + 1];

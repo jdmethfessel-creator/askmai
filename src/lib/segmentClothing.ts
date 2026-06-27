@@ -137,6 +137,22 @@ async function callSegFormer(photoBuffer: Buffer): Promise<
  * Returns null when no class in `wantedSet` is present in the
  * response.
  */
+/**
+ * OR-merge a subset of per-class masks into a single 1-channel
+ * grayscale binary buffer. Resizes each class mask to match the
+ * requested dimensions.
+ *
+ * Returns null when no class in `wantedSet` is present in the
+ * response.
+ *
+ * IMPORTANT: sharp's `.greyscale()` does NOT collapse to 1 channel;
+ * it sets the colorspace to "grayscale" but the raw output stays as
+ * 3 identical channels (W*H*3 bytes). We follow with
+ * `.extractChannel(0)` to force a true 1-channel raw (W*H bytes),
+ * which every downstream consumer assumes. Without this, bbox
+ * computation, coverage math, and the alpha builder all read at
+ * the wrong stride and produce silently-wrong masks.
+ */
 async function orMergeClasses(
   classes: Array<{ label?: string; mask?: string }>,
   wantedSet: Set<string>,
@@ -147,6 +163,7 @@ async function orMergeClasses(
     (c) => typeof c.label === "string" && wantedSet.has(c.label) && c.mask
   );
   if (wanted.length === 0) return null;
+  const expectedLen = width * height;
   let merged: Buffer | null = null;
   const classesUsed: string[] = [];
   for (const c of wanted) {
@@ -154,12 +171,18 @@ async function orMergeClasses(
     const flat = await sharp(classMaskRaw)
       .resize({ width, height, fit: "fill" })
       .greyscale()
+      .extractChannel(0)
       .raw()
       .toBuffer();
+    if (flat.length !== expectedLen) {
+      throw new Error(
+        `orMergeClasses: class mask ${c.label} produced wrong size: ${flat.length} vs expected ${expectedLen} (${width}x${height} 1ch)`
+      );
+    }
     if (!merged) {
       merged = Buffer.from(flat);
     } else {
-      for (let i = 0; i < merged.length; i++) {
+      for (let i = 0; i < expectedLen; i++) {
         if (flat[i] > merged[i]) merged[i] = flat[i];
       }
     }
@@ -228,9 +251,14 @@ export async function segmentForRender(
     throw new Error("segformer detected no clothing classes");
   }
   const merged = editable.merged;
+  if (merged.length !== totalPixels) {
+    throw new Error(
+      `segmentForRender: editable mask wrong size: ${merged.length} vs expected ${totalPixels} (${width}x${height} 1ch)`
+    );
+  }
 
   let editableCount = 0;
-  for (let i = 0; i < merged.length; i++) {
+  for (let i = 0; i < totalPixels; i++) {
     if (merged[i] > 127) editableCount++;
   }
   const editableCoveragePct = (editableCount / totalPixels) * 100;
@@ -273,6 +301,11 @@ export async function segmentForRender(
     height
   );
   const headMaskRaw = head?.merged ?? Buffer.alloc(totalPixels);
+  if (headMaskRaw.length !== totalPixels) {
+    throw new Error(
+      `segmentForRender: head mask wrong size: ${headMaskRaw.length} vs expected ${totalPixels} (${width}x${height} 1ch)`
+    );
+  }
   const headBbox = head ? bboxFromMask(head.merged, width, height) : null;
 
   return {
