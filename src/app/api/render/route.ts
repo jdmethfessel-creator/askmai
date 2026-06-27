@@ -60,6 +60,14 @@ import {
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+// gpt-image-1 inpaint at 1024x1536 with a mask + multiple reference
+// images regularly takes 60–90s end-to-end (HF segmentation + photo
+// normalization + OpenAI edit + branding + Supabase upload). Vercel's
+// project-default function limit is 60s, which truncates the OpenAI
+// fetch mid-flight and surfaces in our log as "fetch failed."
+// Raising to the Pro plan's 300s ceiling so the fetch is the gate,
+// not the runtime.
+export const maxDuration = 300;
 
 const MAX_ITEMS_PER_RENDER = 6;
 
@@ -173,9 +181,20 @@ export async function POST(request: Request) {
       itemImageUrls: imageUrls,
     });
   } catch (err) {
+    // err.cause carries the underlying system error when Node's
+    // undici wraps a fetch failure. Surfacing both turns an opaque
+    // "fetch failed" into something we can actually act on
+    // (AbortError = timeout, ECONNRESET = upstream closed, ETIMEDOUT
+    // = TCP-level timeout, etc.).
+    const e = err as { message?: string; cause?: unknown; name?: string };
+    const causeStr =
+      e.cause instanceof Error
+        ? `${e.cause.name ?? "Error"}: ${e.cause.message}`
+        : e.cause
+        ? String(e.cause)
+        : "(no cause)";
     console.error(
-      "[render] gpt-image-1 call failed:",
-      err instanceof Error ? err.message : String(err)
+      `[render] gpt-image-1 call failed: ${e.message ?? String(err)} | cause=${causeStr}`
     );
     return Response.json({ error: "render_failed" }, { status: 500 });
   }

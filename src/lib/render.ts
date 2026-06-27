@@ -477,11 +477,15 @@ export async function runRender(args: {
   }
   form.append("mask", maskBlob, "mask.png");
 
+  // 250s timeout sits just under the route's maxDuration=300 so the
+  // fetch's AbortSignal is the gate, not the Vercel runtime kill (the
+  // latter surfaces as an opaque "fetch failed" with no actionable
+  // detail).
   const resp = await fetch(OPENAI_IMAGES_EDITS_URL, {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}` },
     body: form,
-    signal: AbortSignal.timeout(120_000),
+    signal: AbortSignal.timeout(250_000),
   });
   if (!resp.ok) {
     const text = await resp.text().catch(() => "");
