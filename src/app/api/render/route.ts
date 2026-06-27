@@ -149,21 +149,6 @@ export async function POST(request: Request) {
     );
   }
 
-  // Resolve creator handle for the branding overlay. Fall back to the
-  // raw slug if the creators row is missing; the overlay text is
-  // cosmetic and never blocks the render.
-  let creatorHandle = creatorSlug || "askmai";
-  if (creatorSlug) {
-    const creatorRow = await admin
-      .from("creators")
-      .select("slug")
-      .eq("slug", creatorSlug)
-      .maybeSingle();
-    if (creatorRow.data?.slug) {
-      creatorHandle = creatorRow.data.slug as string;
-    }
-  }
-
   // Fetch the person photo. Failures here are pre-upstream so the
   // user is not charged and we surface a clear error.
   let person: { buffer: Buffer; mime: string };
@@ -186,7 +171,6 @@ export async function POST(request: Request) {
       personBuffer: person.buffer,
       personMime: person.mime,
       itemImageUrls: imageUrls,
-      creatorHandle,
     });
   } catch (err) {
     console.error(

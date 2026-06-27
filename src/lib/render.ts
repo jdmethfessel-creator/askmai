@@ -19,10 +19,10 @@
  *     stamped per row so a future price change doesn't rewrite
  *     historical spend.
  *
- *   runRender({ photoBytes, photoMime, itemImageUrls, kind, creatorHandle })
+ *   runRender({ personBuffer, personMime, itemImageUrls })
  *     Calls gpt-image-1 /v1/images/edits with the user's uploaded
  *     photo plus 1..N reference garment image URLs (downloaded
- *     server-side first), composites the askmai.co + @creator
+ *     server-side first), composites the top wordmark + bottom URL
  *     branding overlay, returns a PNG buffer ready for upload.
  *     The OPENAI_API_KEY is read here and only here in the lib
  *     layer; the client never sees it.
@@ -38,24 +38,52 @@
  * spent, and log a leak so it shows up in spend reconciliation.
  */
 
+import path from "path";
 import sharp from "sharp";
 import { supabaseAdmin } from "./supabase";
 
 export const INCLUDED_RENDERS_PER_MONTH = 3;
 
 // Cost basis at the time of render. Verified 2026-06-27 from the
-// OpenAI pricing page for gpt-image-1 high@1024x1024. Stamped onto
-// every renders row so a future provider price change does not
-// silently rewrite historical spend totals.
-const COST_USD_PER_RENDER = 0.167;
+// OpenAI pricing page for gpt-image-1 medium@1024x1536 (portrait).
+// Stamped onto every renders row so a future provider price change
+// does not silently rewrite historical spend totals.
+const COST_USD_PER_RENDER = 0.063;
 
 const OPENAI_MODEL = "gpt-image-1";
-const OPENAI_SIZE = "1024x1024";
-const OPENAI_QUALITY = "high";
+// Portrait so a full-body try-on returns head-to-feet. We do NOT
+// crop or letterbox the result in post-processing — whatever the
+// model returns is what we ship (with a thin top/bottom branding
+// overlay).
+const OPENAI_SIZE = "1024x1536";
+// Medium quality is a ~4x cost reduction over high ($0.063 vs $0.25
+// at 1024x1536). For a clothing-swap edit on a real photo, the
+// quality delta is small and the unit-economics delta is large.
+const OPENAI_QUALITY = "medium";
 const OPENAI_IMAGES_EDITS_URL = "https://api.openai.com/v1/images/edits";
 const RENDER_SIGNED_URL_TTL_SECONDS = 60 * 60 * 24 * 7;
 
 const RENDER_BUCKET = "renders";
+
+// Bundled fonts. Inter Regular + Bold are shipped at
+// src/lib/render-assets/ and force-traced into the /api/render Vercel
+// function via next.config.mjs outputFileTracingIncludes. Reading
+// them via path.join(process.cwd(), ...) at runtime is the pattern
+// the Vercel file tracer can statically resolve when paired with the
+// explicit include directive.
+//
+// We embed the font instead of relying on a system fallback because
+// the Vercel serverless runtime has no Georgia / serif fonts
+// installed — every SVG `<text>` we used to render came back as tofu
+// boxes. fontfile= on sharp.text() bypasses fontconfig entirely.
+const INTER_BOLD_PATH = path.join(
+  process.cwd(),
+  "src/lib/render-assets/Inter-Bold.ttf"
+);
+const INTER_REGULAR_PATH = path.join(
+  process.cwd(),
+  "src/lib/render-assets/Inter-Regular.ttf"
+);
 
 /**
  * Single fixed prompt for the gpt-image-1 /images/edits call. Locked
@@ -217,45 +245,127 @@ async function fetchItemBlob(
 }
 
 /**
- * Branding overlay. SVG composited onto the bottom edge of the
- * rendered PNG via sharp. Translucent dark band so the text stays
- * legible on any background, askmai.co left-aligned, @creator
- * right-aligned. Single composite, no rasterized font asset
- * required.
+ * Render a string to a transparent-background PNG buffer using sharp's
+ * pangocairo text engine with our bundled Inter font. The fontfile
+ * option pins the font to a path we control so the renderer never
+ * falls back to a missing system font (which is what produced the
+ * tofu-box bug in the previous serif overlay).
+ *
+ * Returns the rendered PNG plus the bounding box so the caller can
+ * position pills and image origins exactly.
  */
-function buildBrandingSvg(creatorHandle: string, width: number): Buffer {
-  const handle = creatorHandle.replace(/[^a-zA-Z0-9_.-]/g, "").slice(0, 32);
-  const bandHeight = Math.round(width * 0.052);
-  const fontSize = Math.round(bandHeight * 0.46);
-  const padX = Math.round(width * 0.025);
-  const svg = `
-<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${bandHeight}" viewBox="0 0 ${width} ${bandHeight}">
-  <rect x="0" y="0" width="${width}" height="${bandHeight}" fill="black" fill-opacity="0.42"/>
-  <text x="${padX}" y="${Math.round(bandHeight * 0.65)}" font-family="Georgia, 'Times New Roman', serif" font-size="${fontSize}" fill="#ffffff" fill-opacity="0.95" font-style="italic">askmai.co</text>
-  <text x="${width - padX}" y="${Math.round(bandHeight * 0.65)}" text-anchor="end" font-family="Georgia, 'Times New Roman', serif" font-size="${fontSize}" fill="#ffffff" fill-opacity="0.95">@${handle}</text>
-</svg>`.trim();
-  return Buffer.from(svg);
+async function renderTextPng(opts: {
+  text: string;
+  fontDescription: string; // e.g. "Inter Bold 36" — Pango parses this
+  fontfile: string;
+  rgb: [number, number, number];
+}): Promise<{ buffer: Buffer; width: number; height: number }> {
+  const buf = await sharp({
+    text: {
+      // Pango markup. Foreground as 6-char hex; the font description
+      // (family + weight + size) carries the rest. align/centre
+      // would only matter if we passed a width box — we let the text
+      // be its natural width and center it ourselves.
+      text: `<span foreground="#${opts.rgb
+        .map((c) => c.toString(16).padStart(2, "0"))
+        .join("")}">${escapePangoMarkup(opts.text)}</span>`,
+      font: opts.fontDescription,
+      fontfile: opts.fontfile,
+      rgba: true,
+    },
+  })
+    .png()
+    .toBuffer();
+  const meta = await sharp(buf).metadata();
+  return {
+    buffer: buf,
+    width: meta.width ?? 0,
+    height: meta.height ?? 0,
+  };
+}
+
+function escapePangoMarkup(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 }
 
 /**
- * Composite the branding band onto the bottom of the rendered PNG.
- * Single pass through sharp: read metadata for the width, render the
- * SVG band sized to match, composite at the bottom, encode as PNG.
+ * Build a rounded-rect "pill" SVG sized to wrap a text block with
+ * symmetric padding. Translucent black so white text stays legible on
+ * any photo without dominating the composition.
  */
-async function applyBranding(
-  pngBuffer: Buffer,
-  creatorHandle: string
-): Promise<Buffer> {
+function pillSvg(width: number, height: number): Buffer {
+  const radius = Math.round(height / 2);
+  return Buffer.from(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><rect x="0" y="0" width="${width}" height="${height}" rx="${radius}" ry="${radius}" fill="black" fill-opacity="0.42"/></svg>`
+  );
+}
+
+/**
+ * Composite the AskMai wordmark at top-center and www.askmai.co at
+ * bottom-center, each behind a thin translucent pill for legibility.
+ * No cropping — the input PNG passes through at its full dimensions,
+ * head to feet. Sizes scale to the input width so the overlay looks
+ * the same whether the model returned 1024x1024 or 1024x1536.
+ */
+async function applyBranding(pngBuffer: Buffer): Promise<Buffer> {
   const img = sharp(pngBuffer);
   const meta = await img.metadata();
   const width = meta.width ?? 1024;
-  const svg = buildBrandingSvg(creatorHandle, width);
-  const bandMeta = await sharp(svg).metadata();
-  const bandHeight = bandMeta.height ?? Math.round(width * 0.052);
-  const totalHeight = (meta.height ?? width) ;
-  const top = Math.max(totalHeight - bandHeight, 0);
+  const height = meta.height ?? 1536;
+
+  // Type scale tied to image width so the wordmark holds proportion
+  // on either size return. ~4% of width for the brand, ~2.2% for the
+  // URL (a comfortable hierarchy at typical viewing sizes).
+  const wordmarkPt = Math.max(20, Math.round(width * 0.04));
+  const urlPt = Math.max(13, Math.round(width * 0.022));
+
+  const wordmark = await renderTextPng({
+    text: "AskMai",
+    fontDescription: `Inter Bold ${wordmarkPt}`,
+    fontfile: INTER_BOLD_PATH,
+    rgb: [255, 255, 255],
+  });
+  const url = await renderTextPng({
+    text: "www.askmai.co",
+    fontDescription: `Inter ${urlPt}`,
+    fontfile: INTER_REGULAR_PATH,
+    rgb: [255, 255, 255],
+  });
+
+  // Pill padding scaled with image width so the visual weight stays
+  // in proportion across sizes. The pill sits behind the text only,
+  // not edge-to-edge — keeps the overlay feeling tasteful.
+  const padX = Math.round(width * 0.035);
+  const padY = Math.round(width * 0.012);
+  const topPillW = wordmark.width + padX * 2;
+  const topPillH = wordmark.height + padY * 2;
+  const botPillW = url.width + padX * 2;
+  const botPillH = url.height + padY * 2;
+
+  // Inset from each edge. 3% of height keeps both elements clear of
+  // the natural framing without floating in space.
+  const edgeMargin = Math.round(height * 0.03);
+
+  const topPillLeft = Math.round((width - topPillW) / 2);
+  const topPillTop = edgeMargin;
+  const topTextLeft = Math.round((width - wordmark.width) / 2);
+  const topTextTop = topPillTop + padY;
+
+  const botPillLeft = Math.round((width - botPillW) / 2);
+  const botPillTop = height - botPillH - edgeMargin;
+  const botTextLeft = Math.round((width - url.width) / 2);
+  const botTextTop = botPillTop + padY;
+
   return img
-    .composite([{ input: svg, top, left: 0 }])
+    .composite([
+      { input: pillSvg(topPillW, topPillH), top: topPillTop, left: topPillLeft },
+      { input: wordmark.buffer, top: topTextTop, left: topTextLeft },
+      { input: pillSvg(botPillW, botPillH), top: botPillTop, left: botPillLeft },
+      { input: url.buffer, top: botTextTop, left: botTextLeft },
+    ])
     .png()
     .toBuffer();
 }
@@ -269,7 +379,6 @@ export async function runRender(args: {
   personBuffer: Buffer;
   personMime: string;
   itemImageUrls: string[];
-  creatorHandle: string;
 }): Promise<Buffer> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
@@ -322,7 +431,7 @@ export async function runRender(args: {
     throw new Error("gpt-image-1 returned no image data");
   }
   const raw = Buffer.from(b64, "base64");
-  return applyBranding(raw, args.creatorHandle);
+  return applyBranding(raw);
 }
 
 /**
