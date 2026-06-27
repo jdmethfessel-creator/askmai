@@ -14,6 +14,7 @@ import {
   findCounterByFingerprint,
 } from "@/lib/usage";
 import { getServerSession } from "@/lib/session";
+import { dedupeOutfitPreservingOther } from "@/lib/outfitSlots";
 import type { ChatMessage, Creator, Rec } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -282,7 +283,21 @@ export async function POST(request: Request) {
         // can't wear a dress AND a tee. Drop the standalone pieces and
         // keep the anchor + layers + accessories. No-op for non-outfit
         // responses (skincare, places, single items).
-        const coherentRecs = pruneIncoherentOutfit(rankedRecs);
+        const anchorPruned = pruneIncoherentOutfit(rankedRecs);
+        // One-item-per-slot dedup. The model + augmenters sometimes
+        // emit two shoes ("Scooter Heel" + "Caprice Heel") or two
+        // bags within the same outfit; that's not a coherent look.
+        // dedupeOutfitPreservingOther keeps non-outfit recs (places,
+        // beauty) untouched and runs the slot dedup only over the
+        // fashion/accessories half.
+        const coherentRecs = dedupeOutfitPreservingOther(anchorPruned);
+        if (coherentRecs.length < anchorPruned.length) {
+          const before = anchorPruned.map((r) => r.name).join(", ");
+          const after = coherentRecs.map((r) => r.name).join(", ");
+          console.log(
+            `[outfit] slot dedup: ${anchorPruned.length} -> ${coherentRecs.length}  in=[${before}]  out=[${after}]`
+          );
+        }
         // Budget-board fallback. When the user asked a budget product
         // request and the model+augmenters produced zero cards (Haiku
         // sometimes leaves the prose vague and never names specific

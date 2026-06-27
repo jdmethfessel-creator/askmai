@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ChatMessage, Rec } from "@/lib/types";
+import { dedupeOutfitRecs } from "@/lib/outfitSlots";
 import SignInModal from "@/app/_components/SignInModal";
 
 const SUGGESTIONS = [
@@ -1903,8 +1904,17 @@ function OutfitRenderPill({
   // Per-response gate: only mount when at least two qualifying items
   // exist so a 1-item response never gets the outfit button. Single
   // items keep just their per-card pill.
-  const qualifying = recs.filter(
-    (r) => qualifiesForRender(r) && typeof r.image_url === "string" && r.image_url.length > 0
+  //
+  // Slot dedup runs CLIENT-side as well as server-side. The render
+  // endpoint should never receive two heels (or two bags, two
+  // dresses) because that's not a coherent outfit — gpt-image-1
+  // would try to interpret the duplicate and the result is
+  // unpredictable. dedupeOutfitRecs is the same lib the chat assembler
+  // uses, so server + client agree on what a "complete look" is.
+  const qualifying = dedupeOutfitRecs(
+    recs.filter(
+      (r) => qualifiesForRender(r) && typeof r.image_url === "string" && r.image_url.length > 0
+    )
   );
   if (qualifying.length < 2) return null;
   // Suppress while the message is mid-stream — the outfit pill would
