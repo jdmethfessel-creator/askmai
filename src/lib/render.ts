@@ -41,7 +41,8 @@
 import path from "path";
 import sharp from "sharp";
 import { supabaseAdmin } from "./supabase";
-import { segmentClothingMask } from "./segmentClothing";
+import { probeHeadBbox, segmentForRender, type Bbox } from "./segmentClothing";
+import { removeProductBackground } from "./removeBackground";
 
 export const INCLUDED_RENDERS_PER_MONTH = 3;
 
@@ -388,29 +389,138 @@ async function applyBranding(pngBuffer: Buffer): Promise<Buffer> {
     .toBuffer();
 }
 
+// -------- Post-hoc head composite -------------------------------------
+//
+// gpt-image-1 treats the mask as guidance, not as a strict
+// preservation boundary (per OpenAI's own guide: "Masking with GPT
+// Image is entirely prompt-based. The model uses the mask as
+// guidance, but may not follow its exact shape with complete
+// precision."). The face — the highest-attention region in any
+// portrait — therefore gets regenerated more often than not, even
+// when the OpenAI mask marks it opaque.
+//
+// Fix: after the OpenAI call returns, we paint the user's ACTUAL
+// head pixels (from their normalized input photo) back over the
+// model's output, using a feathered Face+Hair mask as the alpha.
+// The model's contribution stays everywhere below the chin (clothing
+// swap, neckline draping, hands, the rest of the body); the head
+// region is hard-restored to bit-exact identity.
+//
+// Two safety rails:
+//
+//   - The SegFormer Face+Hair bbox is computed on BOTH the input
+//     normalized photo and the OpenAI output. If they differ in
+//     center position (>8% of the image's larger dimension) or
+//     significantly in size (>30% area change), the model
+//     recomposed the body and pasting the head would land in the
+//     wrong spot. We fall back: return the OpenAI output without
+//     the composite, with a warning logged.
+//
+//   - The Face+Hair binary mask is Gaussian-blurred (sigma 8) before
+//     it becomes the alpha channel, so the composite has a soft
+//     neckline gradient instead of a hard seam.
+//
+// Cost: one additional HF SegFormer call on the output (~$0.001).
+// Total per render now ~$0.065.
+
 /**
- * Inpaint render via gpt-image-1 /v1/images/edits.
+ * Bbox-alignment check between input head and output head. Returns
+ * true when the two bboxes are close enough that pasting the input
+ * head over the output will land correctly.
+ */
+function headBboxesAligned(
+  inBox: Bbox,
+  outBox: Bbox,
+  imageDimMax: number
+): boolean {
+  const inCx = inBox.x + inBox.w / 2;
+  const inCy = inBox.y + inBox.h / 2;
+  const outCx = outBox.x + outBox.w / 2;
+  const outCy = outBox.y + outBox.h / 2;
+  const centerShift = Math.hypot(inCx - outCx, inCy - outCy);
+  const centerShiftPct = centerShift / imageDimMax;
+
+  const inArea = Math.max(1, inBox.w * inBox.h);
+  const outArea = Math.max(1, outBox.w * outBox.h);
+  const areaRatio = Math.abs(inArea - outArea) / inArea;
+
+  return centerShiftPct <= 0.08 && areaRatio <= 0.3;
+}
+
+/**
+ * Build the feathered alpha PNG used as the head-composite mask.
  *
- * Flow (every step throws on failure; the route catches and returns
- * 500 render_failed WITHOUT consuming a credit):
+ * Input: the raw 1-channel binary head mask from SegFormer (255 in
+ * Face+Hair, 0 elsewhere).
  *
- *   1. Normalize the user photo to OPENAI_SIZE (1024x1536, portrait),
- *      contain-fit with a neutral pad so head-to-feet is never
- *      cropped.
- *   2. Run SegFormer-B2 clothing on the normalized photo to produce
- *      a clothing-only mask (transparent over Upper-clothes / Skirt /
- *      Pants / Dress / Belt / Scarf; opaque over face, hair, arms,
- *      legs, shoes, bag, hat, background).
- *   3. Fetch each product reference image.
- *   4. Call /v1/images/edits with:
- *        image[]  = [normalized_user_photo, ...product_refs]
- *        mask     = the clothing mask
- *        prompt   = RENDER_PROMPT
- *        size     = OPENAI_SIZE  (fixed; mask must match)
- *      The mask only applies to image[0] (the user photo). The
- *      product images are pure references — the model uses them to
- *      decide what to paint into the masked region.
- *   5. Composite branding (top wordmark + bottom URL) and return.
+ * Output: a PNG of an alpha-only image at the same dimensions where
+ * the Face+Hair region is fully opaque (alpha=255) and edges feather
+ * to transparent over a few pixels. Sharp's Gaussian blur on the
+ * raw 1-channel buffer is the cheap way to achieve the feather.
+ */
+async function buildFeatheredHeadOverlay(args: {
+  normalizedPerson: Buffer;
+  headMaskRaw: Buffer;
+  width: number;
+  height: number;
+}): Promise<Buffer> {
+  // Feather the binary mask. Sigma chosen to span ~8 pixels across the
+  // boundary, which produces a soft neckline gradient at 1024x1536
+  // without bleeding too far into the clothing area.
+  const featheredAlpha = await sharp(args.headMaskRaw, {
+    raw: { width: args.width, height: args.height, channels: 1 },
+  })
+    .blur(8)
+    .raw()
+    .toBuffer();
+
+  // Extract the input photo's RGB channels at the same dimensions so
+  // we can join the feathered alpha onto them.
+  const { data: rgb } = await sharp(args.normalizedPerson)
+    .resize({ width: args.width, height: args.height, fit: "fill" })
+    .removeAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+
+  const total = args.width * args.height;
+  const rgba = Buffer.alloc(total * 4);
+  for (let i = 0; i < total; i++) {
+    const b = i * 4;
+    rgba[b] = rgb[i * 3];
+    rgba[b + 1] = rgb[i * 3 + 1];
+    rgba[b + 2] = rgb[i * 3 + 2];
+    rgba[b + 3] = featheredAlpha[i];
+  }
+  return sharp(rgba, {
+    raw: { width: args.width, height: args.height, channels: 4 },
+  })
+    .png()
+    .toBuffer();
+}
+
+/**
+ * Inpaint render via gpt-image-1 /v1/images/edits, with a post-hoc
+ * head composite restoring the user's real face.
+ *
+ * Flow (every step that throws becomes 500 render_failed with NO
+ * credit consumed):
+ *
+ *   1. Normalize the user photo to 1024x1536, fit:"contain", neutral
+ *      pad — head-to-feet preservation is baked in here.
+ *   2. SegFormer on the normalized photo → editable clothing mask
+ *      (for OpenAI) + head mask + input head bbox.
+ *   3. Fetch product reference images.
+ *   4. Call /v1/images/edits with image[normalized_user, ...products]
+ *      + mask + size=1024x1536. Mask applies only to image[0].
+ *   5. SegFormer on the OpenAI output → output head bbox.
+ *   6. Alignment check between input/output head bboxes.
+ *        - aligned: feather the input head mask, composite the user's
+ *          actual head pixels onto the OpenAI output.
+ *        - misaligned or no output head detected: skip the composite,
+ *          log a warning, and return the OpenAI output as-is. The
+ *          render still succeeds (it has a valid garment swap); the
+ *          face just isn't identity-preserved on this one.
+ *   7. Apply branding overlay.
  */
 export async function runRender(args: {
   personBuffer: Buffer;
@@ -441,19 +551,39 @@ export async function runRender(args: {
     .png()
     .toBuffer();
 
-  // 2. Generate the clothing mask from the normalized photo.
-  //    segmentClothingMask throws when HF_API_TOKEN is missing, when
-  //    the model returns no clothing classes, or when coverage falls
+  // 2. Generate the clothing mask + head mask + input head bbox.
+  //    segmentForRender throws when HF_API_TOKEN is missing, when the
+  //    model returns no clothing classes, or when coverage falls
   //    outside the sanity band — all of which become render_failed
   //    upstream with no credit consumed.
-  const seg = await segmentClothingMask(normalizedPerson);
+  const seg = await segmentForRender(normalizedPerson);
   console.log(
-    `[render] mask coverage=${seg.coveragePct.toFixed(1)}% classes=${seg.classesUsed.join(",")}`
+    `[render] input mask coverage=${seg.editableCoveragePct.toFixed(1)}% clothing=${seg.editableClassesUsed.join(",")} headBbox=${seg.headBbox ? `${seg.headBbox.x},${seg.headBbox.y},${seg.headBbox.w}x${seg.headBbox.h}` : "none"}`
   );
 
   // 3. Fetch product reference images.
   const itemFetches = await Promise.all(
     args.itemImageUrls.map((u, i) => fetchItemBlob(u, i))
+  );
+
+  // 3a. Strip the background from each product reference. gpt-image-1
+  //     in multi-image edit mode treats references as compositional
+  //     cues, so a product photo with environmental context (a
+  //     co-model, a setting) leaks that context into the output
+  //     (the canonical "suit guy appears next to the user" failure).
+  //     Cleaning the background to white isolates the model+garment
+  //     and removes the scene-cue leak path. RMBG returns the
+  //     original buffer on any failure — bg removal is best-effort,
+  //     never a render-blocker.
+  const cleanedItems = await Promise.all(
+    itemFetches.map(async (item, i) => {
+      const buf = Buffer.from(await item.blob.arrayBuffer());
+      const cleaned = await removeProductBackground(buf, i);
+      return {
+        blob: new Blob([new Uint8Array(cleaned)], { type: "image/png" }),
+        filename: `item-${i}.png`,
+      };
+    })
   );
 
   // 4. Build the multipart form. Person photo first (the mask target),
@@ -462,7 +592,7 @@ export async function runRender(args: {
   const personBlob = new Blob([new Uint8Array(normalizedPerson)], {
     type: "image/png",
   });
-  const maskBlob = new Blob([new Uint8Array(seg.maskPng)], {
+  const maskBlob = new Blob([new Uint8Array(seg.editableMaskPng)], {
     type: "image/png",
   });
   const form = new FormData();
@@ -472,7 +602,7 @@ export async function runRender(args: {
   form.append("quality", OPENAI_QUALITY);
   form.append("n", "1");
   form.append("image[]", personBlob, "person.png");
-  for (const item of itemFetches) {
+  for (const item of cleanedItems) {
     form.append("image[]", item.blob, item.filename);
   }
   form.append("mask", maskBlob, "mask.png");
@@ -499,8 +629,66 @@ export async function runRender(args: {
     throw new Error("gpt-image-1 returned no image data");
   }
   const raw = Buffer.from(b64, "base64");
-  // 5. Brand overlay.
-  return applyBranding(raw);
+
+  // 5. Post-hoc head composite. gpt-image-1 won't strictly preserve
+  //    the face even with a mask, so we re-run SegFormer on the
+  //    output, check that the head bbox is close enough to the input
+  //    bbox to safely paste, and (when aligned) composite the user's
+  //    actual head pixels back onto the output with a feathered
+  //    alpha. When the model has moved the head too far, we skip the
+  //    composite rather than land a face in the wrong spot — the
+  //    render still ships (no credit refund), just without identity
+  //    preservation on this one.
+  let composited: Buffer = raw;
+  try {
+    const outProbe = await probeHeadBbox(raw);
+    const inputBbox = seg.headBbox;
+    const outputBbox = outProbe.headBbox;
+    if (!inputBbox || !outputBbox) {
+      console.warn(
+        `[render] head composite SKIPPED: input.headBbox=${inputBbox ? "ok" : "none"} output.headBbox=${outputBbox ? "ok" : "none"}`
+      );
+    } else {
+      const imageDimMax = Math.max(outProbe.width, outProbe.height);
+      const aligned = headBboxesAligned(inputBbox, outputBbox, imageDimMax);
+      if (!aligned) {
+        const inCx = inputBbox.x + inputBbox.w / 2;
+        const inCy = inputBbox.y + inputBbox.h / 2;
+        const outCx = outputBbox.x + outputBbox.w / 2;
+        const outCy = outputBbox.y + outputBbox.h / 2;
+        console.warn(
+          `[render] head composite SKIPPED: misaligned (in center=${inCx.toFixed(0)},${inCy.toFixed(0)} out center=${outCx.toFixed(0)},${outCy.toFixed(0)})`
+        );
+      } else {
+        // OpenAI returns 1024x1536, same as our normalized input
+        // dimensions. Feathered overlay = input photo RGB + Face+Hair
+        // mask blurred into the alpha channel. Composite over raw.
+        const overlay = await buildFeatheredHeadOverlay({
+          normalizedPerson,
+          headMaskRaw: seg.headMaskRaw,
+          width: seg.width,
+          height: seg.height,
+        });
+        composited = await sharp(raw)
+          .composite([{ input: overlay, top: 0, left: 0, blend: "over" }])
+          .png()
+          .toBuffer();
+        console.log(
+          "[render] head composite APPLIED: face/hair restored from input"
+        );
+      }
+    }
+  } catch (err) {
+    // Output-side SegFormer probe or composite step failed. Don't
+    // fail the whole render — the OpenAI result is valid; we just
+    // lose identity preservation on this one. The credit will still
+    // be consumed because the user has a usable image.
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`[render] head composite SKIPPED (error): ${msg}`);
+  }
+
+  // 6. Brand overlay.
+  return applyBranding(composited);
 }
 
 /**
