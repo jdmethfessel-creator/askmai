@@ -57,6 +57,7 @@
 
 import Stripe from "stripe";
 import { supabaseAdmin } from "@/lib/supabase";
+import { readEnv } from "@/lib/env";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -189,7 +190,7 @@ async function applyReward(
   inviterId: string,
   subId: string
 ): Promise<void> {
-  const couponId = process.env.STRIPE_REFERRAL_COUPON_ID;
+  const couponId = readEnv("STRIPE_REFERRAL_COUPON_ID");
   if (!couponId) {
     console.error(
       "[referral] STRIPE_REFERRAL_COUPON_ID not set — reward NOT applied. " +
@@ -227,8 +228,8 @@ async function applyReward(
 }
 
 export async function POST(request: Request) {
-  const secretKey = process.env.STRIPE_SECRET_KEY;
-  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+  const secretKey = readEnv("STRIPE_SECRET_KEY");
+  const webhookSecret = readEnv("STRIPE_WEBHOOK_SECRET");
   if (!secretKey) {
     console.error("[stripe-webhook] STRIPE_SECRET_KEY not set, rejecting");
     return new Response("server_not_configured", { status: 500 });

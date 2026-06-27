@@ -49,6 +49,7 @@
 
 import Stripe from "stripe";
 import { getServerSession } from "@/lib/session";
+import { readEnv } from "@/lib/env";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -66,7 +67,7 @@ export async function POST(request: Request) {
     return Response.json({ error: "not_signed_in" }, { status: 401 });
   }
 
-  const secretKey = process.env.STRIPE_SECRET_KEY;
+  const secretKey = readEnv("STRIPE_SECRET_KEY");
   if (!secretKey) {
     console.error("[checkout] STRIPE_SECRET_KEY not set");
     return Response.json({ error: "stripe_not_configured" }, { status: 500 });
@@ -100,7 +101,7 @@ export async function POST(request: Request) {
   if (body.pack === "pack_20" || body.pack === "pack_50") {
     const pack = body.pack as PackId;
     const envName = PACK_PRICE_ENV[pack];
-    const priceId = process.env[envName];
+    const priceId = readEnv(envName);
     if (!priceId) {
       console.error(`[checkout] ${envName} not set`);
       return Response.json(
@@ -148,7 +149,7 @@ export async function POST(request: Request) {
   // flow over a misconfigured coupon.
   let resolvedCouponId: string | null = null;
   if (body.coupon === "winback") {
-    const couponId = process.env.STRIPE_WINBACK_COUPON_ID;
+    const couponId = readEnv("STRIPE_WINBACK_COUPON_ID");
     if (couponId) {
       resolvedCouponId = couponId;
     } else {
@@ -160,8 +161,8 @@ export async function POST(request: Request) {
 
   const priceId =
     plan === "monthly"
-      ? process.env.STRIPE_PRICE_MONTHLY
-      : process.env.STRIPE_PRICE_ANNUAL;
+      ? readEnv("STRIPE_PRICE_MONTHLY")
+      : readEnv("STRIPE_PRICE_ANNUAL");
   if (!priceId) {
     console.error(`[checkout] STRIPE_PRICE_${plan.toUpperCase()} not set`);
     return Response.json({ error: "price_not_configured" }, { status: 500 });
