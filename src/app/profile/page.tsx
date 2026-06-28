@@ -30,18 +30,30 @@ export default async function ProfilePage() {
   const admin = supabaseAdmin();
   const row = await admin
     .from("users")
-    .select("email, display_name, age_verified_at, tryon_photo_path")
+    .select(
+      "email, display_name, age_verified_at, tryon_photo_path, tryon_original_path"
+    )
     .eq("id", session.userId)
     .maybeSingle();
   if (row.error || !row.data) {
     redirect("/");
   }
 
+  // Profile thumbnail shows the user's RAW uploaded photo, not the
+  // normalized canvas. tryon_original_path is set on every upload
+  // since the canvas-normalization shipped; older uploads may only
+  // have tryon_photo_path, so we fall back to that. (For older rows
+  // tryon_photo_path IS the original; only post-normalization
+  // uploads diverge the two columns.)
+  const thumbnailPath =
+    (row.data.tryon_original_path as string | null) ??
+    (row.data.tryon_photo_path as string | null);
+
   let photoUrl: string | null = null;
-  if (row.data.tryon_photo_path) {
+  if (thumbnailPath) {
     const signed = await admin.storage
       .from("tryon-photos")
-      .createSignedUrl(row.data.tryon_photo_path, PHOTO_SIGNED_URL_TTL_SECONDS);
+      .createSignedUrl(thumbnailPath, PHOTO_SIGNED_URL_TTL_SECONDS);
     if (signed.data?.signedUrl) {
       photoUrl = signed.data.signedUrl;
     } else if (signed.error) {

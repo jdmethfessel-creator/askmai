@@ -42,6 +42,12 @@ const FASHN_MODEL = "tryon-v1.6";
 // crisper hands / garment-skin boundaries.
 const FASHN_MODE: "performance" | "balanced" | "quality" = "quality";
 
+// Balanced mode for canvas-normalization passes. The normalized
+// canvas is an intermediate (the user never sees it directly), so
+// the cost/speed tradeoff favors balanced over quality. ~8s per
+// pass × 2 passes = ~16s per upload normalization.
+const FASHN_CANVAS_MODE: "performance" | "balanced" | "quality" = "balanced";
+
 // FASHN subscribe() poll timeout. Default is 300s; we set 240s so
 // the timer here trips before the Vercel function maxDuration=300
 // and we get a clean structured error instead of a runtime kill
@@ -109,6 +115,12 @@ export async function tryOn(args: {
   garmentImageUrl: string;
   category?: VtonCategory;
   garmentPhotoType?: VtonGarmentPhotoType;
+  /**
+   * Override the FASHN mode for this specific call. Default is
+   * FASHN_MODE (quality). Canvas-normalization callers use
+   * "balanced" because the intermediate isn't user-visible.
+   */
+  mode?: "performance" | "balanced" | "quality";
 }): Promise<VtonResult> {
   const hasFashn = !!process.env.FASHN_API_KEY;
   const hasReplicate = !!process.env.REPLICATE_API_TOKEN;
@@ -158,6 +170,7 @@ async function runFashn(args: {
   garmentImageUrl: string;
   category?: VtonCategory;
   garmentPhotoType?: VtonGarmentPhotoType;
+  mode?: "performance" | "balanced" | "quality";
 }): Promise<VtonResult> {
   const startedAt = Date.now();
 
@@ -193,7 +206,7 @@ async function runFashn(args: {
         garment_image: args.garmentImageUrl,
         garment_photo_type: args.garmentPhotoType ?? "model",
         category: args.category ?? "auto",
-        mode: FASHN_MODE,
+        mode: args.mode ?? FASHN_MODE,
       },
       timeout: FASHN_TIMEOUT_MS,
     })) as FashnResult;
@@ -474,4 +487,113 @@ function describeGarment(category: VtonCategory | undefined): string {
     default:
       return "garment";
   }
+}
+
+// -------- Upload-time canvas normalization -------------------------
+
+/**
+ * Normalize a freshly-uploaded photo into a "neutral basics canvas"
+ * by running two FASHN passes: apply a fitted neutral tank, then
+ * apply fitted neutral bike shorts. This produces a coherent
+ * separates canvas so any subsequent try-on (top OR bottom OR dress)
+ * doesn't leave a leftover piece of the original outfit visible.
+ *
+ * The problem this solves: if the user's uploaded photo shows them
+ * in a dress and they try on a top, FASHN's region-localized swap
+ * fills only the upper torso, leaving the dress skirt below. The
+ * separates canvas guarantees there's always a tank in the upper
+ * region and shorts in the lower region for the next pass to swap.
+ *
+ * Reference garment URLs come from env vars (TRYON_CANVAS_TOP_URL,
+ * TRYON_CANVAS_BOTTOM_URL). If either is missing, the function
+ * returns ok=false reason=no_basics_configured and the upload route
+ * falls back to using the original photo as the canvas (the prior
+ * behavior; current incoherence bug intact for that user, but
+ * renders still work).
+ *
+ * Cost: 2 FASHN tryon-v1.6 calls in balanced mode = ~2 credits
+ * per upload, roughly $0.08 USD at current pricing. One-time per
+ * user re-upload. Failed predictions are not charged by FASHN, so
+ * a partial failure costs less.
+ *
+ * Latency: ~16-20s total (8s per balanced pass + overhead). The
+ * upload route bumps maxDuration to 90s to cover this comfortably.
+ */
+export type CanvasNormalizeResult =
+  | { ok: true; pngBuffer: Buffer; totalCreditsUsed: number; runtimeMs: number }
+  | {
+      ok: false;
+      reason: "no_basics_configured" | "no_token" | VtonFailureReason;
+      detail: string;
+      step?: "top" | "bottom";
+    };
+
+export async function normalizeCanvas(args: {
+  personBuffer: Buffer;
+  personMime: string;
+}): Promise<CanvasNormalizeResult> {
+  const topUrl = process.env.TRYON_CANVAS_TOP_URL;
+  const bottomUrl = process.env.TRYON_CANVAS_BOTTOM_URL;
+  if (!topUrl || !bottomUrl) {
+    return {
+      ok: false,
+      reason: "no_basics_configured",
+      detail:
+        "TRYON_CANVAS_TOP_URL and TRYON_CANVAS_BOTTOM_URL must both be set",
+    };
+  }
+
+  const startedAt = Date.now();
+  let totalCredits = 0;
+
+  // Pass 1: apply the neutral tank. category=tops constrains the
+  // FASHN swap to the upper-torso region; garment_photo_type=auto
+  // lets FASHN decide based on what the reference URL actually is
+  // (flat-lay vs on-model). Mode=balanced because the intermediate
+  // isn't user-visible.
+  const pass1 = await tryOn({
+    personBuffer: args.personBuffer,
+    personMime: args.personMime,
+    garmentImageUrl: topUrl,
+    category: "tops",
+    garmentPhotoType: "auto",
+    mode: FASHN_CANVAS_MODE,
+  });
+  if (!pass1.ok) {
+    return {
+      ok: false,
+      reason: pass1.reason,
+      detail: `top pass: ${pass1.detail}`,
+      step: "top",
+    };
+  }
+  if (pass1.creditsUsed) totalCredits += pass1.creditsUsed;
+
+  // Pass 2: apply the neutral bike shorts to the result of pass 1.
+  // The output of pass 1 (now wearing the neutral tank) becomes the
+  // model_image for pass 2 (which swaps the lower body).
+  const pass2 = await tryOn({
+    personBuffer: pass1.pngBuffer,
+    personMime: "image/png",
+    garmentImageUrl: bottomUrl,
+    category: "bottoms",
+    garmentPhotoType: "auto",
+    mode: FASHN_CANVAS_MODE,
+  });
+  if (!pass2.ok) {
+    return {
+      ok: false,
+      reason: pass2.reason,
+      detail: `bottom pass: ${pass2.detail}`,
+      step: "bottom",
+    };
+  }
+  if (pass2.creditsUsed) totalCredits += pass2.creditsUsed;
+
+  return {
+    ok: true,
+    pngBuffer: pass2.pngBuffer,
+    totalCreditsUsed: totalCredits,
+    runtimeMs: Date.now() - startedAt,
+  };
 }

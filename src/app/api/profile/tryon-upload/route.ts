@@ -14,20 +14,27 @@
  *   2. age_verified_at IS NOT NULL  <-- this guard, before formData()
  *   3. formData() parse
  *   4. MIME + size validation
- *   5. storage upload
- *   6. users row update: tryon_photo_path -> <path>
+ *   5. storage upload (original; this is what the profile thumbnail
+ *      shows)
+ *   6. canvas normalization: two FASHN passes (apply neutral tank,
+ *      then apply neutral bike shorts) to produce a coherent
+ *      separates canvas. Optional; skipped when env vars are missing.
+ *      Failure here is non-fatal: we fall back to the original photo
+ *      as the canvas (preserves working renders, but the partial-
+ *      outfit-coherence bug is intact for that user).
+ *   7. storage upload (canvas, if normalization ran)
+ *   8. users row update:
+ *        tryon_photo_path     -> canvas (used by /api/render)
+ *        tryon_original_path  -> original (used by profile thumbnail)
  *
- * Note: this route used to run a blocking SegFormer normalization
- * pass after upload (mid-gray canvas, garment neutralization, anchor
- * ladder) to make gpt-image-1's output usable. That whole pipeline
- * was removed when we switched to VTON (FASHN tryon-v1.6) in
- * Phase 3, because the VTON model uses the photo as the literal
- * canvas; normalization would actively hurt the result. The user's
- * original upload now goes straight into the bucket and is read by
- * runRender as-is.
+ * Why normalize: when the uploaded photo shows the user in a dress
+ * and they try on a top, FASHN's localized swap leaves the dress
+ * skirt visible below the new top. The neutral-basics canvas
+ * guarantees the upper region has a tank and the lower region has
+ * shorts, so any subsequent VTON pass replaces a coherent piece.
  *
  * Returns:
- *   200 { ok: true, path: "<userId>/<uuid>.<ext>" }
+ *   200 { ok: true, path: "<userId>/<uuid>.<ext>", canvas_normalized: boolean }
  *   400 { error: "invalid_form_data" | "missing_file" | "invalid_file_type" }
  *   401 { error: "not_signed_in" }
  *   403 { error: "age_not_verified" }
@@ -38,12 +45,14 @@
 
 import { getServerSession } from "@/lib/session";
 import { supabaseAdmin } from "@/lib/supabase";
+import { normalizeCanvas } from "@/lib/vton";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-// No more SegFormer call; this route is just multipart -> bucket ->
-// row update. The Vercel default 60s is plenty.
-export const maxDuration = 30;
+// Two FASHN balanced passes at ~8s each = ~16-20s normalization,
+// plus multipart read + storage upload = ~25-30s typical. 90s leaves
+// room for a slow pass or a retry.
+export const maxDuration = 90;
 
 const MAX_BYTES = 8 * 1024 * 1024; // 8 MiB, matches the bucket file_size_limit
 const ALLOWED_MIME = new Set<string>([
@@ -122,41 +131,107 @@ export async function POST(request: Request) {
     return Response.json({ error: "invalid_file_type" }, { status: 400 });
   }
 
+  // Path layout: <userId>/<uuid>.original.<ext> for the raw upload
+  // (thumbnail source), <userId>/<uuid>.canvas.png for the
+  // normalized canvas (render input). Shared uuid pairs them so a
+  // retention sweep finds both halves of a single upload.
   const uuid = crypto.randomUUID();
-  const photoPath = `${session.userId}/${uuid}.${extForMime(contentType)}`;
+  const ext = extForMime(contentType);
+  const originalPath = `${session.userId}/${uuid}.original.${ext}`;
+  const canvasPath = `${session.userId}/${uuid}.canvas.png`;
 
-  const up = await admin.storage
+  // Step 5: upload the original. This is what the profile page
+  // shows as the user's photo. If anything downstream fails, the
+  // original stays in the bucket only when the row update succeeds
+  // (we roll back on row-update failure to avoid orphans).
+  const upOrig = await admin.storage
     .from("tryon-photos")
-    .upload(photoPath, file, { contentType, upsert: false });
-  if (up.error) {
-    console.error("[tryon-upload] upload failed:", up.error.message);
+    .upload(originalPath, file, { contentType, upsert: false });
+  if (upOrig.error) {
+    console.error(
+      "[tryon-upload] original upload failed:",
+      upOrig.error.message
+    );
     return Response.json({ error: "upload_failed" }, { status: 500 });
   }
 
-  // Row update. tryon_photo_path is what runRender reads on every
-  // render. The legacy tryon_original_path and tryon_geometry columns
-  // (used by the pre-VTON normalization pipeline) are now unused; we
-  // null them on upload to keep state consistent across schema
-  // versions. Dropping the columns themselves is a future migration.
+  // Read the original bytes once for normalization. Doing it here
+  // keeps the Blob from being consumed twice; FASHN needs a Buffer
+  // (we encode as data URI), the upload above needed Blob.
+  const photoBuffer = Buffer.from(await file.arrayBuffer());
+
+  // Step 6: canvas normalization. Two FASHN passes (tank then
+  // shorts). On any failure (no env vars, FASHN error, timeout,
+  // moderation), we skip and use the original as the canvas. This
+  // preserves working renders for users uploaded before the canvas
+  // basics were configured.
+  let finalCanvasPath = originalPath;
+  let canvasNormalized = false;
+  const norm = await normalizeCanvas({
+    personBuffer: photoBuffer,
+    personMime: contentType,
+  });
+  if (norm.ok) {
+    // Step 7: store the normalized canvas.
+    const upCanvas = await admin.storage
+      .from("tryon-photos")
+      .upload(canvasPath, norm.pngBuffer, {
+        contentType: "image/png",
+        upsert: false,
+      });
+    if (upCanvas.error) {
+      console.error(
+        "[tryon-upload] canvas upload failed (falling back to original):",
+        upCanvas.error.message
+      );
+    } else {
+      finalCanvasPath = canvasPath;
+      canvasNormalized = true;
+      console.log(
+        `[tryon-upload] canvas normalized user=${session.userId} credits=${norm.totalCreditsUsed} runtime=${norm.runtimeMs}ms`
+      );
+    }
+  } else if (norm.reason === "no_basics_configured") {
+    console.log(
+      "[tryon-upload] canvas normalization skipped: TRYON_CANVAS_TOP_URL / TRYON_CANVAS_BOTTOM_URL not set"
+    );
+  } else {
+    console.warn(
+      `[tryon-upload] canvas normalization failed step=${norm.step ?? "?"} reason=${norm.reason} detail=${norm.detail} (falling back to original as canvas)`
+    );
+  }
+
+  // Step 8: row update. tryon_photo_path = canvas (or original if
+  // normalization didn't run); tryon_original_path = original
+  // always. The profile thumbnail reads tryon_original_path; the
+  // render route reads tryon_photo_path.
   const upd = await admin
     .from("users")
     .update({
-      tryon_photo_path: photoPath,
-      tryon_original_path: null,
+      tryon_photo_path: finalCanvasPath,
+      tryon_original_path: originalPath,
       tryon_geometry: null,
     })
     .eq("id", session.userId);
   if (upd.error) {
     console.error("[tryon-upload] users update failed:", upd.error.message);
+    // Roll back BOTH storage objects (original + canvas) so we don't
+    // leave orphans in the bucket.
+    const pathsToRemove = [originalPath];
+    if (canvasNormalized) pathsToRemove.push(canvasPath);
     await admin.storage
       .from("tryon-photos")
-      .remove([photoPath])
+      .remove(pathsToRemove)
       .catch(() => {});
     return Response.json({ error: "store_failed" }, { status: 500 });
   }
 
   console.log(
-    `[tryon-upload] ok user=${session.userId} path=${photoPath} bytes=${file.size}`
+    `[tryon-upload] ok user=${session.userId} original=${originalPath} canvas=${finalCanvasPath} normalized=${canvasNormalized} bytes=${file.size}`
   );
-  return Response.json({ ok: true, path: photoPath });
+  return Response.json({
+    ok: true,
+    path: finalCanvasPath,
+    canvas_normalized: canvasNormalized,
+  });
 }
