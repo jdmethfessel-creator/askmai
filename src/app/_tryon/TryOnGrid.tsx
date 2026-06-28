@@ -83,29 +83,40 @@ type RenderResult =
   | { state: "blocked"; product: Product; reason: BlockReason };
 
 // Per-card eligibility for the body-render Try-On button. Items in
-// these subcategory buckets are clothing/accessories FASHN can place
-// on the body. Jewelry, earrings, beauty, home, etc. show Shop only.
-// Shoes excluded intentionally for now (FASHN's tryon-v1.6 categories
-// are tops/bottoms/one-pieces; shoes need different geometry).
+// these subcategory buckets are clothing FASHN tryon-v1.6 can place
+// on the body. Everything else (shoes, bags, jewelry, accessories,
+// beauty, home, etc.) shows Shop only.
+//
+// Notable exclusions:
+//   shoes: FASHN tryon-v1.6 has no shoe category; shoe placement
+//     needs different geometry (feet detection, ground plane).
+//   bags: FASHN tryon-v1.6 is trained on worn garments. Fed a bag
+//     image with category=auto it produces unreliable results (no
+//     visible change at best, tote-shaped silhouette on the torso
+//     at worst). Real bag placement needs an image-edit + two-image
+//     compositing approach (person + bag -> bag in hand or over
+//     shoulder with correct scale and angle). Out of scope for the
+//     tryon-v1.6 path; treat as shoppable-only for now.
 //
 // Edit this constant to expand or contract the renderable set.
+// The server's CHAINABLE_SUBCATEGORIES in src/lib/render.ts mirrors
+// this list so a naive client can't bypass the rule.
 const TRYON_ELIGIBLE_CATEGORIES = new Set<string>([
   "tops",
   "bottoms",
   "dresses",
-  "bags",
 ]);
 
 // Outfit slot the product fills. One slot per item; the outfit
 // builder enforces uniqueness per slot and the dress/separates
 // conflict (dress excludes top+bottom). Keep the values stable; they
-// drive the conflict-resolution logic below.
-type OutfitSlot = "top" | "bottom" | "dress" | "bag";
+// drive the conflict-resolution logic below. Bags were dropped here
+// when bag try-on was removed (see TRYON_ELIGIBLE_CATEGORIES above).
+type OutfitSlot = "top" | "bottom" | "dress";
 const SUBCATEGORY_TO_SLOT: Record<string, OutfitSlot> = {
   tops: "top",
   bottoms: "bottom",
   dresses: "dress",
-  bags: "bag",
 };
 
 const MAX_OUTFIT_ITEMS = 3;
@@ -393,8 +404,8 @@ export default function TryOnGrid({
   const clearOutfit = useCallback(() => setOutfit({}), []);
 
   const outfitItems = useMemo(() => {
-    // Stable display order in the tray: top, bottom, dress, bag.
-    const order: OutfitSlot[] = ["top", "bottom", "dress", "bag"];
+    // Stable display order in the tray: top, bottom, dress.
+    const order: OutfitSlot[] = ["top", "bottom", "dress"];
     return order
       .map((s) => outfit[s])
       .filter((p): p is Product => Boolean(p));

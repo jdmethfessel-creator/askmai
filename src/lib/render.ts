@@ -335,17 +335,25 @@ export type RunRenderError = {
  * they read as incomplete to the user.
  */
 // Subcategories the FASHN chain will actually render. Anything
-// else (shoes, jewelry, accessories, outerwear, swim, beauty,
-// home, other) stays in the items array for shoppability + logging
-// but gets skipped from the FASHN chain so we don't burn a pass
-// on something the model can't reliably swap. Mirrors
-// TRYON_ELIGIBLE_CATEGORIES in the grid client and keeps the
-// "no shoes" rule honored regardless of who's calling /api/render.
+// else (shoes, bags, jewelry, accessories, outerwear, swim,
+// beauty, home, other) stays in the items array for shoppability +
+// logging but gets skipped from the FASHN chain so we don't burn a
+// pass on something the model can't reliably swap. Mirrors
+// TRYON_ELIGIBLE_CATEGORIES in src/app/_tryon/TryOnGrid.tsx so a
+// naive client can't bypass the rule (e.g. the chat side, where
+// recs may include bags / shoes from the AI response).
+//
+// bags previously routed here; removed because FASHN tryon-v1.6 is
+// trained on worn garments and produces unreliable results on bag
+// images (auto-classification places a tote-shaped silhouette on
+// the torso at worst, no visible change at best). Real bag
+// placement needs a two-image inpainting / compositing path that
+// understands "place this product in her hand or over her shoulder"
+// rather than "swap this onto her body."
 const CHAINABLE_SUBCATEGORIES = new Set<string>([
   "tops",
   "bottoms",
   "dresses",
-  "bags",
 ]);
 
 // Map our internal subcategory taxonomy to FASHN tryon-v1.6's
