@@ -43,6 +43,7 @@ import sharp from "sharp";
 import { supabaseAdmin } from "./supabase";
 import { segmentForRender } from "./segmentClothing";
 import { removeProductBackground } from "./removeBackground";
+import { faceSwap } from "./faceSwap";
 
 export const INCLUDED_RENDERS_PER_MONTH = 3;
 
@@ -315,32 +316,35 @@ async function applyBranding(pngBuffer: Buffer): Promise<Buffer> {
 
 // -------- Face rendering --------------------------------------------
 //
-// Through 2026-06-28 we ran a post-hoc face composite (paste the
-// user's actual face/hair pixels back onto the gpt-image-1 output,
-// gated by an alignment classifier + seam-feather + downward-dilation
-// + reposition logic). It was a patch for the model hallucinating
-// faces when the input was a raw photo with a busy background.
+// Two-step face handling:
 //
-// That patch is REMOVED in this commit because the underlying problem
-// it solved is gone: with the upload-time normalization pipeline
-// (src/lib/normalizeTryonPhoto.ts), gpt-image-1 receives a clean
-// isolated figure on a neutral gray canvas with the original garment
-// blanked, and the user's face IS the primary image input. The model
-// renders the face directly from that reference. The paste-back was
-// itself producing the visible defect (the melt at the hair/neck
-// seam JD complained about) by compositing two differently-lit
-// images. Net: drop the composite, ship one coherent image.
+// 1. gpt-image-1 renders the entire person from the normalized photo,
+//    including the head and hair. This produces a coherent image with
+//    correct lighting on the face / hair / garment seam.
 //
-// Trade-off accepted: face is "approximately the user" rather than
-// "bit-exact." For the try-on share / catalog tile target this is the
-// right call; for an identity-verification target it wouldn't be.
-// AskMai is the former.
+// 2. After the render returns, we run a production face swap
+//    (InsightFace inswapper via Replicate, see src/lib/faceSwap.ts)
+//    to overlay the user's actual facial identity. The swap is an
+//    InsightFace-grade pipeline: 5-point landmark detection on both
+//    images, affine alignment for pose/angle/scale/rotation, color
+//    and lighting transfer, soft feathered boundary inside the
+//    hairline / jaw. Hair, neckline, shoulders, and garment from the
+//    gpt-image-1 output are preserved untouched.
 //
-// All composite helpers (classifyHeadAlignment, dilateMaskDown,
-// buildFeatheredHeadOverlay) and the seam tunables (alignment
-// thresholds, scale bounds, feather sigma, downward-dilation px)
-// removed below. Git history holds the previous implementation
-// (commits c83393b, 8cadc23) if it ever needs to come back.
+// History: we previously ran a hand-rolled paste-back (alignment
+// classifier + seam-feather + downward-dilation) which produced a
+// visible melt at the hair/neck seam because it composited two
+// differently-lit images. That was removed in commit ce3ad29. The
+// inswapper pipeline replaces it: instead of pasting pixels, it
+// warps and color-matches an embedding into the target's lighting,
+// which is the right architectural shape for what we want.
+//
+// If REPLICATE_API_TOKEN is missing or the swap fails for any
+// reason (no face detected, moderation, timeout, network), we fall
+// back to the un-swapped gpt-image-1 output. The render still
+// ships; the user just gets the "approximately you" face from the
+// model instead of the "exactly you" face from the swap. This means
+// the deploy is safe before the token is wired into Vercel env.
 
 /**
  * Inpaint render via gpt-image-1 /v1/images/edits. The model renders
@@ -473,10 +477,57 @@ export async function runRender(args: {
   }
   const raw = Buffer.from(b64, "base64");
 
-  // 5. Brand overlay. No post-hoc face composite (removed in commit
-  //    [this one] — see "Face rendering" comment above). gpt-image-1's
-  //    output goes straight to applyBranding.
-  return applyBranding(raw);
+  // 5. Face swap. Replace the gpt-image-1 head's facial identity with
+  //    the user's actual face using InsightFace inswapper (via
+  //    Replicate). See "Face rendering" comment block above and
+  //    src/lib/faceSwap.ts for the full architecture.
+  //
+  //    The source face is normalizedPerson (the upload-time-normalized
+  //    photo: clean isolated figure, neutral background, garment
+  //    region blanked). The target is `raw` (gpt-image-1's output).
+  //    The swap result preserves everything in `raw` except the
+  //    inner-face region (eyes, nose, mouth, chin) which is replaced
+  //    with the user's identity, color-matched to the render's
+  //    lighting.
+  //
+  //    Graceful fallback: any failure (missing token, no face
+  //    detected, moderation, timeout, network) returns `raw`
+  //    un-swapped. The user still gets a render; they just don't
+  //    get their exact face. This is also what happens before the
+  //    REPLICATE_API_TOKEN is added to Vercel env post-deploy.
+  const swapResult = await faceSwap({
+    sourceFaceBuffer: normalizedPerson,
+    targetImageBuffer: raw,
+  });
+  let postSwap: Buffer;
+  if (swapResult.ok) {
+    console.log(
+      `[render] face swap ok, latency=${swapResult.latencyMs}ms`
+    );
+    postSwap = swapResult.pngBuffer;
+  } else {
+    console.warn(
+      `[render] face swap skipped reason=${swapResult.reason} detail=${swapResult.detail}`
+    );
+    postSwap = raw;
+  }
+
+  // 6. Brand overlay. The swap may return a non-1024x1536 image
+  //    depending on the model's internal resampling; applyBranding
+  //    asserts the size, so we normalize back to canvas dimensions
+  //    first. resize(fit:"cover") preserves the aspect ratio with no
+  //    letterbox; the swapped output is already 1024x1536-shaped
+  //    (because the gpt-image-1 input was), so this is usually a
+  //    no-op pass-through.
+  const sized = await sharp(postSwap)
+    .resize({
+      width: OVERLAY_WIDTH,
+      height: OVERLAY_HEIGHT,
+      fit: "cover",
+    })
+    .png()
+    .toBuffer();
+  return applyBranding(sized);
 }
 
 /**
