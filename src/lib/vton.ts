@@ -492,6 +492,29 @@ function describeGarment(category: VtonCategory | undefined): string {
 // -------- Upload-time canvas normalization -------------------------
 
 /**
+ * Default reference garments for the upload-time canvas normalization.
+ * Both are stable public CDN URLs pulled from our own catalog (verified
+ * HTTP 200 / image/jpeg / on-model). Picked for: athletic + modest +
+ * fitted + a neutral solid color, so the swap onto the user is
+ * believable as "the canvas they happen to be wearing" rather than
+ * a styled outfit.
+ *
+ *   Top:    Enza Costa Textured Rib Sleeveless U Tank Top (white)
+ *           on FWRD CDN. Fitted ribbed cotton, simple U-neck.
+ *   Bottom: Alo 4" Airbrush High-Waist Heart Throb Short (black)
+ *           on ShopMy CDN. Mid-thigh bike short, black with white
+ *           contrast piping.
+ *
+ * Env vars (TRYON_CANVAS_TOP_URL, TRYON_CANVAS_BOTTOM_URL) override
+ * these defaults so we can swap basics without a deploy. Out of the
+ * box normalization works with no manual config.
+ */
+const DEFAULT_CANVAS_TOP_URL =
+  "https://is4.fwrdassets.com/images/p/fw/p/ENZF-WS820_V1.jpg";
+const DEFAULT_CANVAS_BOTTOM_URL =
+  "https://static.shopmy.us/uploads/75edc0b1-152d-4498-92f2-32ef4f308c2aW6519R_0100_b1_s1_a4_m218_1500x_2000x3000.jpg";
+
+/**
  * Normalize a freshly-uploaded photo into a "neutral basics canvas"
  * by running two FASHN passes: apply a fitted neutral tank, then
  * apply fitted neutral bike shorts. This produces a coherent
@@ -504,12 +527,13 @@ function describeGarment(category: VtonCategory | undefined): string {
  * separates canvas guarantees there's always a tank in the upper
  * region and shorts in the lower region for the next pass to swap.
  *
- * Reference garment URLs come from env vars (TRYON_CANVAS_TOP_URL,
- * TRYON_CANVAS_BOTTOM_URL). If either is missing, the function
- * returns ok=false reason=no_basics_configured and the upload route
- * falls back to using the original photo as the canvas (the prior
- * behavior; current incoherence bug intact for that user, but
- * renders still work).
+ * Reference garment URLs are hardcoded defaults pulled from our own
+ * catalog (DEFAULT_CANVAS_TOP_URL / DEFAULT_CANVAS_BOTTOM_URL) so
+ * normalization works out of the box. Env vars
+ * (TRYON_CANVAS_TOP_URL, TRYON_CANVAS_BOTTOM_URL) override per
+ * deploy for A/B testing different basics. The function only
+ * returns reason=no_basics_configured when the catalog defaults
+ * have been intentionally blanked (impossible via config).
  *
  * Cost: 2 FASHN tryon-v1.6 calls in balanced mode = ~2 credits
  * per upload, roughly $0.08 USD at current pricing. One-time per
@@ -532,14 +556,16 @@ export async function normalizeCanvas(args: {
   personBuffer: Buffer;
   personMime: string;
 }): Promise<CanvasNormalizeResult> {
-  const topUrl = process.env.TRYON_CANVAS_TOP_URL;
-  const bottomUrl = process.env.TRYON_CANVAS_BOTTOM_URL;
+  const topUrl = process.env.TRYON_CANVAS_TOP_URL || DEFAULT_CANVAS_TOP_URL;
+  const bottomUrl =
+    process.env.TRYON_CANVAS_BOTTOM_URL || DEFAULT_CANVAS_BOTTOM_URL;
+  // Defensive check in case the constants get blanked. Should never
+  // fire under normal operation since the defaults are non-empty.
   if (!topUrl || !bottomUrl) {
     return {
       ok: false,
       reason: "no_basics_configured",
-      detail:
-        "TRYON_CANVAS_TOP_URL and TRYON_CANVAS_BOTTOM_URL must both be set",
+      detail: "canvas basics URLs both blank (defaults + env both empty)",
     };
   }
 
