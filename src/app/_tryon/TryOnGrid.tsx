@@ -83,40 +83,43 @@ type RenderResult =
   | { state: "blocked"; product: Product; reason: BlockReason };
 
 // Per-card eligibility for the body-render Try-On button. Items in
-// these subcategory buckets are clothing FASHN tryon-v1.6 can place
-// on the body. Everything else (shoes, bags, jewelry, accessories,
-// beauty, home, etc.) shows Shop only.
+// these subcategory buckets reach the server's two-stage render
+// path. Everything else (shoes, jewelry, accessories, beauty,
+// home, etc.) shows Shop only.
 //
-// Notable exclusions:
-//   shoes: FASHN tryon-v1.6 has no shoe category; shoe placement
-//     needs different geometry (feet detection, ground plane).
-//   bags: FASHN tryon-v1.6 is trained on worn garments. Fed a bag
-//     image with category=auto it produces unreliable results (no
-//     visible change at best, tote-shaped silhouette on the torso
-//     at worst). Real bag placement needs an image-edit + two-image
-//     compositing approach (person + bag -> bag in hand or over
-//     shoulder with correct scale and angle). Out of scope for the
-//     tryon-v1.6 path; treat as shoppable-only for now.
+// Routing on the server (see src/lib/render.ts):
+//   tops/bottoms/dresses -> Stage 1: FASHN tryon-v1.6 chained
+//   bags                  -> Stage 2: FLUX Kontext bag-placement
+//                            composited onto the Stage 1 result
+//                            (see src/lib/bagPlacement.ts). If
+//                            the outfit has no garments, Stage 1
+//                            is the user's normalized canvas and
+//                            Stage 2 layers the bag on that.
+//
+// Shoes intentionally excluded: FASHN has no shoe category and
+// shoe placement needs different geometry (feet, ground plane);
+// not in scope for either stage today.
 //
 // Edit this constant to expand or contract the renderable set.
-// The server's CHAINABLE_SUBCATEGORIES in src/lib/render.ts mirrors
-// this list so a naive client can't bypass the rule.
+// The server's RENDERABLE_SUBCATEGORIES in src/lib/render.ts
+// mirrors this list so a naive client can't bypass the rule.
 const TRYON_ELIGIBLE_CATEGORIES = new Set<string>([
   "tops",
   "bottoms",
   "dresses",
+  "bags",
 ]);
 
 // Outfit slot the product fills. One slot per item; the outfit
 // builder enforces uniqueness per slot and the dress/separates
-// conflict (dress excludes top+bottom). Keep the values stable; they
-// drive the conflict-resolution logic below. Bags were dropped here
-// when bag try-on was removed (see TRYON_ELIGIBLE_CATEGORIES above).
-type OutfitSlot = "top" | "bottom" | "dress";
+// conflict (dress excludes top+bottom). Bag is allowed alongside
+// any other slot (it's a held accessory, not a worn garment).
+type OutfitSlot = "top" | "bottom" | "dress" | "bag";
 const SUBCATEGORY_TO_SLOT: Record<string, OutfitSlot> = {
   tops: "top",
   bottoms: "bottom",
   dresses: "dress",
+  bags: "bag",
 };
 
 const MAX_OUTFIT_ITEMS = 3;
@@ -404,8 +407,8 @@ export default function TryOnGrid({
   const clearOutfit = useCallback(() => setOutfit({}), []);
 
   const outfitItems = useMemo(() => {
-    // Stable display order in the tray: top, bottom, dress.
-    const order: OutfitSlot[] = ["top", "bottom", "dress"];
+    // Stable display order in the tray: top, bottom, dress, bag.
+    const order: OutfitSlot[] = ["top", "bottom", "dress", "bag"];
     return order
       .map((s) => outfit[s])
       .filter((p): p is Product => Boolean(p));

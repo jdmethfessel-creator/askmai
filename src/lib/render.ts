@@ -39,7 +39,8 @@
 import path from "path";
 import sharp from "sharp";
 import { supabaseAdmin } from "./supabase";
-import { tryOn, type VtonCategory, type VtonResult } from "./vton";
+import { tryOn, type VtonCategory } from "./vton";
+import { placeBag } from "./bagPlacement";
 
 export const INCLUDED_RENDERS_PER_MONTH = 3;
 
@@ -334,26 +335,29 @@ export type RunRenderError = {
  * the whole render fails; partial outfits are not surfaced because
  * they read as incomplete to the user.
  */
-// Subcategories the FASHN chain will actually render. Anything
-// else (shoes, bags, jewelry, accessories, outerwear, swim,
-// beauty, home, other) stays in the items array for shoppability +
-// logging but gets skipped from the FASHN chain so we don't burn a
-// pass on something the model can't reliably swap. Mirrors
-// TRYON_ELIGIBLE_CATEGORIES in src/app/_tryon/TryOnGrid.tsx so a
-// naive client can't bypass the rule (e.g. the chat side, where
-// recs may include bags / shoes from the AI response).
-//
-// bags previously routed here; removed because FASHN tryon-v1.6 is
-// trained on worn garments and produces unreliable results on bag
-// images (auto-classification places a tote-shaped silhouette on
-// the torso at worst, no visible change at best). Real bag
-// placement needs a two-image inpainting / compositing path that
-// understands "place this product in her hand or over her shoulder"
-// rather than "swap this onto her body."
+// Subcategories the FASHN chain (Stage 1) will render onto the
+// person. Worn garments only.
 const CHAINABLE_SUBCATEGORIES = new Set<string>([
   "tops",
   "bottoms",
   "dresses",
+]);
+
+// Subcategories handled by Stage 2 (compositing via FLUX Kontext on
+// the Stage 1 result). Held / draped accessories only. Bags first;
+// future expansions could add belts, scarves, hats, sunglasses
+// (each would need its own placement prompt).
+const STAGE2_SUBCATEGORIES = new Set<string>(["bags"]);
+
+// All renderable subcategories. Any item whose category is in this
+// set passes the route's filter; items NOT in this set (shoes,
+// jewelry, beauty, home, outerwear, swim, other) stay in the items
+// array for shoppability but get skipped entirely. Mirrors
+// TRYON_ELIGIBLE_CATEGORIES in src/app/_tryon/TryOnGrid.tsx so a
+// naive client can't bypass the rule.
+const RENDERABLE_SUBCATEGORIES = new Set<string>([
+  ...CHAINABLE_SUBCATEGORIES,
+  ...STAGE2_SUBCATEGORIES,
 ]);
 
 // Map our internal subcategory taxonomy to FASHN tryon-v1.6's
@@ -401,48 +405,61 @@ export async function runRender(args: {
     };
   }
 
-  // Split into chainable vs skipped. We log the skipped set so the
-  // user-facing "your outfit" includes the visible pieces but the
-  // chain only spends FASHN credits on what FASHN can actually
-  // render. Items without a category (legacy callers) default to
-  // chainable so we don't silently drop a single-item Try-On.
-  const chainable: { image_url: string; category: string | null }[] = [];
+  // Two-stage split:
+  //   Stage 1 garments (CHAINABLE_SUBCATEGORIES): chained through
+  //     FASHN. Each pass takes the previous output as model_image.
+  //   Stage 2 bags (STAGE2_SUBCATEGORIES): composited onto the
+  //     Stage 1 result via FLUX Kontext (see bagPlacement.ts).
+  //     Each bag is a separate Replicate call layered onto the
+  //     running image.
+  //   Skipped (everything else): kept in the items array for
+  //     shoppability, but never sent to any model.
+  //
+  // Items without a category (legacy callers / single Try-On where
+  // the client knows it's eligible) default to Stage 1 garments so
+  // the call path stays compatible.
+  const garments: { image_url: string; category: string | null }[] = [];
+  const bags: { image_url: string; category: string | null }[] = [];
   const skipped: { image_url: string; category: string | null }[] = [];
   for (const it of args.items) {
-    if (it.category && !CHAINABLE_SUBCATEGORIES.has(it.category)) {
-      skipped.push(it);
+    if (it.category && STAGE2_SUBCATEGORIES.has(it.category)) {
+      bags.push(it);
+    } else if (!it.category || CHAINABLE_SUBCATEGORIES.has(it.category)) {
+      garments.push(it);
     } else {
-      chainable.push(it);
+      skipped.push(it);
     }
   }
   if (skipped.length > 0) {
     console.log(
-      `[render] skipping ${skipped.length} non-chainable item(s) from FASHN chain: [${skipped
+      `[render] skipping ${skipped.length} non-renderable item(s): [${skipped
         .map((s) => s.category ?? "?")
         .join(", ")}]`
     );
   }
-  if (chainable.length === 0) {
-    // Every item was skipped (e.g. an outfit of only shoes). Return
-    // a clean failure so the route surfaces "no_items" semantics.
+  if (garments.length === 0 && bags.length === 0) {
     return {
       ok: false,
       error: {
         kind: "garment_unsupported",
-        message: `no chainable items: all ${args.items.length} were non-chainable categories`,
+        message: `no renderable items: all ${args.items.length} were skipped categories`,
       },
     };
   }
 
-  // Chain VTON calls, feeding each output back in as the next
-  // model_image. For single-item renders this loop runs once; the
-  // result is the FASHN/Replicate output directly.
+  // -------- Stage 1: garment chain via FASHN -----------------------
+  // Each pass output becomes the next pass's model_image. For a
+  // bag-only outfit (0 garments) Stage 1 is a no-op and Stage 2
+  // composites onto the user's normalized canvas directly per
+  // JD's spec ("Always a FASHN-quality person underneath first" -
+  // the canvas IS the FASHN-quality person from upload-time
+  // normalization).
   let workingPerson = args.personBuffer;
   let workingMime = args.personMime;
-  let lastResult: VtonResult | null = null;
+  let stage1Provider: "fashn" | "replicate" | "canvas" = "canvas";
 
-  for (let i = 0; i < chainable.length; i++) {
-    const it = chainable[i];
+  for (let i = 0; i < garments.length; i++) {
+    const it = garments[i];
     const fashnCat = fashnCategoryFor(it.category);
     const r = await tryOn({
       personBuffer: workingPerson,
@@ -454,12 +471,8 @@ export async function runRender(args: {
 
     if (!r.ok) {
       console.error(
-        `[render] vton item ${i + 1}/${chainable.length} (${it.category ?? "?"} -> ${fashnCat}) failed reason=${r.reason} detail=${r.detail}`
+        `[render] stage1 garment ${i + 1}/${garments.length} (${it.category ?? "?"} -> ${fashnCat}) failed reason=${r.reason} detail=${r.detail}`
       );
-      // Map VtonFailureReason -> RunRenderError.kind. The route
-      // turns moderation_blocked into a 422 with a specific user
-      // message; the others all become a generic 500 with no
-      // credit consumed.
       return {
         ok: false,
         error: {
@@ -470,31 +483,61 @@ export async function runRender(args: {
     }
 
     console.log(
-      `[render] vton item ${i + 1}/${chainable.length} (${it.category ?? "?"} -> ${fashnCat}) ok provider=${r.provider} runtime=${r.runtimeMs}ms${r.creditsUsed != null ? ` credits=${r.creditsUsed}` : ""}`
+      `[render] stage1 garment ${i + 1}/${garments.length} (${it.category ?? "?"} -> ${fashnCat}) ok provider=${r.provider} runtime=${r.runtimeMs}ms${r.creditsUsed != null ? ` credits=${r.creditsUsed}` : ""}`
     );
 
-    // Output of this call becomes input to the next. Mime is always
-    // image/png because FASHN/Replicate hand us PNGs.
     workingPerson = r.pngBuffer;
     workingMime = "image/png";
-    lastResult = r;
+    stage1Provider = r.provider;
   }
 
-  if (!lastResult || !lastResult.ok) {
-    return {
-      ok: false,
-      error: { kind: "error", message: "no VTON result produced" },
-    };
+  // -------- Stage 2: bag composite via FLUX Kontext ---------------
+  // Each bag is layered onto the running image. If a bag step
+  // fails, log the failure and KEEP the pre-bag image: the user
+  // gets a valid render (just without that bag) instead of a hard
+  // failure. Per JD's spec: "If Stage 2 fails or is low confidence,
+  // return the Stage 1 FASHN image without the bag rather than a
+  // broken render (no credit charged for the bag step on failure)."
+  // The render credit is consumed once total at the route level;
+  // bag-step failures don't add a separate charge.
+  for (let i = 0; i < bags.length; i++) {
+    const it = bags[i];
+    const result = await placeBag({
+      baseImageBuffer: workingPerson,
+      bagImageUrl: it.image_url,
+    });
+    if (!result.ok) {
+      console.warn(
+        `[render] stage2 bag ${i + 1}/${bags.length} failed reason=${result.reason} detail=${result.detail} (keeping pre-bag image)`
+      );
+      // Skip just this bag; continue with remaining bags on the
+      // pre-bag image. Multi-bag outfits aren't a thing today
+      // (slot map enforces one bag) but the loop is defensive.
+      continue;
+    }
+    console.log(
+      `[render] stage2 bag ${i + 1}/${bags.length} ok runtime=${result.runtimeMs}ms`
+    );
+    workingPerson = result.pngBuffer;
+    workingMime = "image/png";
   }
+
+  // Final image is the workingPerson after both stages. Provider
+  // tag for the route caller reflects Stage 1's source (the bag
+  // step is additive; the canonical "who made this" is the FASHN
+  // /  Replicate VTON or the canvas itself).
+  const finalProvider: "fashn" | "replicate" =
+    stage1Provider === "canvas" ? "fashn" : stage1Provider;
 
   // Place onto the share-card canvas inside the safe inner band,
   // then composite the overlay. The placeOnSafeCanvas + applyBranding
   // pair is the only post-processing we do; everything else (identity,
-  // pose, hair, background) comes from the VTON output unchanged.
+  // pose, hair, background) comes from the Stage 1 + Stage 2 output
+  // unchanged.
   try {
-    const placed = await placeOnSafeCanvas(lastResult.pngBuffer);
+    const placed = await placeOnSafeCanvas(workingPerson);
     const branded = await applyBranding(placed);
-    return { ok: true, pngBuffer: branded, provider: lastResult.provider };
+    return { ok: true, pngBuffer: branded, provider: finalProvider };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error("[render] branding failed:", msg);
