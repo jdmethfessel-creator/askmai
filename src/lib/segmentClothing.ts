@@ -58,7 +58,16 @@ const EDITABLE_CLASSES = new Set<string>([
   "Scarf",
 ]);
 
-const HEAD_PRESERVE_CLASSES = new Set<string>(["Face", "Hair"]);
+// "Neck" is included as a belt-and-suspenders: SegFormer-B2's ATR
+// taxonomy (Background, Hat, Hair, Sunglasses, Upper-clothes, Skirt,
+// Pants, Dress, Belt, Left-shoe, Right-shoe, Face, Left-leg,
+// Right-leg, Left-arm, Right-arm, Bag, Scarf) has NO "Neck" label in
+// the 18-class set, so this is a no-op against the current model.
+// Kept here in case a future fine-tune emits it; the actual seam
+// push-down lives in render.ts as a downward dilation of the
+// Face+Hair mask, since the model just labels neck pixels as
+// Face or Background.
+const HEAD_PRESERVE_CLASSES = new Set<string>(["Face", "Hair", "Neck"]);
 
 const MIN_COVERAGE_PCT = 5;
 const MAX_COVERAGE_PCT = 90;

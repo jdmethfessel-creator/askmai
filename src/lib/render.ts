@@ -370,6 +370,36 @@ const ALIGNED_AREA_DELTA = 0.15;
 // visibly wrong-sized head; we engage the scale path.
 const SCALE_TRIGGER_AREA_DELTA = 0.15;
 
+// ---- Seam-blend tunables -------------------------------------------
+//
+// Standard deviation (pixels) of the Gaussian feather applied to the
+// head mask before it becomes the composite alpha channel. Larger =
+// softer fade across the seam, but the user's pixels also become
+// translucent further from the head center (risk: "ghost" head).
+// Bumped from the original inline 8 to 14 to widen the fade band at
+// 1024x1536 (~84 px transition vs the prior ~48 px), softening the
+// visible chest-line seam that surfaced after the alignment fix.
+const HEAD_COMPOSITE_FEATHER_SIGMA = 14;
+
+// SegFormer-B2's ATR-trained class set doesn't include a "Neck"
+// label, so the Face+Hair mask cuts at the jawline. After the
+// alignment fix, the visible seam is at the chin where user-face
+// pixels meet AI-body neck/chest pixels with mismatched tone.
+//
+// Downward dilation extends the bottom edge of the head mask by N
+// pixels per column so the boundary moves DOWN, ideally past the
+// garment collar in the model's output. The pasted region then
+// includes the user's actual neck pixels, so the tone transition
+// happens above the garment line where it can hide. The feather
+// blur runs AFTER the dilation, so the extended bottom edge is also
+// softly faded.
+//
+// Trade-off: if the user's pose and the AI's pose put the neck at
+// different angles or widths, the extended patch may misregister at
+// its edges. Keep this modest. Tune if Try-On evidence shows the
+// extension overshooting into the garment.
+const HEAD_COMPOSITE_DOWNWARD_DILATION_PX = 30;
+
 /**
  * Classifies the input/output head bbox relationship into one of
  * the four response modes above. Drives the composite branch.
@@ -416,15 +446,61 @@ function classifyHeadAlignment(
 }
 
 /**
+ * In-place downward dilation of a binary mask. For each column x,
+ * finds the bottommost positive pixel and sets the N pixels directly
+ * below it to 255 (clipped to canvas). Used to push the head mask
+ * boundary down past the chin so the seam lands under the garment
+ * collar instead of crossing open chest skin.
+ *
+ * Cost: O(W*H) single pass to locate per-column bottoms + O(W*N) to
+ * fill. Cheap relative to a sharp/SegFormer call.
+ *
+ * Mutates the input buffer.
+ */
+function dilateMaskDown(
+  mask: Buffer,
+  width: number,
+  height: number,
+  dilatePx: number
+): void {
+  if (dilatePx <= 0) return;
+  // Walk each column from the bottom up to find the lowest positive
+  // row; remember it. Then write 255 into the dilatePx rows directly
+  // below. Done as a single pass per column.
+  for (let x = 0; x < width; x++) {
+    let bottomY = -1;
+    for (let y = height - 1; y >= 0; y--) {
+      if (mask[y * width + x] > 127) {
+        bottomY = y;
+        break;
+      }
+    }
+    if (bottomY < 0) continue;
+    const fillEnd = Math.min(height - 1, bottomY + dilatePx);
+    for (let y = bottomY + 1; y <= fillEnd; y++) {
+      mask[y * width + x] = 255;
+    }
+  }
+}
+
+/**
  * Build the feathered alpha PNG used as the head-composite mask.
  *
  * Input: the raw 1-channel binary head mask from SegFormer (255 in
  * Face+Hair, 0 elsewhere).
  *
+ * Pipeline:
+ *   1. Copy the input mask (we mutate during dilation).
+ *   2. Dilate the bottom edge downward by
+ *      HEAD_COMPOSITE_DOWNWARD_DILATION_PX so the seam pushes past
+ *      the chin into the user's neck/collar region.
+ *   3. Gaussian-blur the dilated mask with sigma
+ *      HEAD_COMPOSITE_FEATHER_SIGMA so the new bottom edge fades
+ *      softly into the AI body instead of cutting sharply.
+ *
  * Output: a PNG of an alpha-only image at the same dimensions where
- * the Face+Hair region is fully opaque (alpha=255) and edges feather
- * to transparent over a few pixels. Sharp's Gaussian blur on the
- * raw 1-channel buffer is the cheap way to achieve the feather.
+ * the head region is fully opaque (alpha=255) and edges feather to
+ * transparent.
  */
 async function buildFeatheredHeadOverlay(args: {
   normalizedPerson: Buffer;
@@ -463,16 +539,24 @@ async function buildFeatheredHeadOverlay(args: {
     );
   }
 
-  // Feather the binary mask. Sigma chosen to span ~8 pixels across the
-  // boundary, producing a soft neckline gradient at 1024x1536 without
-  // bleeding too far into the clothing area. .extractChannel(0) forces
-  // the raw output to a single channel — without it sharp's blur emits
-  // 3 identical channels (W*H*3 bytes) and the downstream byte-write
-  // loop reads at the wrong stride.
-  const featheredAlpha = await sharp(args.headMaskRaw, {
+  // Copy first so we don't mutate the caller's buffer when we apply
+  // the downward dilation. The dilation extends the bottom edge of
+  // the head mask past the chin into the user's neck/collar region,
+  // so the post-blur seam lands somewhere the garment can hide it
+  // rather than crossing open chest skin.
+  const dilated = Buffer.from(args.headMaskRaw);
+  dilateMaskDown(dilated, W, H, HEAD_COMPOSITE_DOWNWARD_DILATION_PX);
+
+  // Feather the (now downward-dilated) mask. Sigma is tunable via
+  // HEAD_COMPOSITE_FEATHER_SIGMA so the blend band can be widened
+  // without a code dive. .extractChannel(0) forces the raw output to
+  // a single channel — without it sharp's blur emits 3 identical
+  // channels (W*H*3 bytes) and the downstream byte-write loop reads
+  // at the wrong stride.
+  const featheredAlpha = await sharp(dilated, {
     raw: { width: W, height: H, channels: 1 },
   })
-    .blur(8)
+    .blur(HEAD_COMPOSITE_FEATHER_SIGMA)
     .extractChannel(0)
     .raw()
     .toBuffer();
