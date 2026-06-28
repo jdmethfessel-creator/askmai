@@ -5,10 +5,26 @@
  * Read-only; no auth required. (The gated action is POST /api/render
  * via the Try-On button; that endpoint runs its own session check.)
  *
+ * Ordering: round-robin across source_networks (fwrd, shopbop, revolve,
+ * shopmy) so every screen surfaces a mix. The first page contains at
+ * least one row from each non-empty network (assuming a creator has
+ * 4+ rows). Within each network, rows are ordered DESC by
+ * (created_at, id) so same-timestamp seed-chunk batches don't drop
+ * rows across pages.
+ *
+ * Why round-robin: the seed ingest inserts each network in chunks of
+ * 200 rows, each chunk getting the same created_at via Postgres'
+ * now() default. A naive ORDER BY created_at DESC therefore buries
+ * the smaller networks at the END of pagination (e.g. shopbop+revolve
+ * ended up after ~840 fwrd rows). Interleaving fixes the symptom
+ * without rewriting seed timestamps or breaking pagination.
+ *
  * Query params:
  *   limit       (default 40, max 100) page size
- *   cursor      ISO string from a previous response's nextCursor; rows
- *               with created_at < cursor. Omit on first page.
+ *   cursor      base64url-encoded JSON: per-network { ts, id } tuple
+ *               recording the last-served (created_at, id) per network.
+ *               Old-shape cursors (bare ISO string) decode to "no
+ *               cursor" — clients refresh-friendly without errors.
  *   subcategory exact match against creator_products.product_subcategory
  *               ('dresses', 'tops', ...). Special value 'all' or absent
  *               means no category filter. This comes from the pill bar
@@ -269,52 +285,105 @@ type Product = {
   product_subcategory: string | null;
 };
 
-async function fetchPage(opts: PageOpts): Promise<{
-  rows: Product[];
-  nextCursor: string | null;
-}> {
+// Networks the round-robin visits, in priority order. Picking from
+// left to right each pass means the first row of every page comes
+// from `fwrd` (largest catalog), then `shopbop`, etc. Adding a new
+// network is a one-line append here; the cursor shape adapts
+// automatically.
+const ROUND_ROBIN_NETWORKS = ["fwrd", "shopbop", "revolve", "shopmy"] as const;
+type Network = (typeof ROUND_ROBIN_NETWORKS)[number];
+type NetworkCursor = { ts: string; id: string };
+type InterleaveCursor = Partial<Record<Network, NetworkCursor>>;
+
+const SELECT_COLS =
+  "id, source_network, product_title, brand, price, price_display, image_url, affiliate_url, product_category, product_subcategory, created_at";
+
+function decodeInterleaveCursor(raw: string | null): InterleaveCursor {
+  if (!raw) return {};
+  try {
+    const json = Buffer.from(raw, "base64url").toString("utf8");
+    const obj = JSON.parse(json);
+    if (!obj || typeof obj !== "object") return {};
+    const out: InterleaveCursor = {};
+    for (const net of ROUND_ROBIN_NETWORKS) {
+      const v = (obj as Record<string, unknown>)[net];
+      if (
+        v &&
+        typeof v === "object" &&
+        typeof (v as NetworkCursor).ts === "string" &&
+        typeof (v as NetworkCursor).id === "string"
+      ) {
+        out[net] = { ts: (v as NetworkCursor).ts, id: (v as NetworkCursor).id };
+      }
+    }
+    return out;
+  } catch {
+    // Old-shape cursors (bare ISO string from the pre-interleave API)
+    // land here. Treat as "no cursor" so the next request restarts the
+    // round-robin from the top; better than a 500.
+    return {};
+  }
+}
+
+function encodeInterleaveCursor(c: InterleaveCursor): string | null {
+  if (Object.keys(c).length === 0) return null;
+  return Buffer.from(JSON.stringify(c)).toString("base64url");
+}
+
+/**
+ * Per-network fetch. Pulls up to `limit` rows in DESC (created_at, id)
+ * order, applying the same subcategory / price / descriptor filters as
+ * the overall request. The tuple-cursor `(ts, id) < (cursor.ts, cursor.id)`
+ * is exact: same-timestamp rows that the seed inserts as a batch are
+ * paginated cleanly across pages, no drops, no dupes. (The pre-
+ * interleave code used `lt(created_at)` only, which silently dropped
+ * up to ~3 rows per chunk boundary.)
+ */
+async function fetchOneNetwork(args: {
+  creatorId: string;
+  network: Network;
+  perLimit: number;
+  cursor: NetworkCursor | undefined;
+  effectiveSubcategory: string | null;
+  maxPrice: number | null;
+  descriptors: string[];
+}): Promise<{ rows: Array<Product & { created_at: string }>; mayHaveMore: boolean }> {
   const admin = supabaseAdmin();
   let query = admin
     .from("creator_products")
-    .select(
-      "id, source_network, product_title, brand, price, price_display, image_url, affiliate_url, product_category, product_subcategory, created_at"
-    )
-    .eq("creator_id", opts.creatorId)
+    .select(SELECT_COLS)
+    .eq("creator_id", args.creatorId)
+    .eq("source_network", args.network)
     .order("created_at", { ascending: false })
     .order("id", { ascending: false })
-    .limit(opts.limit + 1);
+    .limit(args.perLimit);
 
-  if (opts.cursor) query = query.lt("created_at", opts.cursor);
-
-  // Pill wins when set; otherwise fall back to parsed subcategory.
-  const effectiveSubcategory =
-    opts.pillSubcategory ?? opts.parsedSubcategory ?? null;
-  if (effectiveSubcategory) {
-    query = query.eq("product_subcategory", effectiveSubcategory);
+  if (args.cursor) {
+    // Tuple cursor (created_at, id) < (cursor.ts, cursor.id). PostgREST
+    // doesn't expose row-value comparison; we expand it as
+    //   created_at < cursor.ts  OR  (created_at = cursor.ts AND id < cursor.id)
+    // The .or() string treats commas as separators, so the AND clause
+    // is wrapped in and(...) per PostgREST syntax.
+    query = query.or(
+      `created_at.lt.${args.cursor.ts},and(created_at.eq.${args.cursor.ts},id.lt.${args.cursor.id})`
+    );
   }
 
-  if (opts.maxPrice != null) {
+  if (args.effectiveSubcategory) {
+    query = query.eq("product_subcategory", args.effectiveSubcategory);
+  }
+
+  if (args.maxPrice != null) {
     // Honor the chat app's budget-target convention: a stated price
-    // is a soft ceiling and 10% over is fine. Without this the parser
-    // ceiling would be stricter than the chat experience.
-    const softCeiling = Math.round(opts.maxPrice * 1.1);
+    // is a soft ceiling and 10% over is fine.
+    const softCeiling = Math.round(args.maxPrice * 1.1);
     query = query.lte("price", softCeiling);
   }
 
-  // Descriptors: match each against title OR brand OR affiliate_url,
-  // with word/path boundaries so "red" does NOT match "shirred" or
-  // "redhead". POSIX `imatch` (~*) carries word-boundary anchors
-  // \m..\M for the text fields; the URL slug uses hyphen/slash/
-  // question-mark delimiters around the colorway segment
-  // ("-in-red/", "-in-red-other/", "-in-red?").
-  //
-  // Multiple descriptors AND together (a "black silk top" must have
-  // BOTH black AND silk somewhere across those three fields).
-  //
-  // Sanitize each descriptor down to alphanumerics so a stray regex
-  // metacharacter can't slip into the pattern from caller input.
-  if (opts.descriptors.length) {
-    for (const d of opts.descriptors) {
+  // Descriptors match each against title OR brand OR affiliate_url
+  // with word/path boundaries (POSIX imatch). See top-level docs.
+  if (args.descriptors.length) {
+    for (const d of args.descriptors) {
       const safe = d.replace(/[^a-z0-9]/gi, "").slice(0, 40);
       if (!safe) continue;
       query = query.or(
@@ -325,13 +394,94 @@ async function fetchPage(opts: PageOpts): Promise<{
 
   const { data, error } = await query;
   if (error) {
-    console.error("[tryon-grid/products] query error:", error);
-    return { rows: [], nextCursor: null };
+    console.error(
+      `[tryon-grid/products] ${args.network} fetch error:`,
+      error
+    );
+    return { rows: [], mayHaveMore: false };
   }
-  const data2 = data ?? [];
-  const hasMore = data2.length > opts.limit;
-  const page = hasMore ? data2.slice(0, opts.limit) : data2;
-  const nextCursor = hasMore ? page[page.length - 1].created_at : null;
-  const rows = page.map(({ created_at: _c, ...rest }) => rest) as Product[];
-  return { rows, nextCursor };
+  const rows = (data ?? []) as Array<Product & { created_at: string }>;
+  // If the fetch hit the per-network limit, DB may still have more
+  // rows of this network past the last one fetched.
+  return { rows, mayHaveMore: rows.length === args.perLimit };
+}
+
+async function fetchPage(opts: PageOpts): Promise<{
+  rows: Product[];
+  nextCursor: string | null;
+}> {
+  const cursor = decodeInterleaveCursor(opts.cursor);
+  const effectiveSubcategory =
+    opts.pillSubcategory ?? opts.parsedSubcategory ?? null;
+
+  // Per-network overfetch budget. The round-robin pulls one row from
+  // each network in rotation, so each network contributes roughly
+  // `limit / networks` rows per page. Multiply by 1.5 and add 1 so a
+  // network that runs short doesn't starve the page; the extras stay
+  // in memory for this request and inform mayHaveMore.
+  const perLimit =
+    Math.ceil((opts.limit * 1.5) / ROUND_ROBIN_NETWORKS.length) + 1;
+
+  // Fire all per-network queries in parallel.
+  const results = await Promise.all(
+    ROUND_ROBIN_NETWORKS.map((net) =>
+      fetchOneNetwork({
+        creatorId: opts.creatorId,
+        network: net,
+        perLimit,
+        cursor: cursor[net],
+        effectiveSubcategory,
+        maxPrice: opts.maxPrice,
+        descriptors: opts.descriptors,
+      }).then((r) => ({ net, ...r }))
+    )
+  );
+  const state = new Map<
+    Network,
+    { rows: Array<Product & { created_at: string }>; mayHaveMore: boolean }
+  >();
+  for (const r of results) {
+    state.set(r.net, { rows: r.rows, mayHaveMore: r.mayHaveMore });
+  }
+
+  // Round-robin pick. Visit each network in priority order; if the
+  // queue has rows, pop one. Continue passes until we hit the page
+  // limit or every queue is empty.
+  const picked: Array<Product & { created_at: string }> = [];
+  const advanced: InterleaveCursor = {};
+  outer: while (picked.length < opts.limit) {
+    let progress = false;
+    for (const net of ROUND_ROBIN_NETWORKS) {
+      const s = state.get(net);
+      if (!s || s.rows.length === 0) continue;
+      const row = s.rows.shift()!;
+      picked.push(row);
+      advanced[net] = { ts: row.created_at, id: row.id };
+      progress = true;
+      if (picked.length === opts.limit) break outer;
+    }
+    if (!progress) break;
+  }
+
+  // Build next cursor: carry forward each network's input cursor,
+  // overlaid with any advances from this page. A network that did not
+  // advance keeps its prior position so the next page picks up exactly
+  // where it left off (or never started, for empty networks).
+  const newCursor: InterleaveCursor = { ...cursor, ...advanced };
+
+  // A network has more if its queue still has unconsumed rows OR if
+  // its initial fetch hit perLimit (DB likely has more past the last
+  // fetched row). When every network is exhausted, nextCursor=null and
+  // the grid stops paginating.
+  const anyMore = ROUND_ROBIN_NETWORKS.some((net) => {
+    const s = state.get(net);
+    if (!s) return false;
+    return s.rows.length > 0 || s.mayHaveMore;
+  });
+
+  const rows = picked.map(({ created_at: _c, ...rest }) => rest) as Product[];
+  return {
+    rows,
+    nextCursor: anyMore ? encodeInterleaveCursor(newCursor) : null,
+  };
 }
