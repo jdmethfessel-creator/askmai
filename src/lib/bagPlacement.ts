@@ -1,4 +1,30 @@
 /**
+ * PARKED (2026-06-28). The bag-placement path is wired but not
+ * reachable: STAGE2_SUBCATEGORIES in src/lib/render.ts is currently
+ * empty and TRYON_ELIGIBLE_CATEGORIES in TryOnGrid omits "bags",
+ * so this function is not invoked at runtime. Kept intact for a
+ * future attempt.
+ *
+ * Why parked: FLUX Kontext multi-image-kontext-max consistently
+ * produced unusable renders. Bag transfer FIDELITY was correct (the
+ * actual catalog bag rendered with matching color/hardware/shape),
+ * but the model posed the person holding the bag flat toward the
+ * camera (product-demo pose) and warped the body + background. The
+ * prompt's "preserve image 1's person identity, face, hair, body,
+ * clothing, lighting, and background exactly" instruction did not
+ * hold against FLUX's default behavior of restaging the scene
+ * around the inserted subject.
+ *
+ * To revive: would need either (a) much tighter pose control (e.g.
+ * constrain hand/arm position via control-net-style guidance,
+ * or a model with explicit "do not change the person" steering),
+ * or (b) a different approach entirely (mask-based inpainting on
+ * a known hand region, or a 3D-aware composition model that
+ * respects the input scene). Re-enable by adding "bags" back to
+ * STAGE2_SUBCATEGORIES and TRYON_ELIGIBLE_CATEGORIES.
+ *
+ * ---
+ *
  * Stage 2 of the try-on pipeline: composite a specific catalog bag
  * onto an already-rendered Stage 1 image.
  *

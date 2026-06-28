@@ -83,22 +83,24 @@ type RenderResult =
   | { state: "blocked"; product: Product; reason: BlockReason };
 
 // Per-card eligibility for the body-render Try-On button. Items in
-// these subcategory buckets reach the server's two-stage render
-// path. Everything else (shoes, jewelry, accessories, beauty,
+// these subcategory buckets reach the server's render path.
+// Everything else (shoes, bags, jewelry, accessories, beauty,
 // home, etc.) shows Shop only.
 //
 // Routing on the server (see src/lib/render.ts):
 //   tops/bottoms/dresses -> Stage 1: FASHN tryon-v1.6 chained
-//   bags                  -> Stage 2: FLUX Kontext bag-placement
-//                            composited onto the Stage 1 result
-//                            (see src/lib/bagPlacement.ts). If
-//                            the outfit has no garments, Stage 1
-//                            is the user's normalized canvas and
-//                            Stage 2 layers the bag on that.
 //
-// Shoes intentionally excluded: FASHN has no shoe category and
-// shoe placement needs different geometry (feet, ground plane);
-// not in scope for either stage today.
+// Notable parked categories (code paths intact, just unreachable):
+//   bags: FLUX Kontext multi-image-kontext-max placement was
+//     attempted (see src/lib/bagPlacement.ts) but FLUX consistently
+//     posed the person holding the bag flat toward the camera
+//     (product-demo pose) and warped the body / background. Bag
+//     transfer fidelity itself was correct; pose control was the
+//     problem. Parked until we have either much tighter pose
+//     control (constrain the arm/hand pose) or a different
+//     approach.
+//   shoes: FASHN has no shoe category and shoe placement needs
+//     different geometry (feet, ground plane).
 //
 // Edit this constant to expand or contract the renderable set.
 // The server's RENDERABLE_SUBCATEGORIES in src/lib/render.ts
@@ -107,19 +109,18 @@ const TRYON_ELIGIBLE_CATEGORIES = new Set<string>([
   "tops",
   "bottoms",
   "dresses",
-  "bags",
 ]);
 
 // Outfit slot the product fills. One slot per item; the outfit
 // builder enforces uniqueness per slot and the dress/separates
-// conflict (dress excludes top+bottom). Bag is allowed alongside
-// any other slot (it's a held accessory, not a worn garment).
-type OutfitSlot = "top" | "bottom" | "dress" | "bag";
+// conflict (dress excludes top+bottom). The "bag" slot was here
+// when bags were renderable; parked along with the FLUX Kontext
+// bag placement (see TRYON_ELIGIBLE_CATEGORIES above).
+type OutfitSlot = "top" | "bottom" | "dress";
 const SUBCATEGORY_TO_SLOT: Record<string, OutfitSlot> = {
   tops: "top",
   bottoms: "bottom",
   dresses: "dress",
-  bags: "bag",
 };
 
 const MAX_OUTFIT_ITEMS = 3;
@@ -407,8 +408,8 @@ export default function TryOnGrid({
   const clearOutfit = useCallback(() => setOutfit({}), []);
 
   const outfitItems = useMemo(() => {
-    // Stable display order in the tray: top, bottom, dress, bag.
-    const order: OutfitSlot[] = ["top", "bottom", "dress", "bag"];
+    // Stable display order in the tray: top, bottom, dress.
+    const order: OutfitSlot[] = ["top", "bottom", "dress"];
     return order
       .map((s) => outfit[s])
       .filter((p): p is Product => Boolean(p));

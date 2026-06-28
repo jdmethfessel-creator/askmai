@@ -343,16 +343,20 @@ const CHAINABLE_SUBCATEGORIES = new Set<string>([
   "dresses",
 ]);
 
-// Subcategories handled by Stage 2 (compositing via FLUX Kontext on
-// the Stage 1 result). Held / draped accessories only. Bags first;
-// future expansions could add belts, scarves, hats, sunglasses
-// (each would need its own placement prompt).
-const STAGE2_SUBCATEGORIES = new Set<string>(["bags"]);
+// Subcategories handled by Stage 2 (compositing via FLUX Kontext
+// on the Stage 1 result). Empty for now: bags were the first
+// candidate but the model placed them in a "product demo" pose
+// (held flat toward camera) and warped the person / background.
+// The Stage 2 plumbing + src/lib/bagPlacement.ts stay intact so a
+// future attempt (tighter pose control, or a different approach)
+// can re-add bags here without re-wiring the route. See the
+// commit reverting bags for the full reasoning trail.
+const STAGE2_SUBCATEGORIES = new Set<string>([]);
 
 // All renderable subcategories. Any item whose category is in this
 // set passes the route's filter; items NOT in this set (shoes,
-// jewelry, beauty, home, outerwear, swim, other) stay in the items
-// array for shoppability but get skipped entirely. Mirrors
+// bags, jewelry, beauty, home, outerwear, swim, other) stay in the
+// items array for shoppability but get skipped entirely. Mirrors
 // TRYON_ELIGIBLE_CATEGORIES in src/app/_tryon/TryOnGrid.tsx so a
 // naive client can't bypass the rule.
 const RENDERABLE_SUBCATEGORIES = new Set<string>([
