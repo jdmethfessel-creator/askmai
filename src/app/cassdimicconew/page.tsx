@@ -1,31 +1,31 @@
 /**
- * /cassdimicconew: unified creator page with two modes:
+ * /cassdimicconew: unified creator page with two modes (Shop / Ask).
  *
- *   ?mode=shop (default)  Try-on grid surface (TryOnGrid, the
- *                         Pinterest-style catalog with the new VTON
- *                         render pipeline behind every Try This On).
+ * Layout contract (per JD's spec):
+ *   ┌──────────────────────────────────────┐
+ *   │  [eyebrow line, mode-aware]          │   <-- shared header,
+ *   │  Cass DiMicco                        │       stays put when
+ *   │  [Shop]  [Ask]                       │       toggling.
+ *   ├──────────────────────────────────────┤
+ *   │                                      │
+ *   │   Shop body OR Ask body              │   <-- only this swaps
+ *   │   (category pills + grid)            │
+ *   │   (chat messages + input)            │
+ *   │                                      │
+ *   └──────────────────────────────────────┘
  *
- *   ?mode=ask             Chat surface (the existing creator chat,
- *                         which already POSTs to /api/render with
- *                         the same kind/items contract, so outfit
- *                         and single try-ons in Ask mode flow
- *                         through the same FASHN pipeline as Shop).
+ * The header (eyebrow + name + toggle) is owned by THIS page and
+ * persists across mode changes. TryOnGrid and Chat render only
+ * their body content; neither owns the creator name / toggle.
  *
- * The toggle persists the selection in the URL so it's shareable
- * and survives reload. ModeToggle is a thin client wrapper around
- * router.replace; the server reads searchParams.mode once on render.
+ * Mode persistence: ?mode=shop|ask (default shop). Toggle is a
+ * router.replace so the URL stays canonical and shareable; no
+ * full page reload, no scroll jump.
  *
- * Affiliate attribution is preserved byte-for-byte in BOTH modes:
- *  - Shop mode: TryOnGrid pulls affiliate_url straight from
- *    creator_products.affiliate_url with no rewriting.
- *  - Ask mode: Chat passes through whatever affiliate_url the AI
- *    response carried (sourced from the same catalog at prompt
- *    construction time). No Skimlinks, no link mangling.
- *
- * This page does NOT replace the existing /[slug] route; that one
- * stays chat-only for any creator without a dedicated try-on grid
- * (only Cass has one today). Static segments take routing priority
- * over the dynamic [slug] catch-all in Next's App Router.
+ * Affiliate attribution: preserved byte-for-byte in both modes
+ * (Shop pulls creator_products.affiliate_url; Ask passes through
+ * whatever affiliate_url the model response carried from the same
+ * catalog).
  */
 
 import type { Metadata } from "next";
@@ -55,6 +55,9 @@ const manrope = Manrope({
 
 const DEFAULT_ACCENT = "#a26a5a";
 
+const SUBTITLE_SHOP = "Search my closet and favorite finds";
+const SUBTITLE_ASK = "Ask me about my closet, routine, travel, and finds";
+
 export const metadata: Metadata = {
   title: "Cass DiMicco · AskMai",
   description:
@@ -74,10 +77,6 @@ export default async function Page({
   searchParams: { mode?: string };
 }) {
   const admin = supabaseAdmin();
-  // Chat needs a few extra fields the grid doesn't (theme accent for
-  // its modal, voice / taste-profile aren't read client-side but
-  // tolerating the column is cheaper than a second query). Select
-  // both grid + chat needs in one round-trip.
   const { data: creator } = await admin
     .from("creators")
     .select("id, slug, name, bio, theme")
@@ -101,21 +100,29 @@ export default async function Page({
       : null;
   const accent = themeAccent ?? DEFAULT_ACCENT;
   const creatorFirstName = typedCreator.name.trim().split(/\s+/)[0];
+  const subtitle = mode === "ask" ? SUBTITLE_ASK : SUBTITLE_SHOP;
 
   return (
     <div className={`${fraunces.variable} ${manrope.variable} tryon-root`}>
-      <div className="tryon-mode-wrap">
+      {/* Shared header. Same DOM in both modes so the eyebrow,
+          creator name, and toggle stay put across mode flips. */}
+      <header className="creator-page-header">
+        <div className="creator-page-eyebrow" key={mode}>
+          {subtitle}
+        </div>
+        <h1 className="creator-page-title">{typedCreator.name}</h1>
         <ModeToggle current={mode} />
-      </div>
-      {mode === "shop" ? (
-        <TryOnGrid
-          creatorSlug={typedCreator.slug}
-          creatorName={typedCreator.name}
-          creatorBio={typedCreator.bio ?? null}
-          signedIn={Boolean(session)}
-        />
-      ) : (
-        <div className="tryon-ask-shell">
+      </header>
+      {/* Body swaps based on mode. Both renders go into the same
+          width-constrained container so neither feels like a
+          separate "card." */}
+      <main className="creator-page-body">
+        {mode === "shop" ? (
+          <TryOnGrid
+            creatorSlug={typedCreator.slug}
+            signedIn={Boolean(session)}
+          />
+        ) : (
           <Chat
             slug={typedCreator.slug}
             accent={accent}
@@ -123,8 +130,8 @@ export default async function Page({
             signedIn={Boolean(session)}
             isSubscribed={session?.subscriptionStatus === "active"}
           />
-        </div>
-      )}
+        )}
+      </main>
     </div>
   );
 }

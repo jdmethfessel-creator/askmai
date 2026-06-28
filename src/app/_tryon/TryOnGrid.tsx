@@ -181,7 +181,7 @@ const REASON_COPY: Record<BlockReason, { title: string; body: string; cta?: { la
   },
   moderation_blocked: {
     title: "Safety filter caught this one",
-    body: "OpenAI's safety filter flagged this combination after generating it. It's probabilistic, so it can pass on a retry, or you can try a different garment or a different photo.",
+    body: "The render provider's safety filter flagged this combination. It's probabilistic, so a retry often passes; or try a different piece or a different photo.",
   },
   render_failed: {
     title: "Something went sideways",
@@ -193,13 +193,9 @@ const PAGE_SIZE = 40;
 
 export default function TryOnGrid({
   creatorSlug,
-  creatorName,
-  creatorBio,
   signedIn,
 }: {
   creatorSlug: string;
-  creatorName: string;
-  creatorBio: string | null;
   signedIn: boolean;
 }) {
   const [products, setProducts] = useState<Product[]>([]);
@@ -493,12 +489,10 @@ export default function TryOnGrid({
 
   return (
     <div className="tryon-page">
-      <header className="tryon-header">
-        <div className="tryon-header-eyebrow">Search my closet and favorite finds</div>
-        <h1 className="tryon-header-title">{creatorName}</h1>
-        {creatorBio ? <p className="tryon-header-bio">{creatorBio}</p> : null}
-      </header>
-
+      {/* Creator name + eyebrow + Shop/Ask toggle now live in the
+          page-level shared header (see src/app/cassdimicconew/page.tsx)
+          so the same DOM persists across mode flips. The body
+          starts at the category pills. */}
       <nav className="tryon-pills" aria-label="Filter by category">
         <button
           type="button"

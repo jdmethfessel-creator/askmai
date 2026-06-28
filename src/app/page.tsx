@@ -19,7 +19,7 @@ const manrope = Manrope({
 export const metadata: Metadata = {
   title: "AskMai",
   description:
-    "Each creator gets a branded AI twin that knows their real taste and recommends real products, with real links.",
+    "Every creator's voice, taste, and real picks in one chat. With real shoppable links.",
 };
 
 // The page reads the auth cookie via getServerSession so the nav

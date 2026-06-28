@@ -17,7 +17,7 @@
 
 const NOMINATIM = "https://nominatim.openstreetmap.org/search";
 const UA =
-  "AskMai/1.0 (creator AI shopping; contact hi@askmai.co)";
+  "AskMai/1.0 (creator shopping platform; contact hi@askmai.co)";
 
 export type PlaceLookupResult = {
   /** Display-ready "Neighborhood, City" or "City" string. Never blank. */
