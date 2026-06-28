@@ -67,32 +67,28 @@ const RENDER_SIGNED_URL_TTL_SECONDS = 60 * 60 * 24 * 7;
 
 const RENDER_BUCKET = "renders";
 
-// Pre-rendered branding assets. The wordmark ("AskMai") and the URL
-// ("www.askmai.co") are baked to PNG once at dev time using sharp's
-// text engine + the bundled Inter TTFs, then committed to the repo.
-// At runtime we ONLY composite the PNGs — never render text — so the
-// /api/render lambda has zero font / fontconfig dependency.
+// Pre-rendered share-card overlay. A single 1024x1536 RGBA PNG with
+// top + bottom gradient scrims, the Fraunces "AskMai" wordmark, and
+// the DM Sans "www.askmai.co" URL all baked in. Generated once at
+// dev time via scripts/generate-share-overlay.mjs (uses
+// @napi-rs/canvas + @fontsource/fraunces + @fontsource/dm-sans, all
+// devDependencies — never bundled into the runtime). The runtime
+// only composites this PNG over the rendered image; no text
+// rendering, no fontconfig, no system-font dependency.
 //
-// Why this matters: the Vercel serverless runtime has no fontconfig
-// default config and no system fonts. sharp.text() with fontfile=
-// works locally (libvips finds the file via the fontfile hint) but
-// fails on the deployed lambda where Pango can't resolve the family
-// description even with fontfile= present. Reproducing that failure
-// in dev is hard, so the safe pattern is: do all text work at dev
-// time, ship raster output.
+// Because every string ("AskMai", "www.askmai.co") is baked into
+// the raster, there is no runtime substitution path — no foreign
+// string can leak into the overlay.
 //
-// The strings ("AskMai" and "www.askmai.co") are baked into the PNG
-// data — no runtime string substitution path, so no foreign string
-// (e.g. a storage hostname from anywhere else in the code) can ever
-// leak into the overlay.
-const WORDMARK_PNG_PATH = path.join(
+// The overlay is FIXED at 1024x1536. applyBranding asserts the
+// input image matches, so OPENAI_SIZE and overlay dimensions can
+// never silently diverge.
+const OVERLAY_PNG_PATH = path.join(
   process.cwd(),
-  "src/lib/render-assets/wordmark-askmai.png"
+  "src/lib/render-assets/askmai-share-overlay-1024x1536.png"
 );
-const URL_PNG_PATH = path.join(
-  process.cwd(),
-  "src/lib/render-assets/url-askmai-co.png"
-);
+const OVERLAY_WIDTH = 1024;
+const OVERLAY_HEIGHT = 1536;
 
 /**
  * Single fixed prompt for the gpt-image-1 /images/edits call. Locked
@@ -259,132 +255,50 @@ async function fetchItemBlob(
 }
 
 /**
- * Build a rounded-rect "pill" SVG sized to wrap a text block with
- * symmetric padding. Translucent black so white text stays legible on
- * any photo without dominating the composition. SVG is fine here:
- * sharp renders it as a vector primitive, no font path involved.
- *
- * Pill opacity is tuned for "magazine credit," not "watermark":
- * 0.22 reads as a refined overlay that supports the text rather
- * than a heavy black box.
+ * Lazy-cached pre-rendered share-card overlay. The buffer lives in
+ * memory for the lifetime of the lambda after the first render, so
+ * subsequent renders pay zero disk I/O. fs.readFile resolves the
+ * path Next.js' file tracer pinned via outputFileTracingIncludes.
  */
-function pillSvg(width: number, height: number): Buffer {
-  const radius = Math.round(height / 2);
-  return Buffer.from(
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><rect x="0" y="0" width="${width}" height="${height}" rx="${radius}" ry="${radius}" fill="black" fill-opacity="0.22"/></svg>`
-  );
-}
+let cachedOverlay: Buffer | null = null;
 
-/**
- * Lazy-cached pre-rendered text PNGs. The buffers live in memory for
- * the lifetime of the lambda after the first render, so subsequent
- * renders pay zero disk I/O for the overlay. We use require-style
- * fs.readFile (not import) so Next.js' file tracer can statically
- * resolve the include via the outputFileTracingIncludes directive
- * in next.config.mjs.
- */
-let cachedWordmark: { buffer: Buffer; width: number; height: number } | null = null;
-let cachedUrl: { buffer: Buffer; width: number; height: number } | null = null;
-
-async function loadBrandingAsset(
-  filePath: string
-): Promise<{ buffer: Buffer; width: number; height: number }> {
+async function getOverlay(): Promise<Buffer> {
+  if (cachedOverlay) return cachedOverlay;
   const fs = await import("fs/promises");
-  const buf = await fs.readFile(filePath);
-  const meta = await sharp(buf).metadata();
-  return { buffer: buf, width: meta.width ?? 0, height: meta.height ?? 0 };
-}
-
-async function getWordmarkAsset() {
-  if (!cachedWordmark) {
-    cachedWordmark = await loadBrandingAsset(WORDMARK_PNG_PATH);
-  }
-  return cachedWordmark;
-}
-async function getUrlAsset() {
-  if (!cachedUrl) {
-    cachedUrl = await loadBrandingAsset(URL_PNG_PATH);
-  }
-  return cachedUrl;
+  cachedOverlay = await fs.readFile(OVERLAY_PNG_PATH);
+  return cachedOverlay;
 }
 
 /**
- * Composite the AskMai wordmark at top-center and www.askmai.co at
- * bottom-center, each behind a thin translucent pill for legibility.
+ * Composite the pre-baked share-card overlay onto the rendered
+ * image. The overlay is a 1024x1536 RGBA PNG containing both
+ * gradient edge scrims and the typography (Fraunces "AskMai"
+ * wordmark + DM Sans "www.askmai.co" URL), generated once at dev
+ * time via scripts/generate-share-overlay.mjs.
  *
- * No runtime text rendering. The wordmark and URL are pre-rendered
- * PNG assets (from src/lib/render-assets/) that get resized down to
- * fit the target image width and composited as raster overlays.
- * This removes every dependency on pango / fontconfig / system
- * fonts on the lambda — the only thing sharp does here is resize
- * and overlay, which has been rock-solid on Vercel since day one.
+ * Runtime work is a single composite call — no text rendering, no
+ * scrim drawing, no font dependency. The overlay's alpha channel
+ * carries the gradient scrim AND the white text together, so a
+ * single sharp.composite() drops it onto the photo in one pass.
  *
- * No cropping — the input PNG passes through at its full dimensions,
- * head to feet. Asset sizes scale to the input width so the overlay
- * looks the same whether the model returned 1024x1024 or 1024x1536.
+ * Guard: the overlay is FIXED at 1024x1536. We assert the input
+ * matches before compositing — if OPENAI_SIZE ever changes without
+ * regenerating the overlay (or the model returns an unexpected
+ * size), we fail closed with a clear error instead of silently
+ * letterboxing or stretching the brand.
  */
 async function applyBranding(pngBuffer: Buffer): Promise<Buffer> {
-  const img = sharp(pngBuffer);
-  const meta = await img.metadata();
-  const width = meta.width ?? 1024;
-  const height = meta.height ?? 1536;
-
-  // Load pre-rendered assets (cached after first call).
-  const wmRaw = await getWordmarkAsset();
-  const urlRaw = await getUrlAsset();
-
-  // Resize each asset to a target width that holds proportion across
-  // input sizes. Magazine-credit scale: 13% of image width for the
-  // wordmark, 17% for the URL. The pre-rendered sources are ~800px
-  // wide so resize-down to ~130-175px stays crisp.
-  const wordmarkTargetW = Math.round(width * 0.13);
-  const urlTargetW = Math.round(width * 0.17);
-
-  const wordmark = await sharp(wmRaw.buffer)
-    .resize({ width: wordmarkTargetW })
-    .png()
-    .toBuffer();
-  const url = await sharp(urlRaw.buffer)
-    .resize({ width: urlTargetW })
-    .png()
-    .toBuffer();
-  const wordmarkMeta = await sharp(wordmark).metadata();
-  const urlMeta = await sharp(url).metadata();
-  const wordmarkW = wordmarkMeta.width ?? wordmarkTargetW;
-  const wordmarkH = wordmarkMeta.height ?? 0;
-  const urlW = urlMeta.width ?? urlTargetW;
-  const urlH = urlMeta.height ?? 0;
-
-  // Pill padding tightened. Magazine credit, not banner.
-  const padX = Math.round(width * 0.022);
-  const padY = Math.round(width * 0.008);
-  const topPillW = wordmarkW + padX * 2;
-  const topPillH = wordmarkH + padY * 2;
-  const botPillW = urlW + padX * 2;
-  const botPillH = urlH + padY * 2;
-
-  // Inset from each edge. 1.8% of height keeps both labels tight to
-  // the top and bottom edges (not floating into the body of the
-  // image) while staying symmetrical.
-  const edgeMargin = Math.round(height * 0.018);
-
-  const topPillLeft = Math.round((width - topPillW) / 2);
-  const topPillTop = edgeMargin;
-  const topTextLeft = Math.round((width - wordmarkW) / 2);
-  const topTextTop = topPillTop + padY;
-
-  const botPillLeft = Math.round((width - botPillW) / 2);
-  const botPillTop = height - botPillH - edgeMargin;
-  const botTextLeft = Math.round((width - urlW) / 2);
-  const botTextTop = botPillTop + padY;
-
-  return img
-    .composite([
-      { input: pillSvg(topPillW, topPillH), top: topPillTop, left: topPillLeft },
-      { input: wordmark, top: topTextTop, left: topTextLeft },
-      { input: pillSvg(botPillW, botPillH), top: botPillTop, left: botPillLeft },
-      { input: url, top: botTextTop, left: botTextLeft },
-    ])
+  const meta = await sharp(pngBuffer).metadata();
+  const width = meta.width ?? 0;
+  const height = meta.height ?? 0;
+  if (width !== OVERLAY_WIDTH || height !== OVERLAY_HEIGHT) {
+    throw new Error(
+      `applyBranding: input image ${width}x${height} does not match overlay ${OVERLAY_WIDTH}x${OVERLAY_HEIGHT}. Regenerate the overlay via scripts/generate-share-overlay.mjs at the new dimensions, or check OPENAI_SIZE.`
+    );
+  }
+  const overlay = await getOverlay();
+  return sharp(pngBuffer)
+    .composite([{ input: overlay, top: 0, left: 0 }])
     .png()
     .toBuffer();
 }
