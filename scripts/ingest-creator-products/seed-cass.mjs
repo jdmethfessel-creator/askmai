@@ -112,13 +112,51 @@ if (!creator) {
   process.exit(1);
 }
 const payload = allRows.map((r) => ({ ...r, creator_id: creator.id }));
-const { error } = await sb
+
+// The partial unique index in 007 (WHERE source_external_id IS NOT NULL)
+// does not satisfy PostgreSQL's ON CONFLICT predicate requirement, so we
+// can't use supabase-js upsert here. Instead: wipe creator's rows then
+// insert fresh. For a single-creator demo seed this is fine and keeps
+// the script idempotent — re-running gives you exactly what's currently
+// on the live wishlists, no drift from prior partial loads.
+const { error: delErr } = await sb
   .from("creator_products")
-  .upsert(payload, {
-    onConflict: "creator_id,source_network,source_external_id",
-  });
-if (error) {
-  console.error("upsert failed:", error.message);
+  .delete()
+  .eq("creator_id", creator.id);
+if (delErr) {
+  console.error("wipe failed:", delErr.message);
   process.exit(1);
 }
-console.log(`[apply] upserted ${payload.length} rows into creator_products`);
+
+// Insert in chunks; PostgREST has a payload size ceiling and a single
+// 1k-row insert can exceed it on FWRD's larger rows.
+const CHUNK = 200;
+let inserted = 0;
+for (let i = 0; i < payload.length; i += CHUNK) {
+  const slice = payload.slice(i, i + CHUNK);
+  const { error } = await sb.from("creator_products").insert(slice);
+  if (error) {
+    console.error(`insert failed at ${i}:`, error.message);
+    process.exit(1);
+  }
+  inserted += slice.length;
+}
+
+// Verify what actually landed. Use HEAD + count:exact so we get the
+// real total — PostgREST caps row payloads at 1000 by default, which
+// would silently undercount FWRD in a SELECT-and-tally approach.
+console.log(`[apply] inserted ${inserted} rows into creator_products`);
+const byNetActual = {};
+for (const net of ["shopbop", "revolve", "fwrd", "shopmy", "csv", "manual"]) {
+  const { count } = await sb
+    .from("creator_products")
+    .select("id", { count: "exact", head: true })
+    .eq("creator_id", creator.id)
+    .eq("source_network", net);
+  if (count) byNetActual[net] = count;
+}
+const { count: total } = await sb
+  .from("creator_products")
+  .select("id", { count: "exact", head: true })
+  .eq("creator_id", creator.id);
+console.log(`[verify] DB row counts: ${JSON.stringify(byNetActual)}  total=${total}`);
