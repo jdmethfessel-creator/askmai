@@ -301,19 +301,24 @@ async function fetchPage(opts: PageOpts): Promise<{
     query = query.lte("price", softCeiling);
   }
 
-  // Descriptors: ILIKE each against title OR brand OR affiliate_url.
-  // Most Cass products don't carry color in product_title (Revolve
-  // titles like "Isla Top" omit the colorway), but the URL slug
-  // almost always does ("eterne-isla-top-in-saffron", "halter-top-
-  // in-black"), so matching against affiliate_url catches the
-  // color-by-slug case. Multiple descriptors AND together (a "black
-  // silk top" must have BOTH black AND silk somewhere across those
-  // three fields).
+  // Descriptors: match each against title OR brand OR affiliate_url,
+  // with word/path boundaries so "red" does NOT match "shirred" or
+  // "redhead". POSIX `imatch` (~*) carries word-boundary anchors
+  // \m..\M for the text fields; the URL slug uses hyphen/slash/
+  // question-mark delimiters around the colorway segment
+  // ("-in-red/", "-in-red-other/", "-in-red?").
+  //
+  // Multiple descriptors AND together (a "black silk top" must have
+  // BOTH black AND silk somewhere across those three fields).
+  //
+  // Sanitize each descriptor down to alphanumerics so a stray regex
+  // metacharacter can't slip into the pattern from caller input.
   if (opts.descriptors.length) {
     for (const d of opts.descriptors) {
-      const safe = d.replace(/[,()*]/g, " ").slice(0, 40);
+      const safe = d.replace(/[^a-z0-9]/gi, "").slice(0, 40);
+      if (!safe) continue;
       query = query.or(
-        `product_title.ilike.%${safe}%,brand.ilike.%${safe}%,affiliate_url.ilike.%${safe}%`
+        `product_title.imatch.\\m${safe}\\M,brand.imatch.\\m${safe}\\M,affiliate_url.imatch.[-/]${safe}[-/?]`
       );
     }
   }
