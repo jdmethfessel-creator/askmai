@@ -60,40 +60,30 @@ export async function POST(request: Request) {
   }
 
   const sb = supabaseAdmin();
-  // `hidden` column is the soft-hide flag. Column-tolerant: if the
-  // migration hasn't been applied yet the primary query returns 42703
-  // and we retry without the column, treating every creator as visible.
-  // Once the column exists, hidden=true 404s here just like the page
-  // route, so a direct API hit can't bypass the visibility gate.
-  const primary = await sb
+  // `hidden` was previously gated here so an API hit could not bypass
+  // the /[slug] page's visibility gate. That guard was wrong for the
+  // /cassdimicconew vanity path: that page is a deliberate public
+  // surface (handed out to followers in DMs) and its server component
+  // also doesn't gate on hidden, so the chat API was 404ing for the
+  // only creator who has a try-on grid live. Now we resolve any
+  // creator by slug. /creators public discovery still filters hidden
+  // rows (see src/app/creators/page.tsx); discovery and direct-link
+  // access are separate concerns.
+  const sel = "id, slug, name, bio, voice_prompt, taste_profile";
+  const lookup = await sb
     .from("creators")
-    .select("id, slug, name, bio, voice_prompt, taste_profile, hidden")
+    .select(sel)
     .eq("slug", slug)
     .maybeSingle();
 
   type CreatorRow = Pick<
     Creator,
     "id" | "slug" | "name" | "bio" | "voice_prompt" | "taste_profile"
-  > & { hidden?: boolean | null };
-  let creator: CreatorRow | null = null;
-  if (primary.error?.code === "42703") {
-    const fb = await sb
-      .from("creators")
-      .select("id, slug, name, bio, voice_prompt, taste_profile")
-      .eq("slug", slug)
-      .maybeSingle();
-    if (fb.error || !fb.data) {
-      return Response.json({ error: "Creator not found" }, { status: 404 });
-    }
-    creator = { ...(fb.data as CreatorRow), hidden: false };
-  } else if (primary.error || !primary.data) {
-    return Response.json({ error: "Creator not found" }, { status: 404 });
-  } else {
-    creator = primary.data as CreatorRow;
-  }
-  if (!creator || creator.hidden) {
+  >;
+  if (lookup.error || !lookup.data) {
     return Response.json({ error: "Creator not found" }, { status: 404 });
   }
+  const creator = lookup.data as CreatorRow;
   const creatorId = creator.id;
 
   // ----- Cap gate ----------------------------------------------------
