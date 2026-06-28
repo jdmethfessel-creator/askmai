@@ -51,7 +51,23 @@ const FASHN_TIMEOUT_MS = 240_000;
 // Replicate IDM-VTON wrapper. cuuupid/idm-vton is the most-used
 // public IDM-VTON model on Replicate; input shape matches the paper
 // reference implementation.
+//
+// Two endpoint options on Replicate:
+//   POST /v1/models/{owner}/{name}/predictions  - "latest" alias,
+//     only works if the model has a default version pinned by the
+//     owner. cuuupid/idm-vton does NOT have one (returns 404), so
+//     this shortcut fails for it.
+//   POST /v1/predictions  with { version, input }  - works for any
+//     model. We pin the version hash explicitly.
+//
+// Pinned version: latest as of 2026-06-28 from
+// https://replicate.com/cuuupid/idm-vton/versions . Update when a
+// newer version ships with a notable quality jump. The version
+// pinning also makes the renders deterministic across deploys: a
+// silent model swap by the maintainer doesn't change our output.
 const REPLICATE_MODEL = "cuuupid/idm-vton";
+const REPLICATE_VERSION =
+  "0513734a452173b8173e907e3a59d19a36266e55b48528559432bd21c7d7e985";
 const REPLICATE_API = "https://api.replicate.com/v1";
 const REPLICATE_WAIT_SECONDS = 60;
 const REPLICATE_POLL_INTERVAL_MS = 1500;
@@ -284,25 +300,23 @@ async function runReplicate(args: {
 
   let prediction: ReplicatePrediction;
   try {
-    const create = await fetch(
-      `${REPLICATE_API}/models/${REPLICATE_MODEL}/predictions`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Token ${token}`,
-          "Content-Type": "application/json",
-          Prefer: `wait=${REPLICATE_WAIT_SECONDS}`,
+    const create = await fetch(`${REPLICATE_API}/predictions`, {
+      method: "POST",
+      headers: {
+        Authorization: `Token ${token}`,
+        "Content-Type": "application/json",
+        Prefer: `wait=${REPLICATE_WAIT_SECONDS}`,
+      },
+      body: JSON.stringify({
+        version: REPLICATE_VERSION,
+        input: {
+          human_img: personDataUri,
+          garm_img: args.garmentImageUrl,
+          garment_des: description,
         },
-        body: JSON.stringify({
-          input: {
-            human_img: personDataUri,
-            garm_img: args.garmentImageUrl,
-            garment_des: description,
-          },
-        }),
-        signal: AbortSignal.timeout(REPLICATE_TOTAL_TIMEOUT_MS),
-      }
-    );
+      }),
+      signal: AbortSignal.timeout(REPLICATE_TOTAL_TIMEOUT_MS),
+    });
     if (!create.ok) {
       const text = await create.text().catch(() => "");
       console.error(
@@ -311,6 +325,7 @@ async function runReplicate(args: {
           httpStatus: create.status,
           body: text.slice(0, 1500),
           model: REPLICATE_MODEL,
+          version: REPLICATE_VERSION,
         })
       );
       return {
