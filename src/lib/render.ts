@@ -41,7 +41,7 @@
 import path from "path";
 import sharp from "sharp";
 import { supabaseAdmin } from "./supabase";
-import { probeHeadBbox, segmentForRender, type Bbox } from "./segmentClothing";
+import { segmentForRender } from "./segmentClothing";
 import { removeProductBackground } from "./removeBackground";
 
 export const INCLUDED_RENDERS_PER_MONTH = 3;
@@ -313,354 +313,57 @@ async function applyBranding(pngBuffer: Buffer): Promise<Buffer> {
     .toBuffer();
 }
 
-// -------- Post-hoc head composite -------------------------------------
+// -------- Face rendering --------------------------------------------
 //
-// gpt-image-1 treats the mask as guidance, not as a strict
-// preservation boundary (per OpenAI's own guide: "Masking with GPT
-// Image is entirely prompt-based. The model uses the mask as
-// guidance, but may not follow its exact shape with complete
-// precision."). The face — the highest-attention region in any
-// portrait — therefore gets regenerated more often than not, even
-// when the OpenAI mask marks it opaque.
+// Through 2026-06-28 we ran a post-hoc face composite (paste the
+// user's actual face/hair pixels back onto the gpt-image-1 output,
+// gated by an alignment classifier + seam-feather + downward-dilation
+// + reposition logic). It was a patch for the model hallucinating
+// faces when the input was a raw photo with a busy background.
 //
-// Fix: after the OpenAI call returns, we paint the user's ACTUAL
-// head pixels (from their normalized input photo) back over the
-// model's output, using a feathered Face+Hair mask as the alpha.
-// The model's contribution stays everywhere below the chin (clothing
-// swap, neckline draping, hands, the rest of the body); the head
-// region is hard-restored to bit-exact identity.
+// That patch is REMOVED in this commit because the underlying problem
+// it solved is gone: with the upload-time normalization pipeline
+// (src/lib/normalizeTryonPhoto.ts), gpt-image-1 receives a clean
+// isolated figure on a neutral gray canvas with the original garment
+// blanked, and the user's face IS the primary image input. The model
+// renders the face directly from that reference. The paste-back was
+// itself producing the visible defect (the melt at the hair/neck
+// seam JD complained about) by compositing two differently-lit
+// images. Net: drop the composite, ship one coherent image.
 //
-// Alignment handling. gpt-image-1 often shifts the model's head
-// vertically (different framing / different stance). We classify the
-// shift and respond, instead of always skipping:
+// Trade-off accepted: face is "approximately the user" rather than
+// "bit-exact." For the try-on share / catalog tile target this is the
+// right call; for an identity-verification target it wouldn't be.
+// AskMai is the former.
 //
-//   ALIGNED        center within 8% of image max dim, size within
-//                  15% area delta. Composite at input position.
-//   TRANSLATE      moderate shift, sizes still similar (<=15% area
-//                  delta). Composite the input head shifted by
-//                  (outCx-inCx, outCy-inCy) so it lands at the
-//                  output bbox center.
-//   TRANSLATE+SCALE  shift AND sizes differ (15-40% area delta).
-//                  Composite shifted AND scaled to match the
-//                  output bbox size.
-//   SKIP           sizes differ >40% area, OR linear scale would
-//                  be outside [0.75, 1.33]. Pasting a scaled face
-//                  beyond that risks an uncanny / warped result.
-//                  Better to return the gpt-image-1 face than a
-//                  visibly wrong one.
-//
-// The Face+Hair binary mask is Gaussian-blurred (sigma 8) before it
-// becomes the alpha channel, so the composite has a soft neckline
-// gradient instead of a hard seam.
-//
-// Cost: one additional HF SegFormer call on the output (~$0.001).
-// Total per render now ~$0.065.
-
-type HeadAlignment =
-  | { kind: "aligned" }
-  | { kind: "translate"; dx: number; dy: number }
-  | { kind: "scale"; dx: number; dy: number; scale: number; inCx: number; inCy: number; outCx: number; outCy: number }
-  | { kind: "skip"; reason: string };
-
-// Linear-scale bounds beyond which we refuse to scale the input
-// face/hair patch. Outside this band the user's face would warp
-// visibly; we'd rather ship the gpt-image-1 face than an uncanny
-// one. (areaDelta 0.40 ≈ linearScale 0.77 / 1.30 around 1.0.)
-const SCALE_LINEAR_MIN = 0.75;
-const SCALE_LINEAR_MAX = 1.33;
-
-// When the centers are close AND sizes are within this area-delta,
-// no shift is needed and we composite at the input position.
-const ALIGNED_CENTER_PCT = 0.08;
-const ALIGNED_AREA_DELTA = 0.15;
-
-// When sizes differ more than this, translation alone leaves a
-// visibly wrong-sized head; we engage the scale path.
-const SCALE_TRIGGER_AREA_DELTA = 0.15;
-
-// ---- Seam-blend tunables -------------------------------------------
-//
-// Standard deviation (pixels) of the Gaussian feather applied to the
-// head mask before it becomes the composite alpha channel. Larger =
-// softer fade across the seam, but the user's pixels also become
-// translucent further from the head center (risk: "ghost" head).
-// Bumped from the original inline 8 to 14 to widen the fade band at
-// 1024x1536 (~84 px transition vs the prior ~48 px), softening the
-// visible chest-line seam that surfaced after the alignment fix.
-const HEAD_COMPOSITE_FEATHER_SIGMA = 14;
-
-// SegFormer-B2's ATR-trained class set doesn't include a "Neck"
-// label, so the Face+Hair mask cuts at the jawline. After the
-// alignment fix, the visible seam is at the chin where user-face
-// pixels meet AI-body neck/chest pixels with mismatched tone.
-//
-// Downward dilation extends the bottom edge of the head mask by N
-// pixels per column so the boundary moves DOWN, ideally past the
-// garment collar in the model's output. The pasted region then
-// includes the user's actual neck pixels, so the tone transition
-// happens above the garment line where it can hide. The feather
-// blur runs AFTER the dilation, so the extended bottom edge is also
-// softly faded.
-//
-// Trade-off: if the user's pose and the AI's pose put the neck at
-// different angles or widths, the extended patch may misregister at
-// its edges. Keep this modest. Tune if Try-On evidence shows the
-// extension overshooting into the garment.
-const HEAD_COMPOSITE_DOWNWARD_DILATION_PX = 30;
+// All composite helpers (classifyHeadAlignment, dilateMaskDown,
+// buildFeatheredHeadOverlay) and the seam tunables (alignment
+// thresholds, scale bounds, feather sigma, downward-dilation px)
+// removed below. Git history holds the previous implementation
+// (commits c83393b, 8cadc23) if it ever needs to come back.
 
 /**
- * Classifies the input/output head bbox relationship into one of
- * the four response modes above. Drives the composite branch.
- */
-function classifyHeadAlignment(
-  inBox: Bbox,
-  outBox: Bbox,
-  imageDimMax: number
-): HeadAlignment {
-  const inCx = inBox.x + inBox.w / 2;
-  const inCy = inBox.y + inBox.h / 2;
-  const outCx = outBox.x + outBox.w / 2;
-  const outCy = outBox.y + outBox.h / 2;
-  const centerShift = Math.hypot(inCx - outCx, inCy - outCy);
-  const centerShiftPct = centerShift / imageDimMax;
-
-  const inArea = Math.max(1, inBox.w * inBox.h);
-  const outArea = Math.max(1, outBox.w * outBox.h);
-  const areaDelta = Math.abs(inArea - outArea) / Math.max(inArea, outArea);
-  const linearScale = Math.sqrt(outArea / inArea);
-
-  if (linearScale < SCALE_LINEAR_MIN || linearScale > SCALE_LINEAR_MAX) {
-    return {
-      kind: "skip",
-      reason: `linear scale ${linearScale.toFixed(2)} outside [${SCALE_LINEAR_MIN}, ${SCALE_LINEAR_MAX}]`,
-    };
-  }
-  if (centerShiftPct <= ALIGNED_CENTER_PCT && areaDelta <= ALIGNED_AREA_DELTA) {
-    return { kind: "aligned" };
-  }
-  if (areaDelta <= SCALE_TRIGGER_AREA_DELTA) {
-    return { kind: "translate", dx: outCx - inCx, dy: outCy - inCy };
-  }
-  return {
-    kind: "scale",
-    dx: outCx - inCx,
-    dy: outCy - inCy,
-    scale: linearScale,
-    inCx,
-    inCy,
-    outCx,
-    outCy,
-  };
-}
-
-/**
- * In-place downward dilation of a binary mask. For each column x,
- * finds the bottommost positive pixel and sets the N pixels directly
- * below it to 255 (clipped to canvas). Used to push the head mask
- * boundary down past the chin so the seam lands under the garment
- * collar instead of crossing open chest skin.
- *
- * Cost: O(W*H) single pass to locate per-column bottoms + O(W*N) to
- * fill. Cheap relative to a sharp/SegFormer call.
- *
- * Mutates the input buffer.
- */
-function dilateMaskDown(
-  mask: Buffer,
-  width: number,
-  height: number,
-  dilatePx: number
-): void {
-  if (dilatePx <= 0) return;
-  // Walk each column from the bottom up to find the lowest positive
-  // row; remember it. Then write 255 into the dilatePx rows directly
-  // below. Done as a single pass per column.
-  for (let x = 0; x < width; x++) {
-    let bottomY = -1;
-    for (let y = height - 1; y >= 0; y--) {
-      if (mask[y * width + x] > 127) {
-        bottomY = y;
-        break;
-      }
-    }
-    if (bottomY < 0) continue;
-    const fillEnd = Math.min(height - 1, bottomY + dilatePx);
-    for (let y = bottomY + 1; y <= fillEnd; y++) {
-      mask[y * width + x] = 255;
-    }
-  }
-}
-
-/**
- * Build the feathered alpha PNG used as the head-composite mask.
- *
- * Input: the raw 1-channel binary head mask from SegFormer (255 in
- * Face+Hair, 0 elsewhere).
- *
- * Pipeline:
- *   1. Copy the input mask (we mutate during dilation).
- *   2. Dilate the bottom edge downward by
- *      HEAD_COMPOSITE_DOWNWARD_DILATION_PX so the seam pushes past
- *      the chin into the user's neck/collar region.
- *   3. Gaussian-blur the dilated mask with sigma
- *      HEAD_COMPOSITE_FEATHER_SIGMA so the new bottom edge fades
- *      softly into the AI body instead of cutting sharply.
- *
- * Output: a PNG of an alpha-only image at the same dimensions where
- * the head region is fully opaque (alpha=255) and edges feather to
- * transparent.
- */
-async function buildFeatheredHeadOverlay(args: {
-  normalizedPerson: Buffer;
-  headMaskRaw: Buffer;
-  width: number;
-  height: number;
-  /**
-   * Optional reposition. When present, every output pixel (ox, oy)
-   * samples the source RGB + alpha at the inverse-mapped input
-   * coordinate. The inverse maps the output bbox center back to the
-   * input bbox center, applying the inverse scale around the input
-   * center. Omitting `transform` (or passing identity) keeps the
-   * original at-input-position composite for the ALIGNED path.
-   */
-  transform?: {
-    inCx: number;
-    inCy: number;
-    outCx: number;
-    outCy: number;
-    /** Linear scale; 1 = translation only. */
-    scale: number;
-  };
-}): Promise<Buffer> {
-  const W = args.width;
-  const H = args.height;
-  const expected1ch = W * H;
-  const expected3ch = W * H * 3;
-
-  // Assertion 1: the head mask handed to us must already be a true
-  // 1-channel buffer (W*H bytes). segmentForRender now enforces this,
-  // but we double-check here so a regression in either lib surfaces
-  // as a clear error instead of rainbow scanlines in the output.
-  if (args.headMaskRaw.length !== expected1ch) {
-    throw new Error(
-      `buildFeatheredHeadOverlay: headMaskRaw wrong size: ${args.headMaskRaw.length} vs expected ${expected1ch} (${W}x${H} 1ch)`
-    );
-  }
-
-  // Copy first so we don't mutate the caller's buffer when we apply
-  // the downward dilation. The dilation extends the bottom edge of
-  // the head mask past the chin into the user's neck/collar region,
-  // so the post-blur seam lands somewhere the garment can hide it
-  // rather than crossing open chest skin.
-  const dilated = Buffer.from(args.headMaskRaw);
-  dilateMaskDown(dilated, W, H, HEAD_COMPOSITE_DOWNWARD_DILATION_PX);
-
-  // Feather the (now downward-dilated) mask. Sigma is tunable via
-  // HEAD_COMPOSITE_FEATHER_SIGMA so the blend band can be widened
-  // without a code dive. .extractChannel(0) forces the raw output to
-  // a single channel — without it sharp's blur emits 3 identical
-  // channels (W*H*3 bytes) and the downstream byte-write loop reads
-  // at the wrong stride.
-  const featheredAlpha = await sharp(dilated, {
-    raw: { width: W, height: H, channels: 1 },
-  })
-    .blur(HEAD_COMPOSITE_FEATHER_SIGMA)
-    .extractChannel(0)
-    .raw()
-    .toBuffer();
-  if (featheredAlpha.length !== expected1ch) {
-    throw new Error(
-      `buildFeatheredHeadOverlay: feathered alpha wrong size: ${featheredAlpha.length} vs expected ${expected1ch}`
-    );
-  }
-
-  // Extract the input photo's RGB channels at the same dimensions so
-  // we can join the feathered alpha onto them.
-  const { data: rgb, info } = await sharp(args.normalizedPerson)
-    .resize({ width: W, height: H, fit: "fill" })
-    .removeAlpha()
-    .raw()
-    .toBuffer({ resolveWithObject: true });
-  if (info.channels !== 3 || rgb.length !== expected3ch) {
-    throw new Error(
-      `buildFeatheredHeadOverlay: person RGB wrong shape: ${rgb.length} channels=${info.channels} expected ${expected3ch}/3ch`
-    );
-  }
-
-  const rgba = Buffer.alloc(expected1ch * 4);
-
-  if (!args.transform) {
-    // Fast path: identity transform. Pixel-aligned, no resampling.
-    for (let i = 0; i < expected1ch; i++) {
-      const b = i * 4;
-      rgba[b] = rgb[i * 3];
-      rgba[b + 1] = rgb[i * 3 + 1];
-      rgba[b + 2] = rgb[i * 3 + 2];
-      rgba[b + 3] = featheredAlpha[i];
-    }
-  } else {
-    // Reposition path. For each output pixel (ox, oy), the source
-    // input pixel is:
-    //
-    //   px = inCx + (ox - outCx) / scale
-    //   py = inCy + (oy - outCy) / scale
-    //
-    // (i.e. inverse of "anchor the input center at the output center
-    // and scale around it"). Nearest-neighbor sampling is fine here
-    // because the head region is large and the alpha is feathered;
-    // bilinear would marginally smooth a hair edge but doubles the
-    // per-pixel cost.
-    const { inCx, inCy, outCx, outCy, scale } = args.transform;
-    const invScale = 1 / scale;
-    for (let oy = 0; oy < H; oy++) {
-      for (let ox = 0; ox < W; ox++) {
-        const px = Math.round(inCx + (ox - outCx) * invScale);
-        const py = Math.round(inCy + (oy - outCy) * invScale);
-        const b = (oy * W + ox) * 4;
-        if (px < 0 || px >= W || py < 0 || py >= H) {
-          // Source pixel out of frame; leave fully transparent
-          // (alpha default 0 from Buffer.alloc).
-          continue;
-        }
-        const srcIdx = py * W + px;
-        rgba[b] = rgb[srcIdx * 3];
-        rgba[b + 1] = rgb[srcIdx * 3 + 1];
-        rgba[b + 2] = rgb[srcIdx * 3 + 2];
-        rgba[b + 3] = featheredAlpha[srcIdx];
-      }
-    }
-  }
-
-  return sharp(rgba, {
-    raw: { width: W, height: H, channels: 4 },
-  })
-    .png()
-    .toBuffer();
-}
-
-/**
- * Inpaint render via gpt-image-1 /v1/images/edits, with a post-hoc
- * head composite restoring the user's real face.
+ * Inpaint render via gpt-image-1 /v1/images/edits. The model renders
+ * the entire person, including the head, from the normalized input
+ * photo (which serves as the primary identity reference). No
+ * post-hoc face composite -- see "Face rendering" comment above for
+ * why it was removed.
  *
  * Flow (every step that throws becomes 500 render_failed with NO
  * credit consumed):
  *
- *   1. Normalize the user photo to 1024x1536, fit:"contain", neutral
- *      pad — head-to-feet preservation is baked in here.
- *   2. SegFormer on the normalized photo → editable clothing mask
- *      (for OpenAI) + head mask + input head bbox.
+ *   1. The user photo is already normalized at upload time
+ *      (src/lib/normalizeTryonPhoto.ts) to 1024x1536 on a mid-gray
+ *      canvas with the original garment region neutralized. The
+ *      personBuffer arg IS that normalized PNG; we pass it through.
+ *   2. SegFormer on the normalized photo to build the editable
+ *      clothing mask (transparent over garment, opaque elsewhere)
+ *      that gpt-image-1's inpaint takes as the `mask` field.
  *   3. Fetch product reference images.
  *   4. Call /v1/images/edits with image[normalized_user, ...products]
- *      + mask + size=1024x1536. Mask applies only to image[0].
- *   5. SegFormer on the OpenAI output → output head bbox.
- *   6. Alignment check between input/output head bboxes.
- *        - aligned: feather the input head mask, composite the user's
- *          actual head pixels onto the OpenAI output.
- *        - misaligned or no output head detected: skip the composite,
- *          log a warning, and return the OpenAI output as-is. The
- *          render still succeeds (it has a valid garment swap); the
- *          face just isn't identity-preserved on this one.
- *   7. Apply branding overlay.
+ *      + mask + size=1024x1536. Mask applies only to image[0]. The
+ *      model renders one coherent image including the face.
+ *   5. Apply branding overlay and return.
  */
 export async function runRender(args: {
   personBuffer: Buffer;
@@ -770,86 +473,10 @@ export async function runRender(args: {
   }
   const raw = Buffer.from(b64, "base64");
 
-  // 5. Post-hoc head composite. gpt-image-1 won't strictly preserve
-  //    the face even with a mask. Re-run SegFormer on the output,
-  //    classify how the model moved the head, and respond:
-  //    ALIGNED → composite at input position. TRANSLATE → composite
-  //    shifted to the output bbox center. TRANSLATE+SCALE → composite
-  //    shifted AND scaled. SKIP → return the gpt-image-1 face
-  //    (uncanny paste would be worse than a slightly different face).
-  //    See classifyHeadAlignment above for thresholds.
-  let composited: Buffer = raw;
-  try {
-    const outProbe = await probeHeadBbox(raw);
-    const inputBbox = seg.headBbox;
-    const outputBbox = outProbe.headBbox;
-    if (!inputBbox || !outputBbox) {
-      console.warn(
-        `[render] head composite SKIPPED: input.headBbox=${inputBbox ? "ok" : "none"} output.headBbox=${outputBbox ? "ok" : "none"}`
-      );
-    } else {
-      const imageDimMax = Math.max(outProbe.width, outProbe.height);
-      const align = classifyHeadAlignment(inputBbox, outputBbox, imageDimMax);
-      const inCx = inputBbox.x + inputBbox.w / 2;
-      const inCy = inputBbox.y + inputBbox.h / 2;
-      const outCx = outputBbox.x + outputBbox.w / 2;
-      const outCy = outputBbox.y + outputBbox.h / 2;
-
-      if (align.kind === "skip") {
-        console.warn(
-          `[render] head composite SKIPPED: ${align.reason} (in center=${inCx.toFixed(0)},${inCy.toFixed(0)} size=${inputBbox.w}x${inputBbox.h} ; out center=${outCx.toFixed(0)},${outCy.toFixed(0)} size=${outputBbox.w}x${outputBbox.h})`
-        );
-      } else {
-        // OpenAI returns 1024x1536, same as our normalized input
-        // dimensions. Feathered overlay = input photo RGB + Face+Hair
-        // mask blurred into alpha. When the head moved, we pass a
-        // transform so the overlay's sampling maps the input bbox
-        // center to the output bbox center (and scales when needed).
-        const transform =
-          align.kind === "aligned"
-            ? undefined
-            : align.kind === "translate"
-            ? { inCx, inCy, outCx, outCy, scale: 1 }
-            : {
-                inCx: align.inCx,
-                inCy: align.inCy,
-                outCx: align.outCx,
-                outCy: align.outCy,
-                scale: align.scale,
-              };
-        const overlay = await buildFeatheredHeadOverlay({
-          normalizedPerson,
-          headMaskRaw: seg.headMaskRaw,
-          width: seg.width,
-          height: seg.height,
-          transform,
-        });
-        composited = await sharp(raw)
-          .composite([{ input: overlay, top: 0, left: 0, blend: "over" }])
-          .png()
-          .toBuffer();
-        const where =
-          align.kind === "aligned"
-            ? "at input position"
-            : align.kind === "translate"
-            ? `translated dx=${(outCx - inCx).toFixed(0)} dy=${(outCy - inCy).toFixed(0)}`
-            : `translated dx=${(outCx - inCx).toFixed(0)} dy=${(outCy - inCy).toFixed(0)} scale=${align.scale.toFixed(2)}`;
-        console.log(
-          `[render] head composite APPLIED (${align.kind}): face/hair restored from input ${where}`
-        );
-      }
-    }
-  } catch (err) {
-    // Output-side SegFormer probe or composite step failed. Don't
-    // fail the whole render — the OpenAI result is valid; we just
-    // lose identity preservation on this one. The credit will still
-    // be consumed because the user has a usable image.
-    const msg = err instanceof Error ? err.message : String(err);
-    console.warn(`[render] head composite SKIPPED (error): ${msg}`);
-  }
-
-  // 6. Brand overlay.
-  return applyBranding(composited);
+  // 5. Brand overlay. No post-hoc face composite (removed in commit
+  //    [this one] — see "Face rendering" comment above). gpt-image-1's
+  //    output goes straight to applyBranding.
+  return applyBranding(raw);
 }
 
 /**
