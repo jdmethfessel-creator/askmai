@@ -378,3 +378,187 @@
     transform: rotate(360deg);
   }
 }
+
+.tryon-mode-toggle {
+  display: inline-flex;
+  align-self: center;
+  gap: 2px;
+  padding: 4px;
+  margin: 16px auto 8px;
+  border-radius: 999px;
+  background: var(--t-surface, #f6f3ef);
+  border: 1px solid var(--t-line, rgba(0,0,0,0.08));
+}
+.tryon-mode-btn {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--t-muted, #7a6e63);
+  font: 600 13px/1 var(--font-body), system-ui, sans-serif;
+  letter-spacing: 0.04em;
+  padding: 8px 18px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+  min-width: 76px;
+}
+.tryon-mode-btn:hover {
+  color: var(--t-ink, #221d18);
+}
+.tryon-mode-btn.is-active {
+  background: var(--t-ink, #221d18);
+  color: #fff;
+}
+.tryon-mode-wrap {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  padding-top: 8px;
+}
+
+.tryon-ask-shell {
+  width: 100%;
+  max-width: 480px;
+  margin: 8px auto 24px;
+  padding: 0 16px;
+  background: var(--t-surface, #ffffff);
+  border-radius: 24px;
+  overflow: hidden;
+  box-shadow:
+    0 8px 28px -10px rgba(0,0,0,0.12),
+    0 2px 8px rgba(0,0,0,0.04);
+}
+
+/* Card outfit-select affordance */
+.tryon-card { position: relative; }
+.tryon-card.is-in-outfit {
+  outline: 2px solid var(--t-accent, #a26a5a);
+  outline-offset: -2px;
+}
+.tryon-card-select {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  border: 0;
+  cursor: pointer;
+  font: 600 14px/1 system-ui, sans-serif;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255,255,255,0.92);
+  color: var(--t-ink, #221d18);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+  transition: background 120ms ease, color 120ms ease, transform 120ms ease;
+}
+.tryon-card-select:hover { transform: scale(1.08); }
+.tryon-card-select.is-selected {
+  background: var(--t-accent, #a26a5a);
+  color: #fff;
+}
+
+/* Bottom outfit tray (above the search asker) */
+.tryon-outfit-tray {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 64px;
+  z-index: 25;
+  width: min(560px, calc(100vw - 24px));
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: rgba(255,255,255,0.96);
+  backdrop-filter: blur(6px);
+  border-radius: 18px;
+  border: 1px solid var(--t-line, rgba(0,0,0,0.08));
+  box-shadow: 0 10px 28px -10px rgba(0,0,0,0.22);
+}
+.tryon-outfit-thumbs {
+  display: flex;
+  gap: 6px;
+  flex: 1;
+  overflow-x: auto;
+}
+.tryon-outfit-thumb {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  border-radius: 10px;
+  border: 1px solid var(--t-line, rgba(0,0,0,0.08));
+  background: var(--t-surface, #f6f3ef);
+  padding: 0;
+  cursor: pointer;
+  overflow: hidden;
+}
+.tryon-outfit-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.tryon-outfit-thumb-x {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0,0,0,0);
+  color: #fff;
+  font: 600 12px/1 system-ui, sans-serif;
+  opacity: 0;
+  transition: background 120ms ease, opacity 120ms ease;
+}
+.tryon-outfit-thumb:hover .tryon-outfit-thumb-x {
+  background: rgba(0,0,0,0.55);
+  opacity: 1;
+}
+.tryon-outfit-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.tryon-btn-ghost {
+  background: transparent;
+  color: var(--t-muted, #7a6e63);
+  border: 1px solid var(--t-line, rgba(0,0,0,0.08));
+}
+.tryon-btn-ghost:hover { color: var(--t-ink, #221d18); }
+
+/* Per-piece Shop strip in the outfit result modal */
+.tryon-outfit-result-shops {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  width: 100%;
+  margin-top: 8px;
+  justify-content: center;
+}
+.tryon-outfit-result-shop {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px 6px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--t-line, rgba(0,0,0,0.08));
+  background: var(--t-surface, #fff);
+  cursor: pointer;
+  font: 500 12px/1 system-ui, sans-serif;
+  color: var(--t-ink, #221d18);
+}
+.tryon-outfit-result-shop img {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+.tryon-outfit-result-shop:hover {
+  background: var(--t-accent, #a26a5a);
+  color: #fff;
+  border-color: var(--t-accent, #a26a5a);
+}

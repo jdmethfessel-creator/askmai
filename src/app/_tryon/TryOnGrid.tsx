@@ -70,6 +70,54 @@ type RenderResult =
   | { state: "result"; product: Product; signedUrl: string }
   | { state: "blocked"; product: Product; reason: BlockReason };
 
+// Per-card eligibility for the body-render Try-On button. Items in
+// these subcategory buckets are clothing/accessories FASHN can place
+// on the body. Jewelry, earrings, beauty, home, etc. show Shop only.
+// Shoes excluded intentionally for now (FASHN's tryon-v1.6 categories
+// are tops/bottoms/one-pieces; shoes need different geometry).
+//
+// Edit this constant to expand or contract the renderable set.
+const TRYON_ELIGIBLE_CATEGORIES = new Set<string>([
+  "tops",
+  "bottoms",
+  "dresses",
+  "bags",
+]);
+
+// Outfit slot the product fills. One slot per item; the outfit
+// builder enforces uniqueness per slot and the dress/separates
+// conflict (dress excludes top+bottom). Keep the values stable; they
+// drive the conflict-resolution logic below.
+type OutfitSlot = "top" | "bottom" | "dress" | "bag";
+const SUBCATEGORY_TO_SLOT: Record<string, OutfitSlot> = {
+  tops: "top",
+  bottoms: "bottom",
+  dresses: "dress",
+  bags: "bag",
+};
+
+const MAX_OUTFIT_ITEMS = 3;
+
+function isEligibleForTryOn(product: Product): boolean {
+  const sub = (product.product_subcategory ?? "").toLowerCase();
+  return TRYON_ELIGIBLE_CATEGORIES.has(sub);
+}
+
+function slotFor(product: Product): OutfitSlot | null {
+  const sub = (product.product_subcategory ?? "").toLowerCase();
+  return SUBCATEGORY_TO_SLOT[sub] ?? null;
+}
+
+// Outfit-specific render result (separate from the single-item
+// RenderResult so the existing single flow stays untouched). The
+// modal shows the full set of products so each one keeps its own
+// Shop button with byte-for-byte affiliate URL.
+type OutfitRender =
+  | { state: "idle" }
+  | { state: "loading"; products: Product[] }
+  | { state: "result"; products: Product[]; signedUrl: string }
+  | { state: "blocked"; products: Product[]; reason: BlockReason };
+
 type BlockReason =
   | "age_not_verified"
   | "no_photo"
@@ -133,6 +181,16 @@ export default function TryOnGrid({
   const [render, setRender] = useState<RenderResult>({ state: "idle" });
   const [showSignIn, setShowSignIn] = useState(false);
   const [interpreted, setInterpreted] = useState<Interpreted | null>(null);
+  // Outfit builder state. Stored as a slot-keyed object so insertion
+  // order is preserved on iteration (object literal order ===
+  // insertion order in modern engines) and conflict resolution is
+  // O(1) per operation. Capped at MAX_OUTFIT_ITEMS via toggleOutfit.
+  const [outfit, setOutfit] = useState<Partial<Record<OutfitSlot, Product>>>(
+    {}
+  );
+  const [outfitRender, setOutfitRender] = useState<OutfitRender>({
+    state: "idle",
+  });
 
   // Each fetch round bumps the token; in-flight responses for a stale
   // token are discarded. Prevents a slow first-page response from
@@ -269,6 +327,109 @@ export default function TryOnGrid({
     [creatorSlug]
   );
 
+  // ------------------------- outfit builder --------------------------
+  // Toggle an item into / out of the outfit. Conflict rules:
+  //   - At most one item per slot (top / bottom / dress / bag).
+  //   - dress is exclusive with top + bottom (can't wear both).
+  //     Adding a dress clears top and bottom; adding a top or bottom
+  //     clears any existing dress.
+  //   - Hard cap of MAX_OUTFIT_ITEMS total so the chained FASHN
+  //     render stays under the maxDuration=300s budget.
+  const toggleOutfit = useCallback((product: Product) => {
+    const slot = slotFor(product);
+    if (!slot) return; // non-eligible cards never reach here, but defensive
+    setOutfit((prev) => {
+      const next: Partial<Record<OutfitSlot, Product>> = { ...prev };
+      // Removing the currently-selected item from this slot.
+      if (next[slot]?.id === product.id) {
+        delete next[slot];
+        return next;
+      }
+      // Adding: resolve conflicts first.
+      if (slot === "dress") {
+        delete next.top;
+        delete next.bottom;
+      } else if (slot === "top" || slot === "bottom") {
+        delete next.dress;
+      }
+      // Cap check. If at cap and this slot is empty, refuse the add.
+      // (If the slot already has an item we replace it; net count is
+      // unchanged so the cap is not violated.)
+      const replacing = Boolean(next[slot]);
+      const wouldExceed =
+        !replacing && Object.keys(next).length >= MAX_OUTFIT_ITEMS;
+      if (wouldExceed) return prev;
+      next[slot] = product;
+      return next;
+    });
+  }, []);
+
+  const clearOutfit = useCallback(() => setOutfit({}), []);
+
+  const outfitItems = useMemo(() => {
+    // Stable display order in the tray: top, bottom, dress, bag.
+    const order: OutfitSlot[] = ["top", "bottom", "dress", "bag"];
+    return order
+      .map((s) => outfit[s])
+      .filter((p): p is Product => Boolean(p));
+  }, [outfit]);
+
+  const isInOutfit = useCallback(
+    (product: Product): boolean => {
+      const s = slotFor(product);
+      return s ? outfit[s]?.id === product.id : false;
+    },
+    [outfit]
+  );
+
+  const runOutfitRender = useCallback(async () => {
+    if (outfitItems.length === 0) return;
+    setOutfitRender({ state: "loading", products: outfitItems });
+    try {
+      const res = await fetch("/api/render", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          kind: "outfit",
+          creatorSlug,
+          items: outfitItems.map((p) => ({
+            image_url: p.image_url,
+            name: p.product_title,
+            brand: p.brand ?? undefined,
+          })),
+        }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (res.status === 200 && json.signed_url) {
+        setOutfitRender({
+          state: "result",
+          products: outfitItems,
+          signedUrl: json.signed_url,
+        });
+        return;
+      }
+      if (json.error === "not_signed_in") {
+        setOutfitRender({ state: "idle" });
+        setShowSignIn(true);
+        return;
+      }
+      const reason: BlockReason =
+        json.error === "age_not_verified" ||
+        json.error === "no_photo" ||
+        json.error === "no_quota" ||
+        json.error === "moderation_blocked"
+          ? (json.error as BlockReason)
+          : "render_failed";
+      setOutfitRender({ state: "blocked", products: outfitItems, reason });
+    } catch {
+      setOutfitRender({
+        state: "blocked",
+        products: outfitItems,
+        reason: "render_failed",
+      });
+    }
+  }, [outfitItems, creatorSlug]);
+
   // ------------------------- bottom search ---------------------------
   const onSearchSubmit = useCallback(
     (e: React.FormEvent) => {
@@ -326,7 +487,14 @@ export default function TryOnGrid({
 
       <main className="tryon-grid">
         {products.map((p) => (
-          <ProductCard key={p.id} product={p} onTryOn={onTryOn} />
+          <ProductCard
+            key={p.id}
+            product={p}
+            onTryOn={onTryOn}
+            tryOnEligible={isEligibleForTryOn(p)}
+            inOutfit={isInOutfit(p)}
+            onToggleOutfit={toggleOutfit}
+          />
         ))}
         {products.length === 0 && !loadingPage ? (
           <p className="tryon-empty">
@@ -361,6 +529,23 @@ export default function TryOnGrid({
         <TryOnModal state={render} onClose={() => setRender({ state: "idle" })} />
       ) : null}
 
+      {outfitItems.length > 0 ? (
+        <OutfitTray
+          items={outfitItems}
+          onClear={clearOutfit}
+          onRemove={toggleOutfit}
+          onRender={runOutfitRender}
+          rendering={outfitRender.state === "loading"}
+        />
+      ) : null}
+
+      {outfitRender.state !== "idle" ? (
+        <OutfitModal
+          state={outfitRender}
+          onClose={() => setOutfitRender({ state: "idle" })}
+        />
+      ) : null}
+
       {showSignIn ? (
         <SignInModal
           onClose={() => setShowSignIn(false)}
@@ -375,19 +560,39 @@ export default function TryOnGrid({
 function ProductCard({
   product,
   onTryOn,
+  tryOnEligible,
+  inOutfit,
+  onToggleOutfit,
 }: {
   product: Product;
   onTryOn: (p: Product) => void;
+  tryOnEligible: boolean;
+  inOutfit: boolean;
+  onToggleOutfit: (p: Product) => void;
 }) {
   const onShop = useCallback(() => {
-    // Open the byte-for-byte stored affiliate URL. NEVER massage it —
+    // Open the byte-for-byte stored affiliate URL. NEVER massage it;
     // every tracking param is the creator's attribution.
     window.open(product.affiliate_url, "_blank", "noopener,noreferrer");
   }, [product.affiliate_url]);
 
   return (
-    <article className="tryon-card">
+    <article className={`tryon-card ${inOutfit ? "is-in-outfit" : ""}`}>
       <div className="tryon-card-image-wrap">
+        {tryOnEligible ? (
+          <button
+            type="button"
+            className={`tryon-card-select ${inOutfit ? "is-selected" : ""}`}
+            aria-pressed={inOutfit}
+            aria-label={inOutfit ? "Remove from outfit" : "Add to outfit"}
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleOutfit(product);
+            }}
+          >
+            {inOutfit ? "✓" : "+"}
+          </button>
+        ) : null}
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           className="tryon-card-image"
@@ -405,22 +610,179 @@ function ProductCard({
         ) : null}
       </div>
       <div className="tryon-card-actions">
+        {tryOnEligible ? (
+          <button
+            type="button"
+            className="tryon-btn tryon-btn-primary"
+            onClick={() => onTryOn(product)}
+          >
+            Try This On
+          </button>
+        ) : null}
         <button
           type="button"
-          className="tryon-btn tryon-btn-primary"
-          onClick={() => onTryOn(product)}
-        >
-          Try This On
-        </button>
-        <button
-          type="button"
-          className="tryon-btn tryon-btn-secondary"
+          className={`tryon-btn ${tryOnEligible ? "tryon-btn-secondary" : "tryon-btn-primary"}`}
           onClick={onShop}
         >
           Shop
         </button>
       </div>
     </article>
+  );
+}
+
+/**
+ * Sticky bottom tray showing the in-progress outfit. Lives above
+ * the search asker bar so neither obscures the other. Each
+ * thumbnail click removes that item from the outfit.
+ */
+function OutfitTray({
+  items,
+  onClear,
+  onRemove,
+  onRender,
+  rendering,
+}: {
+  items: Product[];
+  onClear: () => void;
+  onRemove: (p: Product) => void;
+  onRender: () => void;
+  rendering: boolean;
+}) {
+  return (
+    <div className="tryon-outfit-tray" role="region" aria-label="Outfit builder">
+      <div className="tryon-outfit-thumbs">
+        {items.map((p) => (
+          <button
+            key={p.id}
+            type="button"
+            className="tryon-outfit-thumb"
+            aria-label={`Remove ${p.product_title} from outfit`}
+            onClick={() => onRemove(p)}
+            title={`${p.brand ? p.brand + " " : ""}${p.product_title} (tap to remove)`}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={p.image_url} alt="" loading="lazy" decoding="async" />
+            <span className="tryon-outfit-thumb-x" aria-hidden>
+              ✕
+            </span>
+          </button>
+        ))}
+      </div>
+      <div className="tryon-outfit-actions">
+        <button
+          type="button"
+          className="tryon-btn tryon-btn-ghost"
+          onClick={onClear}
+          disabled={rendering}
+        >
+          Clear
+        </button>
+        <button
+          type="button"
+          className="tryon-btn tryon-btn-primary"
+          onClick={onRender}
+          disabled={rendering}
+        >
+          {rendering ? "Rendering…" : `Try on this outfit (${items.length})`}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Outfit render modal. Mirrors TryOnModal's structure but lists all
+ * items in the outfit on success so each one keeps its own Shop
+ * button with byte-for-byte affiliate URL preserved.
+ */
+function OutfitModal({
+  state,
+  onClose,
+}: {
+  state: Exclude<OutfitRender, { state: "idle" }>;
+  onClose: () => void;
+}) {
+  const titleList = state.products
+    .map((p) => `${p.brand ? p.brand + " " : ""}${p.product_title}`)
+    .join(", ");
+
+  return (
+    <div className="tryon-modal-scrim" role="dialog" aria-modal="true" onClick={onClose}>
+      <div className="tryon-modal" onClick={(e) => e.stopPropagation()}>
+        <button
+          type="button"
+          className="tryon-modal-close"
+          onClick={onClose}
+          aria-label="Close"
+        >
+          ✕
+        </button>
+        {state.state === "loading" ? (
+          <div className="tryon-modal-body tryon-modal-loading">
+            <div className="tryon-spinner" />
+            <p>
+              Rendering your outfit on your photo…
+            </p>
+            <p className="tryon-modal-sub">
+              {state.products.length} pieces, chained through the VTON model. Allow ~{state.products.length * 15}–{state.products.length * 25} seconds.
+            </p>
+          </div>
+        ) : null}
+        {state.state === "result" ? (
+          <div className="tryon-modal-body">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img className="tryon-modal-image" src={state.signedUrl} alt="" />
+            <div className="tryon-modal-caption">{titleList}</div>
+            <div className="tryon-outfit-result-shops">
+              {state.products.map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  className="tryon-outfit-result-shop"
+                  onClick={() =>
+                    window.open(
+                      p.affiliate_url,
+                      "_blank",
+                      "noopener,noreferrer"
+                    )
+                  }
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={p.image_url} alt="" loading="lazy" />
+                  <span className="tryon-outfit-result-shop-label">
+                    Shop{p.brand ? ` ${p.brand}` : ""}
+                  </span>
+                </button>
+              ))}
+            </div>
+            <div className="tryon-modal-actions">
+              <a
+                className="tryon-btn tryon-btn-secondary"
+                href={state.signedUrl}
+                download
+              >
+                Save image
+              </a>
+            </div>
+          </div>
+        ) : null}
+        {state.state === "blocked" ? (
+          <div className="tryon-modal-body tryon-modal-blocked">
+            <h2>{REASON_COPY[state.reason].title}</h2>
+            <p>{REASON_COPY[state.reason].body}</p>
+            {REASON_COPY[state.reason].cta ? (
+              <a
+                className="tryon-btn tryon-btn-primary"
+                href={REASON_COPY[state.reason].cta!.href}
+              >
+                {REASON_COPY[state.reason].cta!.label}
+              </a>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+    </div>
   );
 }
 
