@@ -32,7 +32,7 @@ export type ResolvedLink = {
     realPrice: string | null;
     realImage: string | null;
     brandMatched: boolean;
-    wrapped: boolean; // true when Skimlinks-wrapped (host in network)
+    wrapped: boolean; // always false now (the platform no longer wraps off-catalog merchant URLs); kept for back-compat with consumers
     source: string;
   };
   /**
@@ -181,7 +181,7 @@ function ownedStoreLink(brand: OwnedBrand, productName: string): string {
  * Resolves a recommendation to one of four tiers:
  *
  *   feed       — rec.product_id exists in this creator's products table
- *   aggregator — fashion/beauty/accessories with no catalog match (Skimlinks)
+ *   aggregator — fashion/beauty/accessories with no catalog match (bare merchant URL)
  *   hotel      — travel category
  *   none       — dining / non-monetizable
  *
@@ -320,11 +320,13 @@ export async function resolveLink(
     };
   }
 
-  // Tier 2: aggregator — live Serper resolution + Skimlinks wrap if in network.
+  // Tier 2: aggregator — live Serper resolution, bare merchant URL.
   if (FEED_BACKED_CATEGORIES.has(category) || !category) {
     const live = await resolveProductLive(rec.brand, rec.name);
-    // If Serper returned a real URL, use it (wrap conditionally). Otherwise
-    // fall back to the existing brand-search → Skimlinks pipeline.
+    // If Serper returned a real URL, use it bare. Otherwise fall back to
+    // the brand-search pipeline. We no longer wrap off-catalog merchant
+    // URLs through any affiliate aggregator (creators keep 100% via
+    // their own feed-tier URLs; AskMai monetizes via subscriptions).
     let url: string;
     let wrapped = false;
     if (live.realUrl) {

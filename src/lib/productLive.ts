@@ -25,7 +25,6 @@
 import { supabaseAdmin } from "./supabase";
 import {
   BRAND_DOMAINS,
-  IN_NETWORK_HOSTS,
   LUXURY_BRANDS,
   brandOwnDomainHost,
   fallbackSearchUrl,
@@ -242,22 +241,16 @@ export async function resolveProductLive(
   return p;
 }
 
-/** Skimlinks-wrap iff the URL's host is in our affiliate network. */
-export function wrapIfInNetwork(url: string, creatorSlug: string): {
+/**
+ * Returns the URL unwrapped. The platform no longer routes off-catalog
+ * merchant URLs through any affiliate aggregator: creators keep 100% of
+ * affiliate revenue via their own feed-tier URLs, and AskMai monetizes
+ * on user subscriptions. The function signature is retained as a no-op
+ * so call sites continue to compile; `wrapped` is always false.
+ */
+export function wrapIfInNetwork(url: string, _creatorSlug: string): {
   url: string;
   wrapped: boolean;
 } {
-  const host = urlHost(url);
-  if (!host) return { url, wrapped: false };
-  const inNetwork = IN_NETWORK_HOSTS.has(host) ||
-    Array.from(IN_NETWORK_HOSTS).some((h) => host.endsWith(`.${h}`));
-  if (!inNetwork) return { url, wrapped: false };
-  const id = process.env.SKIMLINKS_PUBLISHER_ID;
-  if (!id) return { url, wrapped: false };
-  const wrapped = `https://go.skimresources.com/?id=${encodeURIComponent(
-    id
-  )}&xs=1&url=${encodeURIComponent(url)}&xcust=${encodeURIComponent(
-    creatorSlug
-  )}`;
-  return { url: wrapped, wrapped: true };
+  return { url, wrapped: false };
 }

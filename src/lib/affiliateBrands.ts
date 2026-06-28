@@ -203,57 +203,6 @@ export const LUXURY_BRANDS = new Set(
 /** Alias kept for the old import path used by affiliateLinks.ts. */
 export const MYTHERESA_BRANDS = LUXURY_BRANDS;
 
-/**
- * Hosts whose links we wrap with Skimlinks. Everything else gets unwrapped
- * (no point pretending to track a click against a merchant that isn't on
- * our affiliate network).
- */
-export const IN_NETWORK_HOSTS = new Set<string>([
-  // Fashion / beauty / department stores
-  "thereformation.com",
-  "aritzia.com",
-  "madewell.com",
-  "everlane.com",
-  "freepeople.com",
-  "anthropologie.com",
-  "sephora.com",
-  "ulta.com",
-  "nordstrom.com",
-  "saksfifthavenue.com",
-  "saks.com",
-  "mytheresa.com",
-  "net-a-porter.com",
-  "shopbop.com",
-  "revolve.com",
-  "fwrd.com",
-  "ssense.com",
-  "farfetch.com",
-  "neimanmarcus.com",
-  "bloomingdales.com",
-  "macys.com",
-  "abercrombie.com",
-  "sezane.com",
-  "jcrew.com",
-  // Home & lifestyle — Skimlinks merchants. Note: IKEA is intentionally
-  // excluded (their affiliate program is direct-only, not in Skimlinks);
-  // Etsy is excluded pending confirmation.
-  "westelm.com",
-  "potterybarn.com",
-  "potterybarnkids.com",
-  "article.com",
-  "target.com",
-  "wayfair.com",
-  "crateandbarrel.com",
-  "cb2.com",
-  "luluandgeorgia.com",
-  "rejuvenation.com",
-  "schoolhouse.com",
-  "schoolhouseelectric.com",
-  "mcgeeandco.com",
-  "burkedecor.com",
-  "lampsplus.com",
-]);
-
 export function normalizeBrand(b: string | undefined): string {
   return (b ?? "").trim().toLowerCase();
 }

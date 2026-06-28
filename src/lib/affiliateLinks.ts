@@ -1,13 +1,17 @@
 /**
  * Per-tier affiliate link generators.
  *
- *   1. feed       creator's own products table row (real affiliate URL)
- *   2. aggregator live Serper-resolved real product URL (Skimlinks-wrapped
- *                 when host is in our affiliate network); falls back to a
- *                 brand-own-site search URL or Google Shopping
+ *   1. feed       creator's own products table row (real affiliate URL,
+ *                 with the creator's tracking params preserved byte-for-byte)
+ *   2. aggregator live Serper-resolved real product URL, or a brand-search
+ *                 fallback. Links are returned BARE; the platform no longer
+ *                 wraps off-catalog merchant URLs through an aggregator
+ *                 network. Creators keep 100% of affiliate revenue via
+ *                 their own feed-tier URLs; AskMai monetizes on user
+ *                 subscriptions, not on link wrapping.
  *   3. hotel      hotel affiliate (Booking / Expedia / Travelpayouts) or
  *                 plain Booking search when no creds are configured
- *   4. place      restaurant / cafe — Reserve / Directions / Menu search URLs
+ *   4. place      restaurant / cafe, Reserve / Directions / Menu search URLs
  *   5. none       no link (fallback only)
  */
 
@@ -30,6 +34,10 @@ function sanitizeMerchantUrl(u: string | undefined): string | null {
   if (!u) return null;
   const trimmed = u.trim();
   if (!/^https?:\/\//i.test(trimmed)) return null;
+  // Reject pre-wrapped aggregator URLs. Off-catalog products should be
+  // bare merchant URLs from the resolver, not aggregator deep-links
+  // (we don't wrap anymore, and accidentally letting one through would
+  // funnel a click to a third-party publisher ID).
   if (
     /click\.linksynergy\.com|go\.skimresources\.com|skimresources\.com|rakuten\.com|impact\.com|mavely\.com|shopstyle\.it/i.test(
       trimmed
@@ -73,10 +81,16 @@ function fallbackMerchantUrl(p: {
 }
 
 /**
- * Legacy entry point — used by the dining/travel paths and as a final
+ * Legacy entry point, used by the dining/travel paths and as a final
  * fallback when Serper isn't applicable. The Serper-backed live resolution
  * for aggregator-tier products goes through resolveLink.ts directly, not
  * this helper.
+ *
+ * Returns the bare merchant URL (or a brand-search fallback). The
+ * platform does NOT wrap off-catalog merchant URLs through any
+ * affiliate aggregator. Creators' own catalog products carry their
+ * affiliate URL byte-for-byte from the products table; off-catalog
+ * picks point at the real merchant page directly.
  */
 export function generateAggregatorLink(args: {
   merchantUrl?: string;
@@ -85,23 +99,7 @@ export function generateAggregatorLink(args: {
 }): string {
   const realFallback = fallbackMerchantUrl(args.product);
   const merchant = sanitizeMerchantUrl(args.merchantUrl) ?? realFallback;
-
-  let resolved: string;
-  if (process.env.SKIMLINKS_PUBLISHER_ID) {
-    const id = encodeURIComponent(process.env.SKIMLINKS_PUBLISHER_ID);
-    const url = encodeURIComponent(merchant);
-    const xcust = encodeURIComponent(args.creatorSlug);
-    resolved = `https://go.skimresources.com/?id=${id}&xs=1&url=${url}&xcust=${xcust}`;
-  } else if (
-    process.env.MAVELY_API_KEY &&
-    process.env.MAVELY_PARTNER_ID
-  ) {
-    resolved = merchant;
-  } else {
-    resolved = merchant;
-  }
-
-  return ensureRealUrl(resolved, realFallback);
+  return ensureRealUrl(merchant, realFallback);
 }
 
 /**
@@ -182,11 +180,7 @@ export function menuSearchUrl(name: string, location?: string): string {
 
 export function activeProviders() {
   return {
-    aggregator: process.env.SERPER_API_KEY
-      ? "serper+skimlinks"
-      : process.env.SKIMLINKS_PUBLISHER_ID
-      ? "skimlinks"
-      : "direct",
+    aggregator: process.env.SERPER_API_KEY ? "serper" : "direct",
     hotel: process.env.BOOKING_AFFILIATE_ID
       ? "booking"
       : process.env.EXPEDIA_AFFILIATE_ID
