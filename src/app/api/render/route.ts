@@ -83,6 +83,14 @@ type IncomingItem = {
   image_url?: string;
   name?: string;
   brand?: string;
+  // Subcategory used by the server to decide whether this item is
+  // chainable through the VTON pipeline. One of: tops, bottoms,
+  // dresses, bags (chainable) or shoes, jewelry, accessories,
+  // outerwear, swim, beauty, home, other (skipped from the FASHN
+  // chain, kept in the items array for shoppability / logging).
+  // Optional for backward compat; an item without a category gets
+  // treated as the conservative default (chained with FASHN's auto).
+  category?: string;
 };
 
 type IncomingBody = {
@@ -110,7 +118,7 @@ export async function POST(request: Request) {
   // Telemetry for the 400 path: when items arrive but none pass the
   // server's URL validation, log each item's URL shape so the client-
   // side bug is easy to identify (relative URL? proxied URL? missing?).
-  const imageUrls: string[] = [];
+  const validated: { image_url: string; category: string | null }[] = [];
   const rejectedShapes: string[] = [];
   for (const item of items) {
     const url = typeof item?.image_url === "string" ? item.image_url.trim() : "";
@@ -126,26 +134,30 @@ export async function POST(request: Request) {
       rejectedShapes.push(`(non-http: "${url.slice(0, 40)}")`);
       continue;
     }
-    imageUrls.push(url);
+    const cat =
+      typeof item?.category === "string" && item.category.trim()
+        ? item.category.trim().toLowerCase()
+        : null;
+    validated.push({ image_url: url, category: cat });
   }
-  if (imageUrls.length === 0) {
+  if (validated.length === 0) {
     console.warn(
       `[render] 400 no_items: kind=${kind} items_in=${items.length} rejected=[${rejectedShapes.join(", ")}]`
     );
     return Response.json({ error: "no_items" }, { status: 400 });
   }
-  if (kind === "single" && imageUrls.length > 1) {
-    imageUrls.splice(1);
+  if (kind === "single" && validated.length > 1) {
+    validated.splice(1);
   }
   // Trim, never reject: a cap-exceeded outfit should still render,
   // just with the first N (highest-ranked) items. The client's
   // dedupeOutfitRecs has already ensured one-per-slot, so slicing
   // off the tail just drops the least-important slot fills.
-  if (imageUrls.length > MAX_ITEMS_PER_RENDER) {
+  if (validated.length > MAX_ITEMS_PER_RENDER) {
     console.log(
-      `[render] trim: kind=${kind} count=${imageUrls.length} -> ${MAX_ITEMS_PER_RENDER}`
+      `[render] trim: kind=${kind} count=${validated.length} -> ${MAX_ITEMS_PER_RENDER}`
     );
-    imageUrls.splice(MAX_ITEMS_PER_RENDER);
+    validated.splice(MAX_ITEMS_PER_RENDER);
   }
 
   const creatorSlug =
@@ -206,11 +218,13 @@ export async function POST(request: Request) {
   // Upstream VTON call. runRender returns a structured result so we
   // can map specific failures (moderation, pose, image load) to user-
   // facing error codes without parsing exception messages. No credit
-  // is consumed unless result.ok is true.
+  // is consumed unless result.ok is true. runRender filters items by
+  // chainable category internally (shoes / jewelry / etc. stay in
+  // the array for logging but get skipped from the FASHN chain).
   const result = await runRender({
     personBuffer: person.buffer,
     personMime: person.mime,
-    itemImageUrls: imageUrls,
+    items: validated,
   });
 
   if (!result.ok) {
@@ -272,7 +286,7 @@ export async function POST(request: Request) {
     userId: session.userId,
     creatorSlug: creatorSlug || null,
     kind,
-    itemCount: imageUrls.length,
+    itemCount: validated.length,
     source: source ?? "included",
     imagePath: stored.path,
   });

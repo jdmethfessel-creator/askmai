@@ -334,19 +334,95 @@ export type RunRenderError = {
  * the whole render fails; partial outfits are not surfaced because
  * they read as incomplete to the user.
  */
+// Subcategories the FASHN chain will actually render. Anything
+// else (shoes, jewelry, accessories, outerwear, swim, beauty,
+// home, other) stays in the items array for shoppability + logging
+// but gets skipped from the FASHN chain so we don't burn a pass
+// on something the model can't reliably swap. Mirrors
+// TRYON_ELIGIBLE_CATEGORIES in the grid client and keeps the
+// "no shoes" rule honored regardless of who's calling /api/render.
+const CHAINABLE_SUBCATEGORIES = new Set<string>([
+  "tops",
+  "bottoms",
+  "dresses",
+  "bags",
+]);
+
+// Map our internal subcategory taxonomy to FASHN tryon-v1.6's
+// `category` enum. FASHN supports auto / tops / bottoms /
+// one-pieces. Bags get `auto` because FASHN has no bags enum and
+// we'd rather let the model classify than pin it wrong.
+//
+// Passing an explicit category (vs "auto" for everything) is the
+// load-bearing fix for the chained "phantom denim" artifact: when
+// FASHN auto-classifies an ambiguous garment image it can place
+// the wrong region or add spurious accessories (a jeans-shaped
+// silhouette tied at the waist of a top render). Pinning each
+// pass to the right region keeps the swap targeted.
+function fashnCategoryFor(subcategory: string | null): VtonCategory {
+  switch (subcategory) {
+    case "tops":
+      return "tops";
+    case "bottoms":
+      return "bottoms";
+    case "dresses":
+      return "one-pieces";
+    default:
+      return "auto";
+  }
+}
+
 export async function runRender(args: {
   personBuffer: Buffer;
   personMime: string;
-  itemImageUrls: string[];
-  category?: VtonCategory;
+  /**
+   * All items the client sent, in their original order. Items
+   * whose category is not in CHAINABLE_SUBCATEGORIES are skipped
+   * from the FASHN chain (shoes/jewelry/etc.) so the result
+   * doesn't carry a residue pass that failed to place them.
+   */
+  items: { image_url: string; category: string | null }[];
 }): Promise<
   | { ok: true; pngBuffer: Buffer; provider: "fashn" | "replicate" }
   | { ok: false; error: RunRenderError }
 > {
-  if (args.itemImageUrls.length === 0) {
+  if (args.items.length === 0) {
     return {
       ok: false,
-      error: { kind: "error", message: "no item images provided" },
+      error: { kind: "error", message: "no items provided" },
+    };
+  }
+
+  // Split into chainable vs skipped. We log the skipped set so the
+  // user-facing "your outfit" includes the visible pieces but the
+  // chain only spends FASHN credits on what FASHN can actually
+  // render. Items without a category (legacy callers) default to
+  // chainable so we don't silently drop a single-item Try-On.
+  const chainable: { image_url: string; category: string | null }[] = [];
+  const skipped: { image_url: string; category: string | null }[] = [];
+  for (const it of args.items) {
+    if (it.category && !CHAINABLE_SUBCATEGORIES.has(it.category)) {
+      skipped.push(it);
+    } else {
+      chainable.push(it);
+    }
+  }
+  if (skipped.length > 0) {
+    console.log(
+      `[render] skipping ${skipped.length} non-chainable item(s) from FASHN chain: [${skipped
+        .map((s) => s.category ?? "?")
+        .join(", ")}]`
+    );
+  }
+  if (chainable.length === 0) {
+    // Every item was skipped (e.g. an outfit of only shoes). Return
+    // a clean failure so the route surfaces "no_items" semantics.
+    return {
+      ok: false,
+      error: {
+        kind: "garment_unsupported",
+        message: `no chainable items: all ${args.items.length} were non-chainable categories`,
+      },
     };
   }
 
@@ -357,23 +433,20 @@ export async function runRender(args: {
   let workingMime = args.personMime;
   let lastResult: VtonResult | null = null;
 
-  for (let i = 0; i < args.itemImageUrls.length; i++) {
-    const url = args.itemImageUrls[i];
+  for (let i = 0; i < chainable.length; i++) {
+    const it = chainable[i];
+    const fashnCat = fashnCategoryFor(it.category);
     const r = await tryOn({
       personBuffer: workingPerson,
       personMime: workingMime,
-      garmentImageUrl: url,
-      // category isn't passed through from the route today (the
-      // /api/render body has no field for it); fallback to auto and
-      // let FASHN classify. Future: add a category field to the
-      // grid's Try-On button so we can be explicit.
-      category: args.category ?? "auto",
+      garmentImageUrl: it.image_url,
+      category: fashnCat,
       garmentPhotoType: "model",
     });
 
     if (!r.ok) {
       console.error(
-        `[render] vton item ${i + 1}/${args.itemImageUrls.length} failed reason=${r.reason} detail=${r.detail}`
+        `[render] vton item ${i + 1}/${chainable.length} (${it.category ?? "?"} -> ${fashnCat}) failed reason=${r.reason} detail=${r.detail}`
       );
       // Map VtonFailureReason -> RunRenderError.kind. The route
       // turns moderation_blocked into a 422 with a specific user
@@ -389,7 +462,7 @@ export async function runRender(args: {
     }
 
     console.log(
-      `[render] vton item ${i + 1}/${args.itemImageUrls.length} ok provider=${r.provider} runtime=${r.runtimeMs}ms${r.creditsUsed != null ? ` credits=${r.creditsUsed}` : ""}`
+      `[render] vton item ${i + 1}/${chainable.length} (${it.category ?? "?"} -> ${fashnCat}) ok provider=${r.provider} runtime=${r.runtimeMs}ms${r.creditsUsed != null ? ` credits=${r.creditsUsed}` : ""}`
     );
 
     // Output of this call becomes input to the next. Mime is always

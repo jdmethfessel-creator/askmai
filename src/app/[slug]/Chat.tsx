@@ -2,7 +2,12 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ChatMessage, Rec } from "@/lib/types";
-import { dedupeOutfitRecs, hasValidOutfitComposition } from "@/lib/outfitSlots";
+import {
+  classifyOutfitSlot,
+  dedupeOutfitRecs,
+  hasValidOutfitComposition,
+} from "@/lib/outfitSlots";
+import RenderLoadingState from "../_tryon/RenderLoadingState";
 import SignInModal from "@/app/_components/SignInModal";
 
 const SUGGESTIONS = [
@@ -81,12 +86,52 @@ type RenderQuota = {
   hasPhoto: boolean;
 };
 
+type LoadingThumb = { src: string; alt: string };
 type RenderState =
   | { phase: "closed" }
-  | { phase: "loading"; kind: "single" | "outfit" }
+  | {
+      phase: "loading";
+      kind: "single" | "outfit";
+      thumbnails: LoadingThumb[];
+      label: string;
+    }
   | { phase: "result"; url: string; kind: "single" | "outfit" }
   | { phase: "gate"; reason: "signin" | "age" | "photo" | "pack" }
   | { phase: "error"; message: string };
+
+/**
+ * Map the chat's OutfitSlot taxonomy (top/bottom/dress/bag/shoes/
+ * jewelry/accessory/...) to the grid's subcategory enum
+ * (tops/bottoms/dresses/bags/shoes/...). The server's render route
+ * uses the grid taxonomy to decide what's chainable through FASHN
+ * (only tops/bottoms/dresses/bags). Returns undefined for slots
+ * with no clean mapping so the server's category filter treats them
+ * as "unknown -> chainable by default" (matches single-item Try-On
+ * behavior from before category was a field).
+ */
+function subcategoryForSlot(slot: string): string | undefined {
+  switch (slot) {
+    case "top":
+      return "tops";
+    case "bottom":
+      return "bottoms";
+    case "dress":
+      return "dresses";
+    case "bag":
+      return "bags";
+    case "shoes":
+      return "shoes";
+    case "jewelry":
+      return "jewelry";
+    case "outerwear":
+      return "outerwear";
+    case "sunglasses":
+    case "accessory":
+      return "accessories";
+    default:
+      return undefined;
+  }
+}
 
 /**
  * Bundle of the props every card-level render pill needs. Plumbed
@@ -179,6 +224,12 @@ export default function Chat({
       // Filter to qualifying items with a usable reference image URL.
       // No image_url means we have nothing to send as a garment
       // reference, so silently drop.
+      //
+      // category is derived from classifyOutfitSlot(rec) and mapped
+      // to the grid's subcategory taxonomy so the server's chainable
+      // filter (shoes / jewelry / accessories get skipped from the
+      // FASHN chain) behaves the same regardless of which client
+      // posted the request.
       const items = recs
         .filter(qualifiesForRender)
         .filter((r) => typeof r.image_url === "string" && r.image_url.length > 0)
@@ -186,6 +237,7 @@ export default function Chat({
           image_url: r.image_url as string,
           name: r.name,
           brand: r.brand,
+          category: subcategoryForSlot(classifyOutfitSlot(r)),
         }));
       if (items.length === 0) {
         setRenderState({ phase: "error", message: "Nothing to render here." });
@@ -203,7 +255,25 @@ export default function Chat({
         setRenderState({ phase: "gate", reason: "pack" });
         return;
       }
-      setRenderState({ phase: "loading", kind });
+      // Thumbnails + label drive the new RenderLoadingState component
+      // so the wait shows the actual pieces and a rotating styling
+      // line in the creator's voice. Filter to qualifying items
+      // (same set the server will chain) so the thumbnails match
+      // what's actually being rendered.
+      const renderedRecs = recs
+        .filter(qualifiesForRender)
+        .filter(
+          (r) => typeof r.image_url === "string" && r.image_url.length > 0
+        );
+      const thumbnails: LoadingThumb[] = renderedRecs.map((r) => ({
+        src: r.image_url as string,
+        alt: r.name,
+      }));
+      const label =
+        kind === "single" && renderedRecs[0]
+          ? `${renderedRecs[0].brand ? renderedRecs[0].brand + " " : ""}${renderedRecs[0].name}`
+          : "your outfit";
+      setRenderState({ phase: "loading", kind, thumbnails, label });
       try {
         const r = await fetch("/api/render", {
           method: "POST",
@@ -2026,7 +2096,24 @@ function RenderModalBody({
   onClose: () => void;
 }) {
   if (state.phase === "loading") {
-    return <LoadingPanel accent={accent} />;
+    // Unified loader (rotating styling lines + thumbnails + eased
+    // progress bar) shared with the Shop grid's TryOn / Outfit
+    // modals (see src/app/_tryon/RenderLoadingState.tsx). The
+    // chat-local LoadingPanel below is retained for any code path
+    // that still needs the old no-thumbnail variant; this branch
+    // serves every active render request from the chat surface.
+    return (
+      <RenderLoadingState
+        thumbnails={state.thumbnails}
+        garmentLabel={state.label}
+        expectedSeconds={
+          state.kind === "outfit"
+            ? Math.max(20, state.thumbnails.length * 18)
+            : 60
+        }
+        loaded={false}
+      />
+    );
   }
 
   if (state.phase === "result") {

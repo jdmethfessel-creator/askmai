@@ -311,6 +311,7 @@ export default function TryOnGrid({
                 image_url: product.image_url,
                 name: product.product_title,
                 brand: product.brand ?? undefined,
+                category: product.product_subcategory ?? undefined,
               },
             ],
           }),
@@ -421,6 +422,7 @@ export default function TryOnGrid({
             image_url: p.image_url,
             name: p.product_title,
             brand: p.brand ?? undefined,
+            category: p.product_subcategory ?? undefined,
           })),
         }),
       });
