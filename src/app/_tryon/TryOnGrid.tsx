@@ -39,6 +39,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import SignInModal from "../_components/SignInModal";
 
 type Product = {
   id: string;
@@ -55,6 +56,14 @@ type Product = {
 
 type Category = { key: string; label: string; count: number };
 
+type Interpreted = {
+  subcategory: string | null;
+  maxPrice: number | null;
+  descriptors: string[];
+  relaxed: "none" | "descriptors" | "price" | "subcategory" | "all";
+  caption: string | null;
+};
+
 type RenderResult =
   | { state: "idle" }
   | { state: "loading"; product: Product }
@@ -62,18 +71,18 @@ type RenderResult =
   | { state: "blocked"; product: Product; reason: BlockReason };
 
 type BlockReason =
-  | "not_signed_in"
   | "age_not_verified"
   | "no_photo"
   | "no_quota"
   | "render_failed";
 
+// not_signed_in is intentionally NOT in BlockReason. When the render
+// endpoint returns 401 we open the existing SignInModal in-place; the
+// modal captures window.location.pathname as returnTo so the magic
+// link lands the user back on /cassdimicconew automatically. After
+// the SignInModal reload-button completes, the same Try-On click will
+// re-run from a signed-in session.
 const REASON_COPY: Record<BlockReason, { title: string; body: string; cta?: { label: string; href: string } }> = {
-  not_signed_in: {
-    title: "Sign in to try it on",
-    body: "Try-on uses your stored photo, so we need you signed in first.",
-    cta: { label: "Sign in", href: "/?signin=1" },
-  },
   age_not_verified: {
     title: "Quick age check",
     body: "Confirm your age once in your profile, then we can render.",
@@ -117,6 +126,8 @@ export default function TryOnGrid({
   const [searchQuery, setSearchQuery] = useState("");
   const [appliedQuery, setAppliedQuery] = useState("");
   const [render, setRender] = useState<RenderResult>({ state: "idle" });
+  const [showSignIn, setShowSignIn] = useState(false);
+  const [interpreted, setInterpreted] = useState<Interpreted | null>(null);
 
   // Each fetch round bumps the token; in-flight responses for a stale
   // token are discarded. Prevents a slow first-page response from
@@ -163,6 +174,11 @@ export default function TryOnGrid({
         setProducts((prev) => (opts.reset ? incoming : [...prev, ...incoming]));
         setCursor(j.nextCursor ?? null);
         setHasMore(Boolean(j.nextCursor));
+        // Only update interpreted on a reset fetch; subsequent
+        // pagination fetches reuse the same interpretation.
+        if (opts.reset) {
+          setInterpreted(j.interpreted ?? null);
+        }
       } finally {
         if (token === fetchTokenRef.current) setLoadingPage(false);
       }
@@ -224,11 +240,19 @@ export default function TryOnGrid({
           setRender({ state: "result", product, signedUrl: json.signed_url });
           return;
         }
+        // 401 not_signed_in: pop the existing SignInModal in-place
+        // instead of routing away. The modal captures the current
+        // pathname as returnTo so the magic-link lands the user back
+        // on /cassdimicconew automatically.
+        if (json.error === "not_signed_in") {
+          setRender({ state: "idle" });
+          setShowSignIn(true);
+          return;
+        }
         const reason: BlockReason =
-          (json.error as BlockReason) === "not_signed_in" ||
-          (json.error as BlockReason) === "age_not_verified" ||
-          (json.error as BlockReason) === "no_photo" ||
-          (json.error as BlockReason) === "no_quota"
+          json.error === "age_not_verified" ||
+          json.error === "no_photo" ||
+          json.error === "no_quota"
             ? (json.error as BlockReason)
             : "render_failed";
         setRender({ state: "blocked", product, reason });
@@ -282,14 +306,28 @@ export default function TryOnGrid({
         ))}
       </nav>
 
+      {interpreted && interpreted.caption ? (
+        <div className="tryon-interpreted" role="status" aria-live="polite">
+          <span className="tryon-interpreted-label">Showing</span>
+          <strong>{interpreted.caption}</strong>
+          {interpreted.relaxed !== "none" && interpreted.relaxed !== "all" ? (
+            <span className="tryon-interpreted-relaxed">
+              (broadened from your search)
+            </span>
+          ) : null}
+        </div>
+      ) : null}
+
       <main className="tryon-grid">
         {products.map((p) => (
           <ProductCard key={p.id} product={p} onTryOn={onTryOn} />
         ))}
         {products.length === 0 && !loadingPage ? (
           <p className="tryon-empty">
-            No products{appliedQuery ? ` matching "${appliedQuery}"` : ""}
+            No products
+            {appliedQuery ? ` for "${appliedQuery}"` : ""}
             {activeCategory !== "all" ? " in this category" : ""}.
+            {appliedQuery ? " Try a shorter query." : ""}
           </p>
         ) : null}
       </main>
@@ -315,6 +353,14 @@ export default function TryOnGrid({
 
       {render.state !== "idle" ? (
         <TryOnModal state={render} onClose={() => setRender({ state: "idle" })} />
+      ) : null}
+
+      {showSignIn ? (
+        <SignInModal
+          onClose={() => setShowSignIn(false)}
+          title="Sign in to try it on"
+          subtitle="One-tap email link. We'll bring you right back here."
+        />
       ) : null}
     </div>
   );
