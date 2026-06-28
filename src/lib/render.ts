@@ -229,20 +229,78 @@ async function applyBranding(pngBuffer: Buffer): Promise<Buffer> {
     .toBuffer();
 }
 
+// The branding overlay's gradient scrims (see
+// scripts/generate-share-overlay.mjs) are 14% of canvas height each,
+// at top and bottom. If we let the figure fill the canvas, the head
+// and feet land inside those scrims and read as cropped to the
+// viewer (literal pixel crop if the figure's aspect didn't match
+// the canvas's, visual obscuring even when it did).
+//
+// Fix: place the figure inside a SAFE INNER AREA whose bounds match
+// the scrim edges, with mid-gray padding outside. That guarantees
+// the body is always fully visible head-to-feet, regardless of
+// what aspect the VTON provider returns. Keep these constants in
+// sync with the scrim ratios in generate-share-overlay.mjs.
+const SCRIM_TOP_PX = Math.round(OVERLAY_HEIGHT * 0.14); // 215
+const SCRIM_BOT_PX = Math.round(OVERLAY_HEIGHT * 0.14); // 215
+const SAFE_INNER_WIDTH = OVERLAY_WIDTH; // 1024
+const SAFE_INNER_HEIGHT = OVERLAY_HEIGHT - SCRIM_TOP_PX - SCRIM_BOT_PX; // 1106
+// Mid-gray pad color. Matches the wordmark scrim's perceived tone
+// at its mid-opacity point so the bars read as part of the brand
+// frame rather than a separate background.
+const PAD_COLOR = { r: 144, g: 144, b: 144 } as const;
+
 /**
- * Resize the VTON provider's output to the share-card canvas.
- * FASHN tryon-v1.6 returns 864x1296; Replicate IDM-VTON returns
- * 768x1024 or similar. Both are 2:3 portrait so a contain-fit pad
- * is unnecessary; sharp's default resize preserves aspect and we
- * upscale with Lanczos3 (sharp's default kernel for upsizing).
+ * Place the VTON output onto the 1024x1536 share-card canvas inside
+ * the safe inner area (between the top + bottom scrim bands), with
+ * mid-gray padding outside. The body is never cropped: if the VTON
+ * output's aspect matches the inner area's (1024:1106 = 0.926) the
+ * figure fills it; otherwise sharp letterboxes the smaller axis
+ * with the pad color.
+ *
+ * FASHN tryon-v1.6 currently outputs 864x1296 (2:3, narrower than
+ * the inner area), so the figure scales to 737x1106 and lands
+ * centered with ~143px gray bars on either side. Replicate
+ * IDM-VTON returns 768x1024 (3:4, wider than the inner area), so
+ * the figure scales to 1024 wide and lands centered vertically
+ * inside the inner area. Either way, head sits at min y=215 and
+ * feet at max y=1321, both clear of the scrims.
  */
-async function fitToCanvas(pngBuffer: Buffer): Promise<Buffer> {
-  return sharp(pngBuffer)
+async function placeOnSafeCanvas(pngBuffer: Buffer): Promise<Buffer> {
+  const inputMeta = await sharp(pngBuffer).metadata();
+  console.log(
+    `[render] VTON output dimensions: ${inputMeta.width}x${inputMeta.height} (placing inside ${SAFE_INNER_WIDTH}x${SAFE_INNER_HEIGHT} safe area)`
+  );
+
+  // Resize with fit:"inside" preserves aspect and shrinks to fit
+  // whichever dimension is the constraint. No cropping ever.
+  const fitted = await sharp(pngBuffer)
     .resize({
+      width: SAFE_INNER_WIDTH,
+      height: SAFE_INNER_HEIGHT,
+      fit: "inside",
+      withoutEnlargement: false,
+    })
+    .png()
+    .toBuffer();
+
+  const fittedMeta = await sharp(fitted).metadata();
+  const fW = fittedMeta.width ?? SAFE_INNER_WIDTH;
+  const fH = fittedMeta.height ?? SAFE_INNER_HEIGHT;
+
+  // Center inside the safe inner band.
+  const left = Math.round((OVERLAY_WIDTH - fW) / 2);
+  const top = SCRIM_TOP_PX + Math.round((SAFE_INNER_HEIGHT - fH) / 2);
+
+  return sharp({
+    create: {
       width: OVERLAY_WIDTH,
       height: OVERLAY_HEIGHT,
-      fit: "cover",
-    })
+      channels: 3,
+      background: PAD_COLOR,
+    },
+  })
+    .composite([{ input: fitted, top, left }])
     .png()
     .toBuffer();
 }
@@ -348,13 +406,13 @@ export async function runRender(args: {
     };
   }
 
-  // Resize to the share-card canvas, then composite the overlay.
-  // The fitToCanvas + applyBranding pair is the only post-processing
-  // we do; everything else (identity, pose, hair, background) comes
-  // from the VTON output unchanged.
+  // Place onto the share-card canvas inside the safe inner band,
+  // then composite the overlay. The placeOnSafeCanvas + applyBranding
+  // pair is the only post-processing we do; everything else (identity,
+  // pose, hair, background) comes from the VTON output unchanged.
   try {
-    const sized = await fitToCanvas(lastResult.pngBuffer);
-    const branded = await applyBranding(sized);
+    const placed = await placeOnSafeCanvas(lastResult.pngBuffer);
+    const branded = await applyBranding(placed);
     return { ok: true, pngBuffer: branded, provider: lastResult.provider };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
