@@ -27,39 +27,30 @@ type MockupRec = {
 // at a glance. No restaurants / hotels / travel-booking — those
 // aren't categories the product serves yet.
 
-// 1) Special-occasion single look.
+// 1) Specific-occasion + tight budget.
 //
-// Price story matters here — the hero mockup is the first thing a
-// cold visitor sees, so the board can't read as "luxury-only or
-// don't bother." Anchor with one investment piece (the dress does
-// the visual work) and pair it with accessible finishers under
-// $50 and $150 so the range looks realistic. Real catalog items
-// only.
-const WEDDING_QUESTION = "what do I wear to a fall wedding";
-const WEDDING_CAPTION =
-  "fall wedding = one piece that does the work, the rest can be quiet. let the dress carry it, then mix in pieces you'll actually re-wear.";
-const WEDDING_BOARD: { hero: MockupRec; finishers: MockupRec[] } = {
+// This is the first board a cold visitor sees, so the prompt has
+// to land as something real people actually ask — a specific
+// outing, a specific city, a specific dollar ceiling. The board
+// must sum UNDER $400 all-in (cover + every finisher) so the
+// price story matches the prompt. Real catalog items, illustrative
+// prices for the mockup.
+const SOHO_QUESTION =
+  "I'm going to dinner in Soho with my boyfriend on Friday night. I need an outfit for under $400 all in.";
+const SOHO_CAPTION =
+  "Soho on a Friday means one piece that does the work and accessories that don't fight it. The Balia is fluid and dinner-appropriate, the pouch tucks into one hand, the earrings catch candlelight — $384 all in, sixteen under your ceiling.";
+const SOHO_BOARD: { hero: MockupRec; finishers: MockupRec[] } = {
   hero: {
-    brand: "Solace London",
-    name: "The Imani Maxi Dress",
-    price: "$945",
+    brand: "Reformation",
+    name: "Balia Linen Dress",
+    price: "$258",
     image:
       "/api/img?url=" +
       encodeURIComponent(
-        "https://static.shopmy.us/uploads/pretty-prod-1761845774367"
+        "https://static.shopmy.us/uploads/img-product-1751903970581"
       ),
   },
   finishers: [
-    {
-      brand: "Tony Bianco",
-      name: "Caprice Heel",
-      price: "$150",
-      image:
-        "/api/img?url=" +
-        encodeURIComponent(
-          "https://static.shopmy.us/uploads/pretty-prod-1771324332426"
-        ),
-    },
     {
       brand: "Abbode",
       name: "Signature Waffle Pouch",
@@ -83,40 +74,36 @@ const WEDDING_BOARD: { hero: MockupRec; finishers: MockupRec[] } = {
   ],
 };
 
-// 2) Multi-outfit travel/packing — the existing strong example.
-const PACK_QUESTION = "what should I pack for a NYC weekend";
-const PACK_CAPTION =
-  "okay a NYC weekend = walk-all-day, dress for dinner. here's what i'd pack:";
-const PACK_BOARD: { hero: MockupRec; finishers: MockupRec[] } = {
+// 2) Multi-outfit travel — one prompt, two looks (day + dinner).
+// Hero is the dinner moment; finishers carry daytime. The local
+// /demo/packing/* assets are static product photos under public/
+// and render anywhere they're referenced from.
+const BEACH_QUESTION =
+  "I'm going on a beach trip with a group of friends. I need an outfit for dinner and a daytime beach outfit.";
+const BEACH_CAPTION =
+  "Pack one fluid linen midi for dinner and let it pull double duty, the bikini that's the actual daytime outfit, and woven sandals you'll never take off. The dress moves at sunset; the bikini and sandals carry the day.";
+const BEACH_BOARD: { hero: MockupRec; finishers: MockupRec[] } = {
   hero: {
-    brand: "Citizens of Humanity",
-    name: "Brynn Drawstring Jeans",
-    price: "$298",
-    image:
-      "/api/img?url=" +
-      encodeURIComponent(
-        "https://static.shopmy.us/uploads/pretty-prod-1773958253330"
-      ),
+    brand: "Reformation",
+    name: "Amara Linen Midi Dress",
+    price: "$218",
+    image: "/demo/packing/reformation-amara.jpg",
   },
   finishers: [
     {
-      brand: "Enza Costa",
-      name: "Twill Everywhere Pants",
-      price: "$295",
-      image:
-        "/api/img?url=" +
-        encodeURIComponent(
-          "https://static.shopmy.us/uploads/pretty-prod-1778590419800"
-        ),
+      brand: "Frankies Bikinis",
+      name: "Reversible String Bikini Set",
+      price: "$130",
+      image: "/demo/packing/frankies-bikini.jpg",
     },
     {
-      brand: "Ring Concierge",
-      name: "Pavé Diamond Cloud Ring",
-      price: "$898",
+      brand: "Cult Gaia",
+      name: "Ada Sandals",
+      price: "$398",
       image:
         "/api/img?url=" +
         encodeURIComponent(
-          "https://static.shopmy.us/uploads/img-product-1732498195189"
+          "https://static.shopmy.us/uploads/pretty-prod-1754585259705"
         ),
     },
   ],
@@ -259,10 +246,10 @@ export default function Marketing({ signedIn }: { signedIn: boolean }) {
 
           <div className="lp-hero-board lp-fade-in" style={{ animationDelay: "520ms" }}>
             <ChatMockup
-              userMessage={WEDDING_QUESTION}
-              twinIntro={WEDDING_CAPTION}
-              hero={WEDDING_BOARD.hero}
-              finishers={WEDDING_BOARD.finishers}
+              userMessage={SOHO_QUESTION}
+              twinIntro={SOHO_CAPTION}
+              hero={SOHO_BOARD.hero}
+              finishers={SOHO_BOARD.finishers}
             />
           </div>
         </div>
@@ -308,10 +295,10 @@ export default function Marketing({ signedIn }: { signedIn: boolean }) {
           </h2>
           <p className="lp-pillar-body">
             Your audience asks the questions they&apos;d normally DM —
-            &ldquo;what should I pack for a NYC weekend,&rdquo; &ldquo;cute
-            going-out top&rdquo; — and your twin answers in your voice,
-            with named products they can shop on the spot. Every
-            follower, at the same time, every hour.
+            &ldquo;dinner outfit in Soho under $400,&rdquo; &ldquo;what
+            to pack for a beach trip&rdquo; — and your twin answers in
+            your voice, with named products they can shop on the spot.
+            Every follower, at the same time, every hour.
           </p>
           <ul className="lp-bullets">
             <li>Conversational, not a feed.</li>
@@ -321,10 +308,10 @@ export default function Marketing({ signedIn }: { signedIn: boolean }) {
         </div>
         <div className="lp-pillar-visual">
           <ChatMockup
-            userMessage={PACK_QUESTION}
-            twinIntro={PACK_CAPTION}
-            hero={PACK_BOARD.hero}
-            finishers={PACK_BOARD.finishers}
+            userMessage={BEACH_QUESTION}
+            twinIntro={BEACH_CAPTION}
+            hero={BEACH_BOARD.hero}
+            finishers={BEACH_BOARD.finishers}
           />
         </div>
       </section>
