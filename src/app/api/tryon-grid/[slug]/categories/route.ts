@@ -72,12 +72,14 @@ export async function GET(
   }
 
   // PostgREST doesn't expose GROUP BY directly; pull the column and
-  // count in memory. 1k rows is well within JS-side tabulation budget
-  // and saves a round-trip to a custom RPC.
+  // count in memory. Lift the default 1000-row response cap so a
+  // creator with 1k+ products is counted accurately (Cass landed at
+  // 1043; the default would silently undercount by 43).
   const { data, error } = await admin
     .from("creator_products")
     .select("product_subcategory")
-    .eq("creator_id", creator.id);
+    .eq("creator_id", creator.id)
+    .range(0, 9999);
   if (error) {
     console.error("[tryon-grid/categories]", error);
     return Response.json({ error: "query_failed" }, { status: 500 });
