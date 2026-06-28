@@ -479,7 +479,7 @@ export default function TryOnGrid({
   return (
     <div className="tryon-page">
       <header className="tryon-header">
-        <div className="tryon-header-eyebrow">{signedIn ? "Welcome back" : "Try-on grid"}</div>
+        <div className="tryon-header-eyebrow">Search my closet and favorite finds</div>
         <h1 className="tryon-header-title">{creatorName}</h1>
         {creatorBio ? <p className="tryon-header-bio">{creatorBio}</p> : null}
       </header>

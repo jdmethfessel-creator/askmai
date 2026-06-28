@@ -366,7 +366,74 @@ export async function POST(request: Request) {
     shopmyUpdated += slice.length;
   }
 
-  // --- 3. Post-fix verification + summary --------------------------
+  // --- 3. FRAME re-bucket (apparel mis-tagged into Home) -----------
+  // categorize.mjs used to include the keyword `frame` in the home
+  // regex (intended for picture frames). FRAME is also a denim /
+  // ready-to-wear brand, so every FRAME-branded apparel item
+  // bucketed into Home before the bottoms / tops rules got a chance.
+  // The source bug is fixed; this pass re-buckets the existing rows.
+  //
+  // Strategy: read all home-tagged rows whose brand or title
+  // contains "frame", re-derive subcategory using a minimal rules
+  // copy below, update the row. Genuine home items (e.g. a "Picture
+  // Frame") fall through to no match and are left as "home".
+  const FRAME_REBUCKET: Array<{ sub: string; re: RegExp }> = [
+    { sub: "dresses", re: /\b(dress(es)?|gown|sundress)\b/i },
+    { sub: "outerwear", re: /\b(blazer|coat|jacket|trench|parka|puffer|cardigan|cape|poncho|vest|moto|overcoat)\b/i },
+    { sub: "bottoms", re: /\b(pant|jean|trouser|short|skirt|legging|denim|chino|cargo|jogger)\b/i },
+    { sub: "tops", re: /\b(top|tee|tank|shirt|blouse|sweater|knit|polo|cami|bodysuit|crop|halter|tunic|pullover|hoodie|sweatshirt)\b/i },
+  ];
+  const { data: homeRows, error: hrErr } = await admin
+    .from("creator_products")
+    .select("id, product_title, brand, product_subcategory")
+    .eq("creator_id", creator.id)
+    .eq("product_subcategory", "home");
+  if (hrErr) {
+    return Response.json(
+      { error: `home read failed: ${hrErr.message}` },
+      { status: 500 }
+    );
+  }
+  const frameUpdates: Array<{ id: string; product_subcategory: string }> = [];
+  const frameByDestBucket: Record<string, number> = {};
+  for (const row of homeRows ?? []) {
+    const title = (row.product_title as string | null) ?? "";
+    const brand = (row.brand as string | null) ?? "";
+    const hay = `${title} ${brand}`;
+    if (!/frame/i.test(hay)) continue; // not a FRAME row
+    let newSub: string | null = null;
+    for (const rule of FRAME_REBUCKET) {
+      if (rule.re.test(hay)) {
+        newSub = rule.sub;
+        break;
+      }
+    }
+    if (!newSub) continue; // genuine home item (e.g. "Picture Frame")
+    frameUpdates.push({
+      id: row.id as string,
+      product_subcategory: newSub,
+    });
+    frameByDestBucket[newSub] = (frameByDestBucket[newSub] ?? 0) + 1;
+  }
+  let frameUpdated = 0;
+  for (let i = 0; i < frameUpdates.length; i += UPSERT_CHUNK) {
+    const slice = frameUpdates.slice(i, i + UPSERT_CHUNK);
+    const { error } = await admin
+      .from("creator_products")
+      .upsert(slice, { onConflict: "id" });
+    if (error) {
+      return Response.json(
+        {
+          error: `frame upsert at offset ${i} failed: ${error.message}`,
+          frame_updated_so_far: frameUpdated,
+        },
+        { status: 500 }
+      );
+    }
+    frameUpdated += slice.length;
+  }
+
+  // --- 4. Post-fix verification + summary --------------------------
   const totals: Record<string, number> = {};
   for (const net of ["shopbop", "revolve", "fwrd", "shopmy"]) {
     const { count } = await admin
@@ -396,6 +463,8 @@ export async function POST(request: Request) {
     ok: true,
     shopbop_updated: shopbopUpdates.length,
     shopmy_updated: shopmyUpdated,
+    frame_rebucketed: frameUpdated,
+    frame_by_dest_bucket: frameByDestBucket,
     totals,
     grand_total: grandTotal,
     sample_shopbop_image_urls: sampleUrls,

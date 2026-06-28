@@ -39,7 +39,16 @@ const KEYWORD_RULES = [
   { sub: "beauty", re: /\b(serum|cream|moisturizer|sunscreen|spf|lipstick|mascara|fragrance|perfume|lotion|cleanser|toner|mask|balm|polish|primer|foundation|concealer|shadow|liner)\b/i },
 
   // home / lifestyle
-  { sub: "home", re: /\b(candle|vase|throw|pillow|towel|sheet|mug|tray|frame|bowl|plate|rug|napkin|coaster|decor)\b/i },
+  //
+  // Note: `frame` is intentionally NOT in this regex. It used to be
+  // (for "picture frame"), but FRAME is also a popular denim and
+  // ready-to-wear brand (FRAME The Reboot Jeans, FRAME The Sculpted
+  // Shirt, etc.). The home rule ran before bottoms/tops in the
+  // rules order, so every FRAME-branded apparel item bucketed into
+  // Home. Picture frames are rare enough in our catalogs that
+  // dropping the keyword costs little; we'd rather a `picture
+  // frame` lands in `other` than route an entire denim brand wrong.
+  { sub: "home", re: /\b(candle|vase|throw|pillow|towel|sheet|mug|tray|bowl|plate|rug|napkin|coaster|decor)\b/i },
 
   // bottoms (before tops since "set" is ambiguous; specific bottom words win)
   { sub: "bottoms", re: /\b(pant|jean|trouser|short|skirt|legging|denim|chino|cargo|jogger|jumpsuit|romper)\b/i },
