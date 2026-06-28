@@ -161,10 +161,17 @@ export async function POST(request: Request) {
   const photoBuffer = Buffer.from(await file.arrayBuffer());
 
   // Step 6: canvas normalization. Two FASHN passes (tank then
-  // shorts). On any failure (no env vars, FASHN error, timeout,
-  // moderation), we skip and use the original as the canvas. This
-  // preserves working renders for users uploaded before the canvas
-  // basics were configured.
+  // shorts) to produce a neutral basics canvas. The basics URLs
+  // are hardcoded defaults in vton.ts (DEFAULT_CANVAS_TOP_URL /
+  // DEFAULT_CANVAS_BOTTOM_URL); env-var overrides exist but are
+  // never required, so normalization always attempts.
+  //
+  // On runtime failure (FASHN error, timeout, image_load_error),
+  // we still fall back to using the original photo as the canvas
+  // so the upload succeeds and the user has SOMETHING to render
+  // with. The admin route /api/admin/regenerate-canvas can retry
+  // normalization for any user whose canvas is the raw photo
+  // (detect via path: real canvases end in ".canvas.png").
   let finalCanvasPath = originalPath;
   let canvasNormalized = false;
   const norm = await normalizeCanvas({
@@ -191,13 +198,14 @@ export async function POST(request: Request) {
         `[tryon-upload] canvas normalized user=${session.userId} credits=${norm.totalCreditsUsed} runtime=${norm.runtimeMs}ms`
       );
     }
-  } else if (norm.reason === "no_basics_configured") {
-    console.log(
-      "[tryon-upload] canvas normalization skipped: TRYON_CANVAS_TOP_URL / TRYON_CANVAS_BOTTOM_URL not set"
-    );
   } else {
+    // Defaults are always set so the no_basics_configured branch
+    // is dead in practice; everything else is a real failure worth
+    // logging in detail. The render path will still work (using
+    // the raw photo as canvas), it'll just have the original
+    // outfit visible under partial swaps.
     console.warn(
-      `[tryon-upload] canvas normalization failed step=${norm.step ?? "?"} reason=${norm.reason} detail=${norm.detail} (falling back to original as canvas)`
+      `[tryon-upload] canvas normalization failed step=${norm.step ?? "?"} reason=${norm.reason} detail=${norm.detail} (falling back to original as canvas; user can re-trigger via /api/admin/regenerate-canvas)`
     );
   }
 
