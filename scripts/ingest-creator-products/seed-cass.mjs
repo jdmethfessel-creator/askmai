@@ -1,0 +1,124 @@
+#!/usr/bin/env node
+// One-shot seed for Cass DiMicco. Runs all three public-wishlist URLs
+// and prints a parsed-output report. Dry-run by default; --apply
+// upserts into creator_products.
+//
+// Usage:
+//   node --env-file=.env.local scripts/ingest-creator-products/seed-cass.mjs
+//   node --env-file=.env.local scripts/ingest-creator-products/seed-cass.mjs --apply
+
+import { ingestUrl } from "./parsers.mjs";
+
+const SOURCES = [
+  {
+    network: "shopbop",
+    url: "https://www.shopbop.com/hearts/cassdimicco/f47546d6-4053-479a-b887-bd80058a361c?extid=affprg_linkshare_SB-8yaPBDQV8ls&cvosrc=affiliate.linkshare.8yaPBDQV8ls&affuid=user-17709-pin-40272633-puser-null-src-ql&sharedid=42352&subid1=8yaPBDQV8ls-pEE2b2tdzT6vPeoFljNM0Q",
+    expectAffiliateKeys: ["extid", "cvosrc", "affuid", "sharedid", "subid1"],
+  },
+  {
+    network: "revolve",
+    url: "https://www.revolve.com/content/favorites/s/cass-dimiccos-favs-3000246?source=siplt&siplt=296d0&utm_source=rev_ambassador&utm_medium=ambassador&utm_campaign=glob_b_296d0",
+    expectAffiliateKeys: [
+      "source",
+      "siplt",
+      "utm_source",
+      "utm_medium",
+      "utm_campaign",
+    ],
+  },
+  {
+    network: "fwrd",
+    url: "https://www.fwrd.com/fw/PublicWishListView.jsp?email=Y2Fzc2FuZHJhZGltaWNjb0BnbWFpbC5jb20%3D&source=siplt&siplt=296d0&utm_source=rev_ambassador&utm_medium=ambassador&utm_campaign=glob_b_296d0",
+    expectAffiliateKeys: [
+      "source",
+      "siplt",
+      "utm_source",
+      "utm_medium",
+      "utm_campaign",
+    ],
+  },
+];
+
+const apply = process.argv.includes("--apply");
+
+const allRows = [];
+for (const src of SOURCES) {
+  console.log(`\n=== ${src.network.toUpperCase()} ===`);
+  console.log(`url: ${src.url}`);
+  let rows;
+  try {
+    rows = await ingestUrl(src.url);
+  } catch (e) {
+    console.error(`  FAILED: ${e.message}`);
+    continue;
+  }
+  console.log(`  parsed: ${rows.length} products`);
+
+  // Affiliate-param preservation check: every row's stored URL must
+  // carry every key from expectAffiliateKeys.
+  const violations = [];
+  for (const r of rows) {
+    const u = new URL(r.affiliate_url);
+    for (const k of src.expectAffiliateKeys) {
+      if (!u.searchParams.has(k)) violations.push({ id: r.source_external_id, missing: k });
+    }
+  }
+  if (violations.length) {
+    console.error(`  AFFILIATE PARAM VIOLATIONS (${violations.length}):`);
+    for (const v of violations.slice(0, 5)) console.error(`    ${v.id} missing ${v.missing}`);
+  } else {
+    console.log(
+      `  affiliate params preserved on all ${rows.length} URLs (${src.expectAffiliateKeys.join(", ")})`
+    );
+  }
+
+  // Sample card so eyes can confirm shape
+  const s = rows[0];
+  if (s) {
+    console.log("  sample[0]:");
+    console.log(`    brand:   ${s.brand}`);
+    console.log(`    title:   ${s.product_title}`);
+    console.log(`    price:   ${s.price_display}  (n=${s.price})`);
+    console.log(`    img:     ${s.image_url}`);
+    console.log(`    afflnk:  ${s.affiliate_url}`);
+  }
+  allRows.push(...rows);
+}
+
+console.log(`\n=== TOTAL ===`);
+console.log(`${allRows.length} products across ${SOURCES.length} networks`);
+const byNet = {};
+for (const r of allRows) byNet[r.source_network] = (byNet[r.source_network] || 0) + 1;
+console.log("by network:", byNet);
+
+if (!apply) {
+  console.log("\n[dry-run] no DB writes. Re-run with --apply to upsert.");
+  process.exit(0);
+}
+
+const { createClient } = await import("@supabase/supabase-js");
+const sb = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY,
+  { auth: { persistSession: false, autoRefreshToken: false } }
+);
+const { data: creator } = await sb
+  .from("creators")
+  .select("id")
+  .eq("slug", "cass")
+  .maybeSingle();
+if (!creator) {
+  console.error("creator slug 'cass' not found");
+  process.exit(1);
+}
+const payload = allRows.map((r) => ({ ...r, creator_id: creator.id }));
+const { error } = await sb
+  .from("creator_products")
+  .upsert(payload, {
+    onConflict: "creator_id,source_network,source_external_id",
+  });
+if (error) {
+  console.error("upsert failed:", error.message);
+  process.exit(1);
+}
+console.log(`[apply] upserted ${payload.length} rows into creator_products`);
