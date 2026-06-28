@@ -43,9 +43,14 @@
  *       subcategory: string | null,
  *       maxPrice: number | null,
  *       descriptors: string[],
- *       relaxed: 'none' | 'descriptors' | 'price' | 'subcategory' | 'all',
+ *       relaxed: 'none' | 'descriptors' | 'subcategory' | 'all',
  *       caption: string | null,    // e.g. "Tops under $300"
  *     } | null,                    // null when q was empty
+ *
+ * Price is a hard ceiling: when the user types "under $250" we
+ * filter to price <= 250 (exact, no headroom) and never relax that
+ * filter even if it zeros the result set. Returning $495 dresses
+ * for a $250 query is worse than returning none.
  *   }
  *   404 { error: 'creator_not_found' }
  */
@@ -135,12 +140,18 @@ export async function GET(
   //   1. (sub + price + descriptors)   the full intent
   //   2. drop descriptors              they're the noisiest (color
   //                                    rarely appears in product titles)
-  //   3. drop price                    keep just the category
-  //   4. drop parsed subcategory       only if pill didn't pin one
-  //                                    (a pinned pill is a hard
-  //                                    user lock; never drop it)
-  //   5. give up                       return empty + caption
-  const attempts: Array<{ key: "none" | "descriptors" | "price" | "subcategory" | "all"; opts: PageOpts }> = [
+  //   3. drop parsed subcategory       only if pill didn't pin one
+  //                                    (price stays; descriptors
+  //                                    already dropped at rung 2)
+  //   4. give up                       return empty + caption
+  //
+  // Price is NEVER dropped. A user who types "under $250" expects
+  // results <= $250 or nothing; quietly upgrading them past their
+  // stated cap is a worse UX than an honest "no matches" empty
+  // state. (Earlier versions had a "drop price" rung at #3 which
+  // silently surfaced $495 / $990 dresses for a "$250" query when
+  // the lower-priced catalog rows had null price columns.)
+  const attempts: Array<{ key: "none" | "descriptors" | "subcategory" | "all"; opts: PageOpts }> = [
     {
       key: "none",
       opts: makeOpts(creator.id, limit, cursor, pillSubcategory, parsed, true, true),
@@ -149,18 +160,15 @@ export async function GET(
       key: "descriptors",
       opts: makeOpts(creator.id, limit, cursor, pillSubcategory, parsed, false, true),
     },
-    {
-      key: "price",
-      opts: makeOpts(creator.id, limit, cursor, pillSubcategory, parsed, false, false),
-    },
   ];
   // Only add the "drop subcategory" rung when the parser inferred one
   // AND the pill didn't pin one. A pinned pill always survives.
+  // Price stays applied here too.
   if (!pillSubcategory && parsed.subcategory) {
     attempts.push({
       key: "subcategory",
       opts: {
-        ...makeOpts(creator.id, limit, cursor, null, parsed, false, false),
+        ...makeOpts(creator.id, limit, cursor, null, parsed, false, true),
         parsedSubcategory: null,
       },
     });
@@ -196,13 +204,12 @@ export async function GET(
   }
 
   // Reflect the actually-applied filters back to the client so the
-  // caption matches reality (e.g. "Tops" when we dropped the price).
+  // caption matches reality. Price is always applied (never relaxed)
+  // so it just echoes the parsed value. Subcategory and descriptors
+  // can be relaxed per the ladder above.
   const appliedSub =
     chosen.key === "subcategory" ? null : effectiveSubcategory;
-  const appliedPrice =
-    chosen.key === "price" || chosen.key === "subcategory"
-      ? null
-      : parsed.maxPrice;
+  const appliedPrice = parsed.maxPrice;
   const appliedDescriptors =
     chosen.key === "none" ? parsed.descriptors : [];
 
@@ -374,10 +381,13 @@ async function fetchOneNetwork(args: {
   }
 
   if (args.maxPrice != null) {
-    // Honor the chat app's budget-target convention: a stated price
-    // is a soft ceiling and 10% over is fine.
-    const softCeiling = Math.round(args.maxPrice * 1.1);
-    query = query.lte("price", softCeiling);
+    // Hard ceiling. Typed into the search bar, a price cap is exact
+    // ("under $250" means <= 250, not <= 275). The chat layer can
+    // still apply its own budget-target padding; this is a filter
+    // box, not a conversation. Note: the relaxation ladder also
+    // never drops this filter (see attempts[] above), so the user
+    // never sees a price > their stated cap.
+    query = query.lte("price", args.maxPrice);
   }
 
   // Descriptors match each against title OR brand OR affiliate_url
