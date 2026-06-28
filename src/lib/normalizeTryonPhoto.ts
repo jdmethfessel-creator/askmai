@@ -67,6 +67,33 @@ const MAX_LINEAR_UPSCALE = 4.0;
 /** Edge feather sigma (px) on the person-cutout alpha. */
 const CUTOUT_FEATHER_SIGMA = 3;
 
+/** Garment-void feather sigma (px). The original-clothing region gets
+ *  replaced with a flat neutral fill so gpt-image-1 can't see the
+ *  user's actual garment pattern through its soft inpaint and bleed
+ *  it through into the new garment (the bug Option A solves). A
+ *  small Gaussian on the mask boundary keeps the skin/void transition
+ *  from looking like a hard pixel cut. */
+const GARMENT_VOID_FEATHER_SIGMA = 2;
+
+/** Neutral fill color for the original-clothing region. Slightly
+ *  lighter than the canvas (#909090) so the boundary reads as
+ *  "clothing-shaped placeholder" rather than "background bleeding
+ *  inward across the body silhouette." */
+const GARMENT_VOID_RGB = { r: 0xB0, g: 0xB0, b: 0xB0 };
+
+/** SegFormer classes whose pixels we wipe to GARMENT_VOID_RGB before
+ *  storing the normalized PNG. These are the same classes the render
+ *  route uses as the editable (transparent-in-mask) region, so the
+ *  pixel we blank IS the region gpt-image-1 is about to repaint. */
+const EDITABLE_CLOTHING_CLASSES = new Set<string>([
+  "Upper-clothes",
+  "Skirt",
+  "Pants",
+  "Dress",
+  "Belt",
+  "Scarf",
+]);
+
 /** Min person coverage to consider the input usable. < this = hard reject. */
 const MIN_PERSON_COVERAGE_PCT = 3;
 
@@ -279,6 +306,36 @@ export async function normalizeTryonPhoto(
     .raw()
     .toBuffer();
 
+  // 6b. Original-garment neutralization (Option A from the seam-bleed
+  //     diagnosis). gpt-image-1's inpaint is soft — when the masked
+  //     region in image[0] contains a strong existing pattern, the
+  //     model paints the new garment semi-translucently over it,
+  //     producing the "blue lace top bleeds through the white dress"
+  //     artifact. Fix: replace the original-clothing region in the
+  //     STORED normalized PNG with a flat neutral fill, before any
+  //     render fires. The render code is unchanged; the image it
+  //     points at just has nothing to bleed.
+  //
+  //     The editable-clothing mask comes from the same SegFormer
+  //     response (no extra inference). Feather it by sigma=2 so the
+  //     skin-to-void boundary reads as a soft clothing line rather
+  //     than a hard pixel cut.
+  const garmentMerged = await orMergeClasses(
+    classes,
+    EDITABLE_CLOTHING_CLASSES,
+    W0,
+    H0
+  );
+  const garmentAlpha = garmentMerged
+    ? await sharp(garmentMerged.merged, {
+        raw: { width: W0, height: H0, channels: 1 },
+      })
+        .blur(GARMENT_VOID_FEATHER_SIGMA)
+        .extractChannel(0)
+        .raw()
+        .toBuffer()
+    : null;
+
   const { data: rgb0, info: info0 } = await sharp(photoBuffer)
     .removeAlpha()
     .raw()
@@ -288,13 +345,32 @@ export async function normalizeTryonPhoto(
       `normalizeTryonPhoto: original RGB unexpected shape ${rgb0.length} ch=${info0.channels}`
     );
   }
+
   const personRgba = Buffer.alloc(sourceTotal * 4);
   for (let i = 0; i < sourceTotal; i++) {
-    const b = i * 4;
-    personRgba[b] = rgb0[i * 3];
-    personRgba[b + 1] = rgb0[i * 3 + 1];
-    personRgba[b + 2] = rgb0[i * 3 + 2];
-    personRgba[b + 3] = featheredAlpha[i];
+    let r = rgb0[i * 3];
+    let g = rgb0[i * 3 + 1];
+    let b = rgb0[i * 3 + 2];
+    // Blend in neutral fill where the editable-clothing mask is
+    // positive. Alpha is the feathered garment-mask value normalized
+    // to [0, 1]. Skin/hair/leg/arm pixels have garmentAlpha=0 and
+    // pass through unchanged; deep-garment-interior pixels have
+    // garmentAlpha=255 and become pure neutral; the boundary band
+    // smoothly fades.
+    if (garmentAlpha) {
+      const gAlpha = garmentAlpha[i] / 255;
+      if (gAlpha > 0) {
+        const inv = 1 - gAlpha;
+        r = Math.round(GARMENT_VOID_RGB.r * gAlpha + r * inv);
+        g = Math.round(GARMENT_VOID_RGB.g * gAlpha + g * inv);
+        b = Math.round(GARMENT_VOID_RGB.b * gAlpha + b * inv);
+      }
+    }
+    const off = i * 4;
+    personRgba[off] = r;
+    personRgba[off + 1] = g;
+    personRgba[off + 2] = b;
+    personRgba[off + 3] = featheredAlpha[i];
   }
   const personCutoutScaled = await sharp(personRgba, {
     raw: { width: W0, height: H0, channels: 4 },

@@ -105,8 +105,16 @@ const OVERLAY_HEIGHT = 1536;
 // face, hair, hands, feet, background opaque), so the prompt only
 // describes the desired clothing — not the preservation rules,
 // which the mask now enforces physically.
+// The first image is the user pre-normalized by
+// src/lib/normalizeTryonPhoto.ts: an isolated figure on a mid-gray
+// canvas, with the original-clothing region (torso/legs) replaced by
+// a flat neutral gray placeholder (Option A from the seam-bleed fix).
+// The placeholder reads to the model as "clothing-shaped void to fill"
+// rather than existing garment to overlay. The prompt explicitly
+// reinforces this so the model doesn't try to preserve the placeholder
+// color in the output.
 const RENDER_PROMPT =
-  "A photorealistic image of the person from the first image, wearing the clothing shown in the reference image(s). Match the references' color, pattern, fabric, and cut as closely as possible. Natural fit and draping. The image stays non-sexual and the person stays fully clothed.";
+  "A photorealistic image of the person from the first image, wearing the clothing shown in the reference image(s). The person's torso and legs region in the first image is filled with a flat neutral gray placeholder; replace this region entirely with the new garment, do not preserve the placeholder color, do not blend with it. Match the reference garment's color, pattern, fabric, and cut as closely as possible. Natural fit and draping. The image stays non-sexual and the person stays fully clothed.";
 
 /**
  * Read the user's current quota. Calls the get_render_quota RPC which
