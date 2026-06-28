@@ -74,6 +74,7 @@ type BlockReason =
   | "age_not_verified"
   | "no_photo"
   | "no_quota"
+  | "moderation_blocked"
   | "render_failed";
 
 // not_signed_in is intentionally NOT in BlockReason. When the render
@@ -97,6 +98,10 @@ const REASON_COPY: Record<BlockReason, { title: string; body: string; cta?: { la
     title: "Out of renders",
     body: "You've used your monthly renders. Grab a pack to keep going.",
     cta: { label: "Get more", href: "/profile" },
+  },
+  moderation_blocked: {
+    title: "Safety filter caught this one",
+    body: "OpenAI's safety filter flagged this combination after generating it. It's probabilistic, so it can pass on a retry, or you can try a different garment or a different photo.",
   },
   render_failed: {
     title: "Something went sideways",
@@ -252,7 +257,8 @@ export default function TryOnGrid({
         const reason: BlockReason =
           json.error === "age_not_verified" ||
           json.error === "no_photo" ||
-          json.error === "no_quota"
+          json.error === "no_quota" ||
+          json.error === "moderation_blocked"
             ? (json.error as BlockReason)
             : "render_failed";
         setRender({ state: "blocked", product, reason });

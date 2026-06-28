@@ -56,7 +56,11 @@ const CATEGORY_SYNONYMS: Array<[RegExp, string]> = [
   [/\bromper(s)?\b/, "dresses"],
   [/\bjumpsuit(s)?\b/, "dresses"],
 
-  [/\b(top|tee|tees|tanks?|shirts?|blouses?|sweater(s)?|knits?|cardigan(s)?|hoodies?|sweatshirts?|cami(s|sole)?|bodysuits?|pullovers?|tunics?|polo(s)?)\b/, "tops"],
+  // `top` was bare in v1: matched "top" but NOT "tops" because the
+  // word-boundary fails on "tops" (p|s is not a word boundary). That
+  // silently routed "show me tops" to subcategory=null. Fixed to
+  // `tops?` so both singular and plural match.
+  [/\b(tops?|tee|tees|tanks?|shirts?|blouses?|sweaters?|knits?|cardigans?|hoodies?|sweatshirts?|cami(s|sole)?|bodysuits?|pullovers?|tunics?|polos?)\b/, "tops"],
 
   [/\b(pants?|jeans?|trousers?|shorts?|skirts?|leggings?|denim|chinos?|cargos?|joggers?)\b/, "bottoms"],
   [/\bbottoms?\b/, "bottoms"],

@@ -71,24 +71,33 @@ export async function GET(
     return Response.json({ error: "creator_not_found" }, { status: 404 });
   }
 
-  // PostgREST doesn't expose GROUP BY directly; pull the column and
-  // count in memory. Lift the default 1000-row response cap so a
-  // creator with 1k+ products is counted accurately (Cass landed at
-  // 1043; the default would silently undercount by 43).
-  const { data, error } = await admin
-    .from("creator_products")
-    .select("product_subcategory")
-    .eq("creator_id", creator.id)
-    .range(0, 9999);
-  if (error) {
-    console.error("[tryon-grid/categories]", error);
-    return Response.json({ error: "query_failed" }, { status: 500 });
-  }
-
+  // PostgREST doesn't expose GROUP BY directly; we pull the column
+  // and count in memory. The previous version tried .range(0, 9999)
+  // but Supabase's PostgREST has a hard server-side max-rows cap of
+  // 1000 that .range() does NOT bypass, so a creator with 1k+ rows
+  // was silently undercounted (Cass at 2634 reported as 1000, with 7
+  // of the 12 pill buckets missing because those rows lived past the
+  // cap). Fix: paginate explicitly in 1000-row chunks.
+  const CHUNK = 1000;
   const counts = new Map<string, number>();
-  for (const row of data ?? []) {
-    const k = (row.product_subcategory as string | null) || "other";
-    counts.set(k, (counts.get(k) || 0) + 1);
+  let total = 0;
+  for (let offset = 0; ; offset += CHUNK) {
+    const { data, error } = await admin
+      .from("creator_products")
+      .select("product_subcategory")
+      .eq("creator_id", creator.id)
+      .range(offset, offset + CHUNK - 1);
+    if (error) {
+      console.error("[tryon-grid/categories]", error);
+      return Response.json({ error: "query_failed" }, { status: 500 });
+    }
+    const rows = data ?? [];
+    for (const row of rows) {
+      const k = (row.product_subcategory as string | null) || "other";
+      counts.set(k, (counts.get(k) || 0) + 1);
+      total++;
+    }
+    if (rows.length < CHUNK) break; // last page
   }
 
   const seen = new Set<string>();
@@ -106,7 +115,6 @@ export async function GET(
     categories.push({ key, label: LABELS[key] || titleize(key), count: n });
   }
 
-  const total = (data ?? []).length;
   return Response.json({ categories, total });
 }
 

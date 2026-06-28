@@ -93,7 +93,13 @@ function inferCategory({ titleHint = "", brandHint = "" } = {}) {
 const SHOPBOP_AFFILIATE_KEYS = ["extid", "cvosrc", "affuid", "sharedid", "subid1"];
 const SHOPBOP_ORIGIN = "https://www.shopbop.com";
 const SHOPBOP_IMAGE_ORIGIN = "https://m.media-amazon.com/images/I"; // unused
-const SHOPBOP_PRODUCT_IMAGE_ORIGIN = "https://m.media-amazon.com/images/G/01/Shopbop";
+// Shopbop product images live under /images/G/01/Shopbop/p/prod/...
+// (the /p/ segment between Shopbop/ and prod/ is non-obvious from the
+// hydration JSON's relative path field; the path it gives us starts
+// with /prod/. Hand-verified by hitting a product PDP and grepping
+// the rendered <img src>: the working URL is `.../Shopbop/p/prod/...`,
+// the without-/p/ variant 404s on Amazon's CDN. Not a hotlink issue.)
+const SHOPBOP_PRODUCT_IMAGE_ORIGIN = "https://m.media-amazon.com/images/G/01/Shopbop/p";
 
 function extractHydrateBlob(html) {
   const scriptRe = /<script\b[^>]*>([\s\S]*?)<\/script>/g;
@@ -572,6 +578,227 @@ export async function fetchShopMyCollection({ collectionId, creatorSlug }) {
  * mirror. Retailer CDN URLs (cdn.shopify.com, images.lululemon.com,
  * etc.) pass through unchanged.
  */
+// ShopMy Category_name -> canonical subcategory bucket. ShopMy's
+// taxonomy is much richer than the title-keyword inference we use for
+// the other networks (their Category_name is clean and consistent),
+// so prefer it as the primary signal. Anything not in this table
+// falls back to deriveSubcategory() from categorize.mjs, which keyword-
+// matches the title + brand.
+//
+// Audited against Cass's 1600-product storefront (163 distinct
+// Category_name values observed; this table covers everything that
+// appeared more than a single row plus the obvious singletons that
+// route cleanly). Long-tail items not listed (very rare) land in
+// "other" via the fallback.
+//
+// Sign-off notes (per JD's review of the table):
+//   - Gloves & Mittens -> accessories (not outerwear; matches the
+//     storefront expectation of accessories).
+//   - Robes, Pajamas & Loungewear, Bodysuits -> tops (worn-as-tops
+//     bias since gpt-image-1 needs a torso garment to dress).
+//   - Bralettes, Sports Bras, Lingerie -> tops.
+//   - Cover-Ups & Sarongs -> swim (the dominant context for Cass's
+//     curation; sarong-as-dress is rare in her shop).
+//   - Hair tools (brushes, dryers, irons) -> beauty.
+//   - Hair clips/pins/ties -> accessories (worn, not tools).
+//   - Storage items (jewelry boxes, makeup bags) -> bags (the bag is
+//     the visible object; not home).
+//   - Travel items (suitcases, journals, books, supplements, kids,
+//     consumer electronics) -> other (no canonical bucket on the
+//     try-on grid).
+const SHOPMY_CATEGORY_NAME_MAP = new Map([
+  // dresses
+  ["Dresses", "dresses"],
+  ["Bodysuits", "tops"],
+  ["Jumpsuits & Playsuits", "dresses"],
+  ["Matching Sets", "dresses"],
+
+  // tops
+  ["Tops", "tops"],
+  ["Sweaters", "tops"],
+  ["Sweatshirts & Hoodies", "tops"],
+  ["Cardigans", "tops"],
+  ["Bralettes", "tops"],
+  ["Pajamas & Loungewear", "tops"],
+  ["Robes", "tops"],
+  ["Sports Bras", "tops"],
+  ["Men's Tops", "tops"],
+  ["Lingerie & Intimates", "tops"],
+
+  // bottoms
+  ["Skirts", "bottoms"],
+  ["Pants", "bottoms"],
+  ["Jeans", "bottoms"],
+  ["Shorts", "bottoms"],
+  ["Skorts", "bottoms"],
+  ["Leggings", "bottoms"],
+  ["Sweatpants & Joggers", "bottoms"],
+  ["Tights", "bottoms"],
+  ["Running & Bike Shorts", "bottoms"],
+
+  // outerwear
+  ["Jackets", "outerwear"],
+  ["Coats", "outerwear"],
+  ["Blazers", "outerwear"],
+  ["Vests", "outerwear"],
+
+  // shoes
+  ["Heels", "shoes"],
+  ["Boots", "shoes"],
+  ["Sandals", "shoes"],
+  ["Flats", "shoes"],
+  ["Loafers", "shoes"],
+  ["Sneakers", "shoes"],
+  ["Mules", "shoes"],
+  ["Slippers", "shoes"],
+  ["Men's Loafers", "shoes"],
+  ["Men's Sneakers", "shoes"],
+  ["Baby & Kids Shoes", "shoes"],
+
+  // bags
+  ["Crossbody & Shoulder Bags", "bags"],
+  ["Tote Bags", "bags"],
+  ["Clutches", "bags"],
+  ["Mini Bags", "bags"],
+  ["Wallets", "bags"],
+  ["Makeup & Toiletry Bags", "bags"],
+  ["Jewelry Storage", "bags"],
+  ["Bag Charms & Keychains", "bags"],
+
+  // jewelry
+  ["Earrings", "jewelry"],
+  ["Necklaces", "jewelry"],
+  ["Bracelets", "jewelry"],
+  ["Rings", "jewelry"],
+  ["Watches", "jewelry"],
+
+  // accessories
+  ["Sunglasses", "accessories"],
+  ["Belts", "accessories"],
+  ["Scarves & Wraps", "accessories"],
+  ["Hats", "accessories"],
+  ["Glasses", "accessories"],
+  ["Hair Clips & Pins", "accessories"],
+  ["Hair Ties & Scrunchies", "accessories"],
+  ["Combs", "accessories"],
+  ["Fashion Tape & Pasties", "accessories"],
+  ["Sleep Masks", "accessories"],
+  ["Gloves & Mittens", "accessories"],
+  ["Headphones & Accessories", "accessories"],
+
+  // swim
+  ["Swimwear", "swim"],
+  ["Cover-Ups & Sarongs", "swim"],
+
+  // beauty
+  ["Makeup Brushes & Applicators", "beauty"],
+  ["Blush", "beauty"],
+  ["Moisturizers", "beauty"],
+  ["Body Self-Tanner", "beauty"],
+  ["Serums", "beauty"],
+  ["Lip Balm", "beauty"],
+  ["Hair Brushes", "beauty"],
+  ["Hair Oils & Serums", "beauty"],
+  ["Brow Gels & Waxes", "beauty"],
+  ["Setting Powders", "beauty"],
+  ["Concealers & Color Correctors", "beauty"],
+  ["Face Sunscreen", "beauty"],
+  ["Foundation & Tinted Moisturizers", "beauty"],
+  ["Dry Shampoo", "beauty"],
+  ["Lip Liner", "beauty"],
+  ["Makeup Gift Sets", "beauty"],
+  ["Hair Masks", "beauty"],
+  ["Mascara", "beauty"],
+  ["Shampoo", "beauty"],
+  ["Cleansers", "beauty"],
+  ["Scalp Scrubs & Treatments", "beauty"],
+  ["Bronzer & Contour", "beauty"],
+  ["Skincare Tools & Devices", "beauty"],
+  ["Eyeliners", "beauty"],
+  ["Eyeshadows", "beauty"],
+  ["Treatments", "beauty"],
+  ["Face Mists", "beauty"],
+  ["Eye Drops", "beauty"],
+  ["Brow Pencils", "beauty"],
+  ["Setting Sprays", "beauty"],
+  ["Body Sponges & Brushes", "beauty"],
+  ["Lash Curlers", "beauty"],
+  ["Brow & Lash Serums", "beauty"],
+  ["Eye Creams", "beauty"],
+  ["Exfoliants, Peels & Scrubs", "beauty"],
+  ["Hair Towels", "beauty"],
+  ["Curling Irons, Wands & Wavers", "beauty"],
+  ["Flat Irons", "beauty"],
+  ["Hair Treatments", "beauty"],
+  ["Styling Sprays", "beauty"],
+  ["Styling Creams", "beauty"],
+  ["Conditioner", "beauty"],
+  ["Highlighter", "beauty"],
+  ["Face Primers", "beauty"],
+  ["Lip Gloss", "beauty"],
+  ["Lipstick", "beauty"],
+  ["Hair Dryers", "beauty"],
+  ["Face Masks", "beauty"],
+  ["Skincare Gift Sets", "beauty"],
+  ["Hand Creams & Treatments", "beauty"],
+  ["Toners & Essences", "beauty"],
+  ["Face Self-Tanner", "beauty"],
+  ["Face Oils", "beauty"],
+  ["Lip Masks & Treatments", "beauty"],
+  ["Eyeshadow Palettes", "beauty"],
+  ["Deodorants & Body Wipes", "beauty"],
+  ["Blow Dry Brushes", "beauty"],
+  ["Hair Gift Sets", "beauty"],
+  ["Hand Soap", "beauty"],
+  ["Fragrance", "beauty"],
+  ["Body Wash", "beauty"],
+  ["Body Lotion", "beauty"],
+
+  // home
+  ["Throw Blankets", "home"],
+  ["Bath Towels", "home"],
+  ["Tumblers & Water Bottles", "home"],
+  ["Tea Cups & Coffee Mugs", "home"],
+  ["Coffee Makers & Accessories", "home"],
+  ["Aerators & Decanters", "home"],
+  ["Pillows", "home"],
+  ["Vases & Planters", "home"],
+  ["Candles & Waxes", "home"],
+  ["Duvets, Comforters & Covers", "home"],
+  ["Indoor & Outdoor Rugs", "home"],
+  ["Bookcases & Storage Cabinets", "home"],
+  ["Desks & Desk Chairs", "home"],
+  ["Bar & Counter Stools", "home"],
+  ["Patio Furniture & Decor", "home"],
+  ["Floor & Table Lamps", "home"],
+  ["Floor & Wall Mirrors", "home"],
+  ["Speakers & Soundbars", "home"],
+  ["Art & Prints", "home"],
+  ["Serveware", "home"],
+  ["Bed Sheets & Sets", "home"],
+  ["Accent Chairs & Benches", "home"],
+  ["Candleholders", "home"],
+  ["Artificial Plants & Flowers", "home"],
+  ["Beds, Bed Frames & Headboards", "home"],
+  ["Coffee Table Books", "home"],
+  ["Games", "home"],
+  ["Detergents, Boosters & Softeners", "home"],
+
+  // other (no canonical bucket on the grid)
+  ["Suitcases", "other"],
+  ["Journals & Notebooks", "other"],
+  ["Cameras, Lenses & Film", "other"],
+  ["Car Seats", "other"],
+  ["Kids Clothes & Accessories", "other"],
+  ["Vitamins & Supplements", "other"],
+  ["Edibles & Tinctures", "other"],
+  ["Medicines & Treatments", "other"],
+  ["Travel Containers", "other"],
+  ["Mouth Tape", "other"],
+  ["Books", "other"],
+  ["Stationery", "other"],
+]);
+
 function shopmyPublicImage(url) {
   if (!url || typeof url !== "string") return url;
   let u;
@@ -710,6 +937,26 @@ export async function fetchShopMyShop({ username, creatorSlug }) {
         `&u1=${encodeURIComponent(`askmai-${creatorSlug || "creator"}`)}`;
 
       const product_category = inferCategory({ titleHint: title, brandHint: brand });
+
+      // Subcategory: prefer ShopMy's clean Category_name taxonomy
+      // (much richer than keyword inference from the title alone) via
+      // the curated SHOPMY_CATEGORY_NAME_MAP; fall back to keyword
+      // inference when Category_name is missing or unmapped. The
+      // map was hand-audited against Cass's 1600-product storefront
+      // covering all 163 distinct Category_name values that
+      // appeared.
+      const shopmyCategory = r.Category_name ?? null;
+      const mappedSub = shopmyCategory
+        ? SHOPMY_CATEGORY_NAME_MAP.get(shopmyCategory)
+        : null;
+      const product_subcategory =
+        mappedSub ??
+        deriveSubcategory({
+          title,
+          brand,
+          topLevelCategory: product_category,
+        });
+
       return {
         source_network: "shopmy",
         source_external_id: String(productId),
@@ -720,15 +967,11 @@ export async function fetchShopMyShop({ username, creatorSlug }) {
         image_url,
         affiliate_url,
         product_category,
-        product_subcategory: deriveSubcategory({
-          title,
-          brand,
-          topLevelCategory: product_category,
-        }),
+        product_subcategory,
         raw: {
           productId,
           curatorId,
-          shopmyCategory: r.Category_name ?? null,
+          shopmyCategory,
           shopmyDepartment: r.Department_name ?? null,
         },
         ingested_from: sourceLabel,

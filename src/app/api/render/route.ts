@@ -226,9 +226,34 @@ export async function POST(request: Request) {
         : e.cause
         ? String(e.cause)
         : "(no cause)";
+    const msg = e.message ?? String(err);
     console.error(
-      `[render] gpt-image-1 call failed: ${e.message ?? String(err)} | cause=${causeStr}`
+      `[render] gpt-image-1 call failed: ${msg} | cause=${causeStr}`
     );
+
+    // gpt-image-1 has a post-generation output moderator that can
+    // 400 with code "moderation_blocked" when the rendered image
+    // trips a safety classifier (most commonly safety_violations=[sexual]
+    // on borderline catalog-ish renders -- isolated figure on neutral
+    // canvas + low-coverage garments + a face the moderator scores
+    // borderline). Probabilistic; same prompt re-fired can pass.
+    //
+    // Surface as 422 with a specific reason so the grid client can
+    // tell the user "this combo got flagged, try a different item"
+    // instead of the generic "render didn't come through" copy.
+    // No credit consumed (the runRender threw before reaching
+    // consume_render below).
+    if (
+      msg.includes("moderation_blocked") ||
+      msg.includes("safety_violations") ||
+      msg.includes("safety system")
+    ) {
+      return Response.json(
+        { error: "moderation_blocked" },
+        { status: 422 }
+      );
+    }
+
     return Response.json({ error: "render_failed" }, { status: 500 });
   }
 
