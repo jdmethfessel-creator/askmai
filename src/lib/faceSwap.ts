@@ -123,6 +123,25 @@ export async function faceSwap(args: {
 
     if (!create.ok) {
       const text = await create.text().catch(() => "");
+      // Full unredacted dump so a billing / token-scope / model-not-found
+      // failure is diagnosable from the log without re-running locally.
+      // The structured `detail` stays trimmed for the caller; the full
+      // body goes only to the server console.
+      console.error(
+        "[faceSwap] Replicate create failed",
+        JSON.stringify({
+          httpStatus: create.status,
+          httpStatusText: create.statusText,
+          headers: {
+            "content-type": create.headers.get("content-type"),
+            "x-ratelimit-remaining": create.headers.get("x-ratelimit-remaining"),
+            "ratelimit-remaining": create.headers.get("ratelimit-remaining"),
+            "www-authenticate": create.headers.get("www-authenticate"),
+          },
+          body: text.slice(0, 2000),
+          model: FACESWAP_MODEL,
+        })
+      );
       return {
         ok: false,
         reason: "error",
@@ -131,8 +150,29 @@ export async function faceSwap(args: {
     }
 
     prediction = (await create.json()) as ReplicatePrediction;
+    // One-line breadcrumb so we can tell from the log whether the
+    // create returned a synchronous result (Prefer:wait succeeded) or
+    // a still-running prediction we need to poll.
+    console.log(
+      "[faceSwap] Replicate create accepted",
+      JSON.stringify({
+        id: prediction.id,
+        status: prediction.status,
+        hasOutput: prediction.output != null,
+        hasPollUrl: !!prediction.urls?.get,
+        model: FACESWAP_MODEL,
+      })
+    );
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    console.error(
+      "[faceSwap] Replicate create threw",
+      JSON.stringify({
+        message: msg,
+        name: err instanceof Error ? err.name : typeof err,
+        model: FACESWAP_MODEL,
+      })
+    );
     return {
       ok: false,
       reason: msg.includes("timeout") ? "timeout" : "error",
@@ -170,6 +210,16 @@ export async function faceSwap(args: {
         signal: AbortSignal.timeout(10_000),
       });
       if (!poll.ok) {
+        const text = await poll.text().catch(() => "");
+        console.error(
+          "[faceSwap] Replicate poll failed",
+          JSON.stringify({
+            httpStatus: poll.status,
+            body: text.slice(0, 2000),
+            pollUrl,
+            predictionId: prediction.id,
+          })
+        );
         return {
           ok: false,
           reason: "error",
@@ -189,6 +239,21 @@ export async function faceSwap(args: {
 
   if (prediction.status !== "succeeded") {
     const errStr = String(prediction.error || prediction.status || "unknown");
+    // Dump the full prediction object so the asynchronous failure
+    // mode (model-side error, content-policy, OOM, etc.) is visible
+    // without re-running. Replicate puts the real error message in
+    // `prediction.error`; we log everything else too in case the
+    // error field is empty and the status alone is the signal.
+    console.error(
+      "[faceSwap] Replicate prediction failed",
+      JSON.stringify({
+        id: prediction.id,
+        status: prediction.status,
+        error: prediction.error,
+        output: prediction.output,
+        model: FACESWAP_MODEL,
+      })
+    );
     // Try to bucket common failure modes for the caller.
     if (/no.*face|face.*not.*found|cannot.*detect.*face|cannot.*find.*face/i.test(errStr)) {
       // The model's error rarely distinguishes source vs target;
