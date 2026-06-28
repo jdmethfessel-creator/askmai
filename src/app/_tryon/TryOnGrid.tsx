@@ -40,6 +40,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import SignInModal from "../_components/SignInModal";
+import RenderLoadingState from "./RenderLoadingState";
 
 type Product = {
   id: string;
@@ -720,19 +721,25 @@ function OutfitModal({
         </button>
         {state.state === "loading" ? (
           <div className="tryon-modal-body tryon-modal-loading">
-            <div className="tryon-spinner" />
-            <p>
-              Rendering your outfit on your photo…
-            </p>
-            <p className="tryon-modal-sub">
-              {state.products.length} pieces, chained through the VTON model. Allow ~{state.products.length * 15}–{state.products.length * 25} seconds.
-            </p>
+            <RenderLoadingState
+              thumbnails={state.products.map((p) => ({
+                src: p.image_url,
+                alt: p.product_title,
+              }))}
+              garmentLabel="your outfit"
+              expectedSeconds={state.products.length * 18}
+              loaded={false}
+            />
           </div>
         ) : null}
         {state.state === "result" ? (
           <div className="tryon-modal-body">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img className="tryon-modal-image" src={state.signedUrl} alt="" />
+            <img
+              className="tryon-modal-image tryon-modal-image-reveal"
+              src={state.signedUrl}
+              alt=""
+            />
             <div className="tryon-modal-caption">{titleList}</div>
             <div className="tryon-outfit-result-shops">
               {state.products.map((p) => (
@@ -806,15 +813,28 @@ function TryOnModal({
         </button>
         {state.state === "loading" ? (
           <div className="tryon-modal-body tryon-modal-loading">
-            <div className="tryon-spinner" />
-            <p>Rendering “{state.product.product_title}” on your photo…</p>
-            <p className="tryon-modal-sub">~60 seconds. Stay on this tab.</p>
+            <RenderLoadingState
+              thumbnails={[
+                { src: state.product.image_url, alt: state.product.product_title },
+              ]}
+              garmentLabel={
+                state.product.brand
+                  ? `${state.product.brand} ${state.product.product_title}`
+                  : state.product.product_title
+              }
+              expectedSeconds={60}
+              loaded={false}
+            />
           </div>
         ) : null}
         {state.state === "result" ? (
           <div className="tryon-modal-body">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img className="tryon-modal-image" src={state.signedUrl} alt="" />
+            <img
+              className="tryon-modal-image tryon-modal-image-reveal"
+              src={state.signedUrl}
+              alt=""
+            />
             <div className="tryon-modal-caption">
               {state.product.brand ? `${state.product.brand} — ` : ""}
               {state.product.product_title}
