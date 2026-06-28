@@ -1,22 +1,25 @@
 #!/usr/bin/env node
-// One-shot seed for Cass DiMicco. Runs all three public-wishlist URLs
-// and prints a parsed-output report. Dry-run by default; --apply
-// upserts into creator_products.
+// One-shot seed for Cass DiMicco. Pulls Shopbop hearts, Revolve and
+// FWRD wishlists, and her whole ShopMy storefront, then either dry-
+// runs or (with --apply) wipes + re-inserts creator_products for her
+// row in one transaction.
 //
 // Usage:
 //   node --env-file=.env.local scripts/ingest-creator-products/seed-cass.mjs
 //   node --env-file=.env.local scripts/ingest-creator-products/seed-cass.mjs --apply
 
-import { ingestUrl } from "./parsers.mjs";
+import { ingestUrl, fetchShopMyShop } from "./parsers.mjs";
 
 const SOURCES = [
   {
     network: "shopbop",
+    kind: "url",
     url: "https://www.shopbop.com/hearts/cassdimicco/f47546d6-4053-479a-b887-bd80058a361c?extid=affprg_linkshare_SB-8yaPBDQV8ls&cvosrc=affiliate.linkshare.8yaPBDQV8ls&affuid=user-17709-pin-40272633-puser-null-src-ql&sharedid=42352&subid1=8yaPBDQV8ls-pEE2b2tdzT6vPeoFljNM0Q",
     expectAffiliateKeys: ["extid", "cvosrc", "affuid", "sharedid", "subid1"],
   },
   {
     network: "revolve",
+    kind: "url",
     url: "https://www.revolve.com/content/favorites/s/cass-dimiccos-favs-3000246?source=siplt&siplt=296d0&utm_source=rev_ambassador&utm_medium=ambassador&utm_campaign=glob_b_296d0",
     expectAffiliateKeys: [
       "source",
@@ -28,6 +31,7 @@ const SOURCES = [
   },
   {
     network: "fwrd",
+    kind: "url",
     url: "https://www.fwrd.com/fw/PublicWishListView.jsp?email=Y2Fzc2FuZHJhZGltaWNjb0BnbWFpbC5jb20%3D&source=siplt&siplt=296d0&utm_source=rev_ambassador&utm_medium=ambassador&utm_campaign=glob_b_296d0",
     expectAffiliateKeys: [
       "source",
@@ -37,6 +41,16 @@ const SOURCES = [
       "utm_campaign",
     ],
   },
+  {
+    network: "shopmy",
+    kind: "shopmy-shop",
+    username: "cassdimicco",
+    // Whole storefront via apiv3.shopmy.us/api/Shop/products. The
+    // stored URL stays on shopmy.us, identifies Cass via Curator_id,
+    // and tags AskMai-sourced clicks via u1=askmai-cass (analytics
+    // only -- commission still goes to Cass's ShopMy account).
+    expectAffiliateKeys: ["Curator_id", "u1"],
+  },
 ];
 
 const apply = process.argv.includes("--apply");
@@ -44,10 +58,17 @@ const apply = process.argv.includes("--apply");
 const allRows = [];
 for (const src of SOURCES) {
   console.log(`\n=== ${src.network.toUpperCase()} ===`);
-  console.log(`url: ${src.url}`);
+  if (src.kind === "url") console.log(`url: ${src.url}`);
+  if (src.kind === "shopmy-shop") console.log(`shopmy shop: ${src.username}`);
   let rows;
   try {
-    rows = await ingestUrl(src.url);
+    if (src.kind === "url") {
+      rows = await ingestUrl(src.url);
+    } else if (src.kind === "shopmy-shop") {
+      rows = await fetchShopMyShop({ username: src.username, creatorSlug: "cass" });
+    } else {
+      throw new Error(`unknown source kind: ${src.kind}`);
+    }
   } catch (e) {
     console.error(`  FAILED: ${e.message}`);
     continue;
@@ -128,16 +149,26 @@ if (delErr) {
   process.exit(1);
 }
 
-// Insert in chunks; PostgREST has a payload size ceiling and a single
-// 1k-row insert can exceed it on FWRD's larger rows.
-const CHUNK = 200;
+// Insert in chunks; PostgREST has a payload size ceiling. Chunks of
+// 200 occasionally `fetch failed` on the ShopMy rows (larger `raw`
+// JSON), so we keep it at 100 with a single one-shot retry on
+// transient fetch failures (the most common cause is a brief
+// connection drop, not a real schema issue).
+const CHUNK = 100;
 let inserted = 0;
 for (let i = 0; i < payload.length; i += CHUNK) {
   const slice = payload.slice(i, i + CHUNK);
-  const { error } = await sb.from("creator_products").insert(slice);
-  if (error) {
-    console.error(`insert failed at ${i}:`, error.message);
-    process.exit(1);
+  let attempt = 0;
+  while (true) {
+    const { error } = await sb.from("creator_products").insert(slice);
+    if (!error) break;
+    attempt += 1;
+    if (attempt > 2) {
+      console.error(`insert failed at ${i} after ${attempt} attempts:`, error.message);
+      process.exit(1);
+    }
+    console.warn(`  retry ${attempt} at offset ${i}: ${error.message}`);
+    await new Promise((r) => setTimeout(r, 1500));
   }
   inserted += slice.length;
 }

@@ -483,14 +483,48 @@ function csvToRows(text) {
 }
 
 // ---------------------------------------------------------------------
-// ShopMy. The existing scripts/ingest.mjs already pulls ShopMy public
-// collections via /api/Collections/<id>. OAuth is documented but not
-// implemented here; that's a Phase 1.5 follow-up that doesn't block
-// the parallel try-on grid demo. For now, accept a collection id and
-// reuse the public endpoint.
+// ShopMy.
+//
+// Two entry points:
+//
+//   fetchShopMyCollection({ collectionId, creatorSlug })
+//     The legacy "single curated collection" path. Hits the public
+//     api.shopmy.us/api/Collections/<id> endpoint and uses the
+//     `affiliate_link` field returned per pin, substituting the
+//     `<custom_id>` template token with `askmai-<slug>` so ShopMy's
+//     u1 sub-affiliate slot records the click as coming from AskMai.
+//     Cass's account still earns the commission; u1 is analytics only.
+//
+//   fetchShopMyShop({ username, creatorSlug })
+//     The "whole storefront" path used by seed-cass for Cass's full
+//     ShopMy shop at shopmy.us/shop/<username>. Hits the (undocumented
+//     but public) apiv3.shopmy.us/api/Shop/products endpoint that the
+//     storefront SPA itself calls, paginates with tab=all + limit=12
+//     until exhausted, and constructs the affiliate URL deterministically
+//     as:
+//       https://shopmy.us/shop/product/<Product_id>?Curator_id=<id>&u1=askmai-<slug>
+//
+//     The Curator_id comes from each row's curators[0].id (locked in on
+//     the first row since every row in a Curator_username query shares
+//     the same id). Same attribution semantics as the collection path:
+//     shopmy.us host preserves ShopMy's tracking, Curator_id credits
+//     Cass, u1 tags the click as AskMai-sourced. No commission goes
+//     anywhere except Cass.
+//
+//     Connector logic ported from scripts/import/connectors/shopmy.mjs.
+//     Two important fixes during the port:
+//       * tab=all (the connector hardcoded tab=latest; Cass's shop
+//         returns 0 rows for "latest" but 1600+ for "all"; the
+//         original probably worked for a different shop's defaults).
+//       * The S3-bucket image URLs that ShopMy returns 403 on direct
+//         GET — they're publicly readable only through the
+//         static.shopmy.us CDN mirror. publicShopMyImage() rewrites
+//         the host so the stored URL actually loads in a browser.
 // ---------------------------------------------------------------------
 
 const SHOPMY_API = "https://api.shopmy.us/api/Collections";
+const SHOPMY_APIV3 = "https://apiv3.shopmy.us";
+const SHOPMY_ORIGIN = "https://shopmy.us";
 
 export async function fetchShopMyCollection({ collectionId, creatorSlug }) {
   const res = await fetch(`${SHOPMY_API}/${collectionId}`);
@@ -528,6 +562,179 @@ export async function fetchShopMyCollection({ collectionId, creatorSlug }) {
         ingested_from: `shopmy:${collectionId}`,
       };
     });
+}
+
+/**
+ * Rewrite a ShopMy product image URL so it's publicly addressable.
+ * ShopMy's cover-image fields point at the production-shopmyshelf-*
+ * S3 buckets which 403 on direct GET; the same files are served
+ * through static.shopmy.us/<bucket-suffix>/<key> via ShopMy's own CDN
+ * mirror. Retailer CDN URLs (cdn.shopify.com, images.lululemon.com,
+ * etc.) pass through unchanged.
+ */
+function shopmyPublicImage(url) {
+  if (!url || typeof url !== "string") return url;
+  let u;
+  try {
+    u = new URL(url);
+  } catch {
+    return url;
+  }
+  const host = u.hostname.toLowerCase();
+  const key = u.pathname.replace(/^\/+/, "");
+  if (
+    /^production-shopmyshelf-uploads\.s3(?:[.-]us-east-2)?\.amazonaws\.com$/.test(
+      host
+    )
+  ) {
+    return `https://static.shopmy.us/uploads/${key}`;
+  }
+  if (
+    /^production-shopmyshelf-pins\.s3(?:[.-]us-east-2)?\.amazonaws\.com$/.test(
+      host
+    )
+  ) {
+    return `https://static.shopmy.us/pins/${key}`;
+  }
+  return url;
+}
+
+export async function fetchShopMyShop({ username, creatorSlug }) {
+  if (!username) throw new Error("fetchShopMyShop: username required");
+  const headers = {
+    "User-Agent":
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
+      "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    Accept: "application/json, text/plain, */*",
+    "Accept-Language": "en-US,en;q=0.9",
+    Origin: SHOPMY_ORIGIN,
+    Referer: `${SHOPMY_ORIGIN}/shop/${encodeURIComponent(username)}`,
+  };
+
+  const LIMIT = 12;
+  const PAGE_SAFETY_CAP = 500; // refuse to walk past this; storefronts max out far below
+  const all = [];
+  const seen = new Set();
+  let curatorId = null;
+  let page = 1;
+  let searchRequestId = null;
+
+  while (page <= PAGE_SAFETY_CAP) {
+    const params = new URLSearchParams({
+      Curator_username: username,
+      tab: "all",
+      limit: String(LIMIT),
+      page: String(page),
+    });
+    if (searchRequestId) params.set("searchRequestId", searchRequestId);
+
+    const res = await fetch(
+      `${SHOPMY_APIV3}/api/Shop/products?${params}`,
+      { headers, signal: AbortSignal.timeout(30_000) }
+    );
+    if (!res.ok) {
+      throw new Error(
+        `ShopMy /api/Shop/products page ${page} HTTP ${res.status}: ${(await res.text().catch(() => "")).slice(0, 400)}`
+      );
+    }
+    const body = await res.json();
+    if (!body.success || !Array.isArray(body.results)) {
+      throw new Error(`ShopMy unexpected response shape on page ${page}`);
+    }
+    if (page === 1 && body.searchRequestId) {
+      searchRequestId = body.searchRequestId;
+    }
+    const results = body.results;
+    if (results.length === 0) break;
+
+    for (const r of results) {
+      if (!r || typeof r !== "object" || r.id == null) continue;
+      if (seen.has(r.id)) continue;
+      seen.add(r.id);
+      if (curatorId == null) {
+        const c = Array.isArray(r.curators) ? r.curators[0] : null;
+        if (c && typeof c.id === "number") curatorId = c.id;
+      }
+      all.push(r);
+    }
+
+    if (results.length < LIMIT) break;
+    page += 1;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+
+  if (curatorId == null) {
+    throw new Error(
+      `ShopMy /shop/${username}: could not resolve Curator_id from any row. ` +
+        "Refusing to insert un-attributed links."
+    );
+  }
+
+  const sourceLabel = `shopmy:shop/${username}`;
+  return all
+    .map((r) => {
+      const title = (r.title || "").toString().trim();
+      if (!title) return null;
+      const productId = r.id;
+      const brand = r.AllBrand_name
+        ? String(r.AllBrand_name).trim() || null
+        : null;
+      const priceNum =
+        typeof r.fallbackPrice === "number"
+          ? r.fallbackPrice
+          : r.fallbackPrice != null
+          ? parsePriceNumber(String(r.fallbackPrice))
+          : null;
+      const priceDisplay = priceNum != null ? `$${priceNum}` : null;
+
+      // Pick the cover image, rewrite host through publicImage so it
+      // actually loads. ShopMy returns the most-curated image first.
+      let rawImage = null;
+      if (r.image && typeof r.image === "string") rawImage = r.image;
+      if (!rawImage && Array.isArray(r.images)) {
+        const cover = r.images.find((i) => i?.isCover) ?? r.images[0];
+        if (cover?.image && typeof cover.image === "string") {
+          rawImage = cover.image;
+        }
+      }
+      const image_url = shopmyPublicImage(rawImage);
+      if (!image_url) return null; // skip rows we can't render
+
+      // Deterministic affiliate URL. shopmy.us host preserves the
+      // creator-keeps-100% attribution flow described in the file
+      // header. Curator_id credits Cass; u1=askmai-<slug> tags the
+      // click as AskMai-sourced for her analytics dashboard.
+      const affiliate_url =
+        `https://shopmy.us/shop/product/${encodeURIComponent(productId)}` +
+        `?Curator_id=${encodeURIComponent(curatorId)}` +
+        `&u1=${encodeURIComponent(`askmai-${creatorSlug || "creator"}`)}`;
+
+      const product_category = inferCategory({ titleHint: title, brandHint: brand });
+      return {
+        source_network: "shopmy",
+        source_external_id: String(productId),
+        product_title: title,
+        brand,
+        price: priceNum,
+        price_display: priceDisplay,
+        image_url,
+        affiliate_url,
+        product_category,
+        product_subcategory: deriveSubcategory({
+          title,
+          brand,
+          topLevelCategory: product_category,
+        }),
+        raw: {
+          productId,
+          curatorId,
+          shopmyCategory: r.Category_name ?? null,
+          shopmyDepartment: r.Department_name ?? null,
+        },
+        ingested_from: sourceLabel,
+      };
+    })
+    .filter((r) => r !== null);
 }
 
 // ---------------------------------------------------------------------
