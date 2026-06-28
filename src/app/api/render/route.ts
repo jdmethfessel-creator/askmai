@@ -69,7 +69,15 @@ export const dynamic = "force-dynamic";
 // not the runtime.
 export const maxDuration = 300;
 
-const MAX_ITEMS_PER_RENDER = 6;
+// Matches the full outfit-slot taxonomy in src/lib/outfitSlots.ts:
+//   dress | top | bottom | outerwear | shoes | bag |
+//   jewelry | sunglasses | accessory
+// dress excludes top+bottom, so the realistic max is 8 items
+// (top + bottom + 6 other slots) or (dress + 7 other slots).
+// We never REJECT when items exceed this — we trim and log, so a
+// model-side over-emit can't surface as a user-facing render
+// failure.
+const MAX_ITEMS_PER_RENDER = 8;
 
 type IncomingItem = {
   image_url?: string;
@@ -129,11 +137,15 @@ export async function POST(request: Request) {
   if (kind === "single" && imageUrls.length > 1) {
     imageUrls.splice(1);
   }
+  // Trim, never reject: a cap-exceeded outfit should still render,
+  // just with the first N (highest-ranked) items. The client's
+  // dedupeOutfitRecs has already ensured one-per-slot, so slicing
+  // off the tail just drops the least-important slot fills.
   if (imageUrls.length > MAX_ITEMS_PER_RENDER) {
-    console.warn(
-      `[render] 400 too_many_items: kind=${kind} count=${imageUrls.length} max=${MAX_ITEMS_PER_RENDER}`
+    console.log(
+      `[render] trim: kind=${kind} count=${imageUrls.length} -> ${MAX_ITEMS_PER_RENDER}`
     );
-    return Response.json({ error: "too_many_items" }, { status: 400 });
+    imageUrls.splice(MAX_ITEMS_PER_RENDER);
   }
 
   const creatorSlug =
