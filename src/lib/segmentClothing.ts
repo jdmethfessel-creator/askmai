@@ -44,10 +44,15 @@
  */
 
 import sharp from "sharp";
-import { readEnv } from "./env";
+import {
+  bboxFromMask,
+  callSegFormer,
+  orMergeClasses,
+  type Bbox as SegformerBbox,
+} from "./segformer";
 
-const SEGFORMER_URL =
-  "https://router.huggingface.co/hf-inference/models/mattmdjaga/segformer_b2_clothes";
+// Re-exported below as `Bbox` for back-compat with this file's
+// existing consumers (render.ts imports { Bbox, segmentForRender }).
 
 const EDITABLE_CLASSES = new Set<string>([
   "Upper-clothes",
@@ -72,9 +77,7 @@ const HEAD_PRESERVE_CLASSES = new Set<string>(["Face", "Hair", "Neck"]);
 const MIN_COVERAGE_PCT = 5;
 const MAX_COVERAGE_PCT = 90;
 
-const FETCH_TIMEOUT_MS = 30_000;
-
-export type Bbox = { x: number; y: number; w: number; h: number };
+export type Bbox = SegformerBbox;
 
 export type SegmentResult = {
   /** PNG buffer ready to pass to OpenAI as the `mask` field. */
@@ -106,128 +109,9 @@ export type OutputHeadProbe = {
   headBbox: Bbox | null;
 };
 
-async function callSegFormer(photoBuffer: Buffer): Promise<
-  Array<{ label?: string; score?: number; mask?: string }>
-> {
-  const token = readEnv("HF_API_TOKEN");
-  if (!token) {
-    throw new Error("HF_API_TOKEN not set");
-  }
-  const resp = await fetch(SEGFORMER_URL, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/octet-stream",
-    },
-    body: new Uint8Array(photoBuffer),
-    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-  });
-  if (!resp.ok) {
-    const text = await resp.text().catch(() => "");
-    throw new Error(`segformer ${resp.status}: ${text.slice(0, 400)}`);
-  }
-  const json = (await resp.json()) as Array<{
-    label?: string;
-    score?: number;
-    mask?: string;
-  }>;
-  if (!Array.isArray(json)) {
-    throw new Error("segformer returned non-array body");
-  }
-  return json;
-}
-
-/**
- * OR-merge a subset of per-class masks into a single 1-channel
- * grayscale binary buffer. Resizes each class mask to match the
- * requested dimensions (SegFormer returns at the input's resolution
- * so this is usually a no-op, but pinned for safety).
- *
- * Returns null when no class in `wantedSet` is present in the
- * response.
- */
-/**
- * OR-merge a subset of per-class masks into a single 1-channel
- * grayscale binary buffer. Resizes each class mask to match the
- * requested dimensions.
- *
- * Returns null when no class in `wantedSet` is present in the
- * response.
- *
- * IMPORTANT: sharp's `.greyscale()` does NOT collapse to 1 channel;
- * it sets the colorspace to "grayscale" but the raw output stays as
- * 3 identical channels (W*H*3 bytes). We follow with
- * `.extractChannel(0)` to force a true 1-channel raw (W*H bytes),
- * which every downstream consumer assumes. Without this, bbox
- * computation, coverage math, and the alpha builder all read at
- * the wrong stride and produce silently-wrong masks.
- */
-async function orMergeClasses(
-  classes: Array<{ label?: string; mask?: string }>,
-  wantedSet: Set<string>,
-  width: number,
-  height: number
-): Promise<{ merged: Buffer; classesUsed: string[] } | null> {
-  const wanted = classes.filter(
-    (c) => typeof c.label === "string" && wantedSet.has(c.label) && c.mask
-  );
-  if (wanted.length === 0) return null;
-  const expectedLen = width * height;
-  let merged: Buffer | null = null;
-  const classesUsed: string[] = [];
-  for (const c of wanted) {
-    const classMaskRaw = Buffer.from(c.mask as string, "base64");
-    const flat = await sharp(classMaskRaw)
-      .resize({ width, height, fit: "fill" })
-      .greyscale()
-      .extractChannel(0)
-      .raw()
-      .toBuffer();
-    if (flat.length !== expectedLen) {
-      throw new Error(
-        `orMergeClasses: class mask ${c.label} produced wrong size: ${flat.length} vs expected ${expectedLen} (${width}x${height} 1ch)`
-      );
-    }
-    if (!merged) {
-      merged = Buffer.from(flat);
-    } else {
-      for (let i = 0; i < expectedLen; i++) {
-        if (flat[i] > merged[i]) merged[i] = flat[i];
-      }
-    }
-    classesUsed.push(c.label as string);
-  }
-  return { merged: merged as Buffer, classesUsed };
-}
-
-/**
- * Compute the tight bounding box of all pixels above the binary
- * threshold (127) in a 1-channel grayscale buffer. Returns null when
- * the buffer is all-zero (no positive pixels).
- */
-function bboxFromMask(
-  raw: Buffer,
-  width: number,
-  height: number
-): Bbox | null {
-  let minX = width;
-  let minY = height;
-  let maxX = -1;
-  let maxY = -1;
-  for (let y = 0; y < height; y++) {
-    const rowStart = y * width;
-    for (let x = 0; x < width; x++) {
-      if (raw[rowStart + x] > 127) {
-        if (x < minX) minX = x;
-        if (x > maxX) maxX = x;
-        if (y < minY) minY = y;
-        if (y > maxY) maxY = y;
-      }
-    }
-  }
-  if (maxX < 0 || maxY < 0) return null;
-  return { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 };
-}
+// callSegFormer, orMergeClasses, and bboxFromMask moved to
+// src/lib/segformer.ts so the new normalizeTryonPhoto module can
+// share them. Same signatures, bit-identical behavior.
 
 /**
  * Full segmentation on the user's normalized photo. Returns the

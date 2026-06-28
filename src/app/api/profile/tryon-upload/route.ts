@@ -14,24 +14,40 @@
  *   2. age_verified_at IS NOT NULL  <-- this guard, before formData()
  *   3. formData() parse
  *   4. MIME + size validation
- *   5. storage upload
- *   6. users.tryon_photo_path update
+ *   5. storage upload (original)
+ *   6. input-normalization (Phase A: SegFormer -> mid-gray canvas ->
+ *      1024x1536 PNG anchored to a canonical layout). Hard-reject on
+ *      no-person / multiple-people.
+ *   7. storage upload (normalized)
+ *   8. users row update: tryon_photo_path -> normalized,
+ *      tryon_original_path -> original, tryon_geometry -> blob
+ *
+ * Normalization is BLOCKING by design (~5-15 s). Backgrounding it
+ * would mean the user's first try-on runs on the un-normalized photo,
+ * the exact failure mode normalization is killing. The upload
+ * surface shows an "optimizing your photo" state during the wait.
  *
  * Returns:
- *   200 { ok: true, path: "<userId>/<uuid>.<ext>" }
+ *   200 { ok: true, path: "<userId>/<uuid>.normalized.png", geometry: {...} }
  *   400 { error: "invalid_form_data" | "missing_file" | "invalid_file_type" }
  *   401 { error: "not_signed_in" }
  *   403 { error: "age_not_verified" }
  *   404 { error: "user_not_found" }
  *   413 { error: "file_too_large", max: <bytes> }
- *   500 { error: "upload_failed" | "store_failed" }
+ *   422 { error: "no_person" | "multiple_people", detail: <string> }
+ *   500 { error: "upload_failed" | "normalize_failed" | "store_failed" }
  */
 
 import { getServerSession } from "@/lib/session";
 import { supabaseAdmin } from "@/lib/supabase";
+import { normalizeTryonPhoto } from "@/lib/normalizeTryonPhoto";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+// SegFormer-B2 inference + sharp composite typically lands in 5-15 s
+// per upload; bumping maxDuration past the Vercel default (60 s) so a
+// slow HF response doesn't truncate the route.
+export const maxDuration = 120;
 
 const MAX_BYTES = 8 * 1024 * 1024; // 8 MiB, matches the bucket file_size_limit
 const ALLOWED_MIME = new Set<string>([
@@ -110,45 +126,114 @@ export async function POST(request: Request) {
     return Response.json({ error: "invalid_file_type" }, { status: 400 });
   }
 
-  // Path layout: {userId}/{uuid}.{ext}. The userId prefix lets us add
-  // a row level storage policy later without rebuilding paths.
+  // Path layout: {userId}/{uuid}.original.{ext} for the raw upload,
+  // {userId}/{uuid}.normalized.png for the 1024x1536 canvas we feed
+  // to every render. Shared uuid pairs them so a retention sweep
+  // can find both halves of a single upload.
   const uuid = crypto.randomUUID();
-  const path = `${session.userId}/${uuid}.${extForMime(contentType)}`;
+  const originalPath = `${session.userId}/${uuid}.original.${extForMime(contentType)}`;
+  const normalizedPath = `${session.userId}/${uuid}.normalized.png`;
 
-  const upload = await admin.storage
+  // Step 5: upload the original first. If anything downstream
+  // (normalization, normalized upload, row update) fails, we roll
+  // back this object so the bucket isn't left with an orphan.
+  const upOrig = await admin.storage
     .from("tryon-photos")
-    .upload(path, file, {
-      contentType,
-      upsert: false,
-    });
-  if (upload.error) {
+    .upload(originalPath, file, { contentType, upsert: false });
+  if (upOrig.error) {
     console.error(
-      "[tryon-upload] storage upload failed:",
-      upload.error.message
+      "[tryon-upload] original upload failed:",
+      upOrig.error.message
     );
     return Response.json({ error: "upload_failed" }, { status: 500 });
   }
 
-  // Replace the existing path on the user row. If the user previously
-  // uploaded a photo, we leave the old object in storage for now (a
-  // separate retention pass can sweep orphans). The row points at
-  // the new path so renders use the latest photo.
+  // Read the original bytes once for the normalizer. Doing it here
+  // keeps the file Blob below from being consumed twice; sharp/SegFormer
+  // need Buffer, the upload above needed Blob.
+  const photoBuffer = Buffer.from(await file.arrayBuffer());
+
+  // Step 6: normalize. Blocking on purpose. Hard-reject inputs that
+  // segmentation can't handle (no person / multi-person) so the user
+  // finds out at upload time instead of wasting render credits.
+  let result;
+  try {
+    result = await normalizeTryonPhoto(photoBuffer);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[tryon-upload] normalization threw:", msg);
+    await admin.storage
+      .from("tryon-photos")
+      .remove([originalPath])
+      .catch(() => {});
+    return Response.json(
+      { error: "normalize_failed", detail: msg.slice(0, 200) },
+      { status: 500 }
+    );
+  }
+  if (!result.ok) {
+    console.warn(
+      `[tryon-upload] normalization rejected: ${result.rejectReason} (${result.detail})`
+    );
+    await admin.storage
+      .from("tryon-photos")
+      .remove([originalPath])
+      .catch(() => {});
+    return Response.json(
+      { error: result.rejectReason, detail: result.detail },
+      { status: 422 }
+    );
+  }
+
+  // Step 7: upload the normalized PNG.
+  const upNorm = await admin.storage
+    .from("tryon-photos")
+    .upload(normalizedPath, result.pngBuffer, {
+      contentType: "image/png",
+      upsert: false,
+    });
+  if (upNorm.error) {
+    console.error(
+      "[tryon-upload] normalized upload failed:",
+      upNorm.error.message
+    );
+    await admin.storage
+      .from("tryon-photos")
+      .remove([originalPath])
+      .catch(() => {});
+    return Response.json({ error: "upload_failed" }, { status: 500 });
+  }
+
+  // Step 8: row update. tryon_photo_path -> normalized (what render
+  // reads), tryon_original_path -> raw (for future re-normalization),
+  // tryon_geometry -> the JSONB blob the render-time face composite
+  // will read in Phase C.
   const upd = await admin
     .from("users")
-    .update({ tryon_photo_path: path })
+    .update({
+      tryon_photo_path: normalizedPath,
+      tryon_original_path: originalPath,
+      tryon_geometry: result.geometry,
+    })
     .eq("id", session.userId);
   if (upd.error) {
     console.error("[tryon-upload] users update failed:", upd.error.message);
-    // Roll back the storage upload so we do not leave an orphan that
-    // no user row points at.
+    // Roll back BOTH storage uploads so no orphan rows in the bucket
+    // and no half-state on the user (path still pointing at the prior
+    // upload; new files in storage with nothing referencing them).
     await admin.storage
       .from("tryon-photos")
-      .remove([path])
-      .catch(() => {
-        // Best effort cleanup; do not mask the original failure.
-      });
+      .remove([originalPath, normalizedPath])
+      .catch(() => {});
     return Response.json({ error: "store_failed" }, { status: 500 });
   }
 
-  return Response.json({ ok: true, path });
+  console.log(
+    `[tryon-upload] ok user=${session.userId} anchor=${result.geometry.anchor_used} scale=${result.geometry.scale} partial_body=${result.geometry.partial_body}`
+  );
+  return Response.json({
+    ok: true,
+    path: normalizedPath,
+    geometry: result.geometry,
+  });
 }
