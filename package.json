@@ -19,6 +19,7 @@
     "@anthropic-ai/sdk": "^0.99.0",
     "@supabase/ssr": "^0.5.2",
     "@supabase/supabase-js": "^2.45.0",
+    "fashn": "^0.15.0",
     "next": "^14.2.18",
     "playwright": "^1.61.1",
     "react": "^18.3.1",

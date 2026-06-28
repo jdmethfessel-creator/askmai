@@ -1,10 +1,11 @@
 /**
  * POST /api/render
  *
- * Try-on render endpoint (Phase 2). Click-gated: this is the ONLY
- * place that fires gpt-image-1. The chat route does not render
- * automatically; the per-card "Show This Item" and per-response
- * "Try This Outfit" buttons hit here on explicit click.
+ * Try-on render endpoint. Click-gated: this is the ONLY place that
+ * fires the VTON provider (FASHN tryon-v1.6, falling back to
+ * Replicate IDM-VTON). The chat route does not render automatically;
+ * the per-card "Show This Item" and per-response "Try This Outfit"
+ * buttons hit here on explicit click.
  *
  * Gate order (mirrors the photo-upload route's strict ordering so a
  * failed gate never spends any provider credit):
@@ -16,10 +17,11 @@
  *   5. render quota available   -> 402 no_quota
  *
  * If any gate fails the client surfaces the matched prompt (sign in,
- * upload a photo, buy a pack). Only after step 5 do we touch OpenAI.
+ * upload a photo, buy a pack). Only after step 5 do we touch the
+ * VTON provider.
  *
  * On a successful render:
- *   - composite the askmai.co + @creator branding band
+ *   - composite the askmai branding overlay
  *   - upload to the private renders bucket
  *   - atomically consume one credit (consume_render RPC)
  *   - append-only log into public.renders
@@ -27,8 +29,8 @@
  *
  * If consume_render returns charged=false after the upstream succeeded
  * (rare race against another concurrent render the same user fired),
- * we still return the image since the OpenAI credit is already spent,
- * and log a 'leak' line for spend reconciliation.
+ * we still return the image since the provider credit is already
+ * spent, and log a 'leak' line for spend reconciliation.
  *
  * Request body:
  *   {
@@ -44,6 +46,7 @@
  *   402 { error: "no_quota", included_remaining, pack_balance }
  *   403 { error: "age_not_verified" }
  *   412 { error: "no_photo" }
+ *   422 { error: "moderation_blocked" | "pose_error" | "image_load_error" }
  *   500 { error: "render_failed" | "upload_failed" }
  */
 
@@ -60,13 +63,10 @@ import {
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-// gpt-image-1 inpaint at 1024x1536 with a mask + multiple reference
-// images regularly takes 60–90s end-to-end (HF segmentation + photo
-// normalization + OpenAI edit + branding + Supabase upload). Vercel's
-// project-default function limit is 60s, which truncates the OpenAI
-// fetch mid-flight and surfaces in our log as "fetch failed."
-// Raising to the Pro plan's 300s ceiling so the fetch is the gate,
-// not the runtime.
+// VTON timing: FASHN tryon-v1.6 quality mode is ~12-17s per garment;
+// outfit chains run that latency per item. An 8-item outfit can land
+// near the 300s ceiling. Single-item renders (the common path) land
+// in 15-25s end-to-end including overlay + upload.
 export const maxDuration = 300;
 
 // Matches the full outfit-slot taxonomy in src/lib/outfitSlots.ts:
@@ -74,7 +74,7 @@ export const maxDuration = 300;
 //   jewelry | sunglasses | accessory
 // dress excludes top+bottom, so the realistic max is 8 items
 // (top + bottom + 6 other slots) or (dress + 7 other slots).
-// We never REJECT when items exceed this — we trim and log, so a
+// We never REJECT when items exceed this; we trim and log, so a
 // model-side over-emit can't surface as a user-facing render
 // failure.
 const MAX_ITEMS_PER_RENDER = 8;
@@ -120,7 +120,7 @@ export async function POST(request: Request) {
     }
     if (!/^https?:\/\//i.test(url)) {
       // Log enough of the URL to diagnose the bug without leaking
-      // arbitrarily long strings — first 40 chars is plenty for
+      // arbitrarily long strings; first 40 chars is plenty for
       // distinguishing "/api/img?..." from "data:..." from any
       // mis-shaped value.
       rejectedShapes.push(`(non-http: "${url.slice(0, 40)}")`);
@@ -177,7 +177,7 @@ export async function POST(request: Request) {
 
   // Quota pre-check. The consume_render RPC is the final authority and
   // will refuse to overdraw under any race, but the pre-check spares
-  // us a multi-second OpenAI call we cannot bill for.
+  // us a multi-second VTON call we cannot bill for.
   const quota = await getRenderQuota(session.userId);
   if (quota.totalRemaining <= 0) {
     return Response.json(
@@ -203,69 +203,53 @@ export async function POST(request: Request) {
     return Response.json({ error: "render_failed" }, { status: 500 });
   }
 
-  // Upstream gpt-image-1 call. On failure we never consume a credit
-  // and never log a row; the user sees a generic error and can retry
-  // at no cost to them.
-  let pngBuffer: Buffer;
-  try {
-    pngBuffer = await runRender({
-      personBuffer: person.buffer,
-      personMime: person.mime,
-      itemImageUrls: imageUrls,
-    });
-  } catch (err) {
-    // err.cause carries the underlying system error when Node's
-    // undici wraps a fetch failure. Surfacing both turns an opaque
-    // "fetch failed" into something we can actually act on
-    // (AbortError = timeout, ECONNRESET = upstream closed, ETIMEDOUT
-    // = TCP-level timeout, etc.).
-    const e = err as { message?: string; cause?: unknown; name?: string };
-    const causeStr =
-      e.cause instanceof Error
-        ? `${e.cause.name ?? "Error"}: ${e.cause.message}`
-        : e.cause
-        ? String(e.cause)
-        : "(no cause)";
-    const msg = e.message ?? String(err);
-    console.error(
-      `[render] gpt-image-1 call failed: ${msg} | cause=${causeStr}`
-    );
+  // Upstream VTON call. runRender returns a structured result so we
+  // can map specific failures (moderation, pose, image load) to user-
+  // facing error codes without parsing exception messages. No credit
+  // is consumed unless result.ok is true.
+  const result = await runRender({
+    personBuffer: person.buffer,
+    personMime: person.mime,
+    itemImageUrls: imageUrls,
+  });
 
-    // gpt-image-1 has a post-generation output moderator that can
-    // 400 with code "moderation_blocked" when the rendered image
-    // trips a safety classifier (most commonly safety_violations=[sexual]
-    // on borderline catalog-ish renders -- isolated figure on neutral
-    // canvas + low-coverage garments + a face the moderator scores
-    // borderline). Probabilistic; same prompt re-fired can pass.
-    //
-    // Surface as 422 with a specific reason so the grid client can
-    // tell the user "this combo got flagged, try a different item"
-    // instead of the generic "render didn't come through" copy.
-    // No credit consumed (the runRender threw before reaching
-    // consume_render below).
-    if (
-      msg.includes("moderation_blocked") ||
-      msg.includes("safety_violations") ||
-      msg.includes("safety system")
-    ) {
-      return Response.json(
-        { error: "moderation_blocked" },
-        { status: 422 }
-      );
+  if (!result.ok) {
+    // Map runRender's structured failure to an HTTP response. Content
+    // issues (the input photo or the garment image is the problem)
+    // surface as 422 with a specific reason so the grid client can
+    // tell the user what went wrong instead of the generic "render
+    // didn't come through" copy. Provider / pipeline issues surface
+    // as 500. No credit is consumed in either case.
+    const k = result.error.kind;
+    if (k === "moderation_blocked") {
+      console.warn(`[render] 422 moderation_blocked: ${result.error.message}`);
+      return Response.json({ error: "moderation_blocked" }, { status: 422 });
     }
-
+    if (k === "pose_error") {
+      console.warn(`[render] 422 pose_error: ${result.error.message}`);
+      return Response.json({ error: "pose_error" }, { status: 422 });
+    }
+    if (k === "image_load_error") {
+      console.warn(`[render] 422 image_load_error: ${result.error.message}`);
+      return Response.json({ error: "image_load_error" }, { status: 422 });
+    }
+    if (k === "garment_unsupported") {
+      console.warn(`[render] 422 garment_unsupported: ${result.error.message}`);
+      return Response.json({ error: "garment_unsupported" }, { status: 422 });
+    }
+    console.error(`[render] 500 ${k}: ${result.error.message}`);
     return Response.json({ error: "render_failed" }, { status: 500 });
   }
 
   // Upload + sign before consuming the credit. If the upload fails we
-  // still have not charged the user (the OpenAI call already cost
-  // money but that is sunk; consuming a credit on top of that would
-  // double-punish them for our infrastructure failing).
+  // still have not charged the user (the VTON call already cost money
+  // but that is sunk; consuming a credit on top of that would double-
+  // punish them for our infrastructure failing).
   let stored: { path: string; signedUrl: string };
   try {
     stored = await uploadRender({
       userId: session.userId,
-      pngBuffer,
+      pngBuffer: result.pngBuffer,
     });
   } catch (err) {
     console.error(
@@ -295,7 +279,7 @@ export async function POST(request: Request) {
 
   if (!consume.charged) {
     console.warn(
-      `[render] LEAK user=${session.userId} kind=${kind} path=${stored.path} — render produced after quota race; credit not charged`
+      `[render] LEAK user=${session.userId} kind=${kind} provider=${result.provider} path=${stored.path} render produced after quota race; credit not charged`
     );
   }
 
