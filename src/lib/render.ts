@@ -46,11 +46,11 @@ import { removeProductBackground } from "./removeBackground";
 
 export const INCLUDED_RENDERS_PER_MONTH = 3;
 
-// Cost basis at the time of render. ONE-OFF QUALITY EXPERIMENT:
-// currently set to the high-tier price ($0.25 at 1024x1536) while
-// OPENAI_QUALITY is "high" below. REVERT TO 0.063 when flipping
-// back to medium so the renders log stops over-stating spend.
-const COST_USD_PER_RENDER = 0.25;
+// Cost basis at the time of render. Verified 2026-06-27 from the
+// OpenAI pricing page for gpt-image-1 medium@1024x1536 (portrait).
+// Stamped onto every renders row so a future provider price change
+// does not silently rewrite historical spend totals.
+const COST_USD_PER_RENDER = 0.063;
 
 const OPENAI_MODEL = "gpt-image-1";
 // Portrait so a full-body try-on returns head-to-feet. We do NOT
@@ -58,11 +58,12 @@ const OPENAI_MODEL = "gpt-image-1";
 // model returns is what we ship (with a thin top/bottom branding
 // overlay).
 const OPENAI_SIZE = "1024x1536";
-// ONE-OFF QUALITY EXPERIMENT: temporarily "high" for a single
-// medium-vs-high comparison render. REVERT TO "medium" immediately
-// after the test render is fired — every subsequent render will
-// otherwise be billed at ~4x the cost ($0.25 vs $0.063 at 1024x1536).
-const OPENAI_QUALITY = "high";
+// Medium quality is a ~4x cost reduction over high ($0.063 vs $0.25
+// at 1024x1536). A/B'd 2026-06-27 against the same item + prompt —
+// high reads marginally crisper but not 4x crisper. Medium stays
+// the default. May revisit high for detail-heavy categories
+// (lace, sequins, fine print) as a per-render override later.
+const OPENAI_QUALITY = "medium";
 const OPENAI_IMAGES_EDITS_URL = "https://api.openai.com/v1/images/edits";
 const RENDER_SIGNED_URL_TTL_SECONDS = 60 * 60 * 24 * 7;
 
