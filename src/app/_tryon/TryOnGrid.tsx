@@ -41,6 +41,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import SignInModal from "../_components/SignInModal";
 import RenderLoadingState from "./RenderLoadingState";
+import BeforeAfterReveal from "./BeforeAfterReveal";
+import {
+  composeRevealVideo,
+  composeSideBySide,
+  recorderMimeAvailable,
+} from "./beforeAfter";
 
 type Product = {
   id: string;
@@ -68,7 +74,12 @@ type Interpreted = {
 type RenderResult =
   | { state: "idle" }
   | { state: "loading"; product: Product }
-  | { state: "result"; product: Product; signedUrl: string }
+  | {
+      state: "result";
+      product: Product;
+      signedUrl: string;
+      beforeSignedUrl: string | null;
+    }
   | { state: "blocked"; product: Product; reason: BlockReason };
 
 // Per-card eligibility for the body-render Try-On button. Items in
@@ -116,7 +127,12 @@ function slotFor(product: Product): OutfitSlot | null {
 type OutfitRender =
   | { state: "idle" }
   | { state: "loading"; products: Product[] }
-  | { state: "result"; products: Product[]; signedUrl: string }
+  | {
+      state: "result";
+      products: Product[];
+      signedUrl: string;
+      beforeSignedUrl: string | null;
+    }
   | { state: "blocked"; products: Product[]; reason: BlockReason };
 
 type BlockReason =
@@ -301,7 +317,15 @@ export default function TryOnGrid({
         });
         const json = await res.json().catch(() => ({}));
         if (res.status === 200 && json.signed_url) {
-          setRender({ state: "result", product, signedUrl: json.signed_url });
+          setRender({
+            state: "result",
+            product,
+            signedUrl: json.signed_url,
+            beforeSignedUrl:
+              typeof json.before_signed_url === "string"
+                ? json.before_signed_url
+                : null,
+          });
           return;
         }
         // 401 not_signed_in: pop the existing SignInModal in-place
@@ -406,6 +430,10 @@ export default function TryOnGrid({
           state: "result",
           products: outfitItems,
           signedUrl: json.signed_url,
+          beforeSignedUrl:
+            typeof json.before_signed_url === "string"
+              ? json.before_signed_url
+              : null,
         });
         return;
       }
@@ -734,13 +762,19 @@ function OutfitModal({
         ) : null}
         {state.state === "result" ? (
           <div className="tryon-modal-body">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              className="tryon-modal-image tryon-modal-image-reveal"
-              src={state.signedUrl}
-              alt=""
+            <BeforeAfterReveal
+              beforeUrl={state.beforeSignedUrl}
+              afterUrl={state.signedUrl}
+              alt="Outfit try-on"
             />
             <div className="tryon-modal-caption">{titleList}</div>
+            <ResultActions
+              beforeUrl={state.beforeSignedUrl}
+              afterUrl={state.signedUrl}
+              shareTitle="My AskMai outfit · askmai.co"
+              shopUrl={null}
+              shopLabel={null}
+            />
             <div className="tryon-outfit-result-shops">
               {state.products.map((p) => (
                 <button
@@ -763,15 +797,6 @@ function OutfitModal({
                 </button>
               ))}
             </div>
-            <div className="tryon-modal-actions">
-              <a
-                className="tryon-btn tryon-btn-secondary"
-                href={state.signedUrl}
-                download
-              >
-                Save image
-              </a>
-            </div>
           </div>
         ) : null}
         {state.state === "blocked" ? (
@@ -789,6 +814,149 @@ function OutfitModal({
           </div>
         ) : null}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Save (side-by-side PNG) + Share (animated reveal video) + Shop.
+ * Both export actions are pure client-side via canvas + MediaRecorder
+ * (see beforeAfter.ts). Falls back gracefully:
+ *   - Save: works as long as the before URL is present.
+ *   - Share: native share API when present (mobile), download link
+ *     fallback otherwise (desktop). Hidden entirely when
+ *     MediaRecorder isn't available in the browser.
+ *   - Shop: stays wired to the affiliate URL with no rewriting.
+ */
+function ResultActions({
+  beforeUrl,
+  afterUrl,
+  shareTitle,
+  shopUrl,
+  shopLabel,
+}: {
+  beforeUrl: string | null;
+  afterUrl: string;
+  shareTitle: string;
+  shopUrl: string | null;
+  shopLabel: string | null;
+}) {
+  const [working, setWorking] = useState<"" | "save" | "share">("");
+  const canRecord =
+    typeof window !== "undefined" && recorderMimeAvailable();
+
+  const onSave = useCallback(async () => {
+    if (!beforeUrl || working) return;
+    setWorking("save");
+    try {
+      const blob = await composeSideBySide(beforeUrl, afterUrl);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "askmai-tryon.png";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 5_000);
+    } catch (e) {
+      console.warn("[tryon] side-by-side save failed", e);
+      // Fall back to a direct download of the after image so the
+      // Save button never feels broken.
+      const a = document.createElement("a");
+      a.href = afterUrl;
+      a.download = "askmai-tryon.png";
+      a.click();
+    } finally {
+      setWorking("");
+    }
+  }, [beforeUrl, afterUrl, working]);
+
+  const onShare = useCallback(async () => {
+    if (!beforeUrl || working) return;
+    setWorking("share");
+    try {
+      const blob = await composeRevealVideo(beforeUrl, afterUrl);
+      const ext = blob.type.includes("mp4") ? "mp4" : "webm";
+      const file = new File([blob], `askmai-tryon.${ext}`, {
+        type: blob.type,
+      });
+      // Native share with files where supported (mobile primarily).
+      // navigator.canShare gates this; if files-share isn't supported,
+      // fall through to a download.
+      if (
+        typeof navigator !== "undefined" &&
+        typeof navigator.share === "function" &&
+        typeof navigator.canShare === "function" &&
+        navigator.canShare({ files: [file] })
+      ) {
+        await navigator.share({
+          files: [file],
+          title: shareTitle,
+          text: shareTitle,
+        });
+      } else {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = file.name;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 5_000);
+      }
+    } catch (e) {
+      // AbortError is the user cancelling the share sheet; not a real
+      // failure. Other errors fall back to a download.
+      const name = (e as { name?: string })?.name;
+      if (name !== "AbortError") {
+        console.warn("[tryon] share failed, retrying as download", e);
+      }
+    } finally {
+      setWorking("");
+    }
+  }, [beforeUrl, afterUrl, shareTitle, working]);
+
+  return (
+    <div className="tryon-modal-actions">
+      {beforeUrl ? (
+        <button
+          type="button"
+          className="tryon-btn tryon-btn-secondary"
+          onClick={onSave}
+          disabled={working !== ""}
+        >
+          {working === "save" ? "Saving…" : "Save image"}
+        </button>
+      ) : (
+        <a
+          className="tryon-btn tryon-btn-secondary"
+          href={afterUrl}
+          download="askmai-tryon.png"
+        >
+          Save image
+        </a>
+      )}
+      {beforeUrl && canRecord ? (
+        <button
+          type="button"
+          className="tryon-btn tryon-btn-secondary"
+          onClick={onShare}
+          disabled={working !== ""}
+        >
+          {working === "share" ? "Recording…" : "Share"}
+        </button>
+      ) : null}
+      {shopUrl && shopLabel ? (
+        <button
+          type="button"
+          className="tryon-btn tryon-btn-primary"
+          onClick={() =>
+            window.open(shopUrl, "_blank", "noopener,noreferrer")
+          }
+        >
+          {shopLabel}
+        </button>
+      ) : null}
     </div>
   );
 }
@@ -829,38 +997,22 @@ function TryOnModal({
         ) : null}
         {state.state === "result" ? (
           <div className="tryon-modal-body">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              className="tryon-modal-image tryon-modal-image-reveal"
-              src={state.signedUrl}
-              alt=""
+            <BeforeAfterReveal
+              beforeUrl={state.beforeSignedUrl}
+              afterUrl={state.signedUrl}
+              alt={state.product.product_title}
             />
             <div className="tryon-modal-caption">
-              {state.product.brand ? `${state.product.brand} — ` : ""}
+              {state.product.brand ? `${state.product.brand} · ` : ""}
               {state.product.product_title}
             </div>
-            <div className="tryon-modal-actions">
-              <a
-                className="tryon-btn tryon-btn-secondary"
-                href={state.signedUrl}
-                download
-              >
-                Save image
-              </a>
-              <button
-                type="button"
-                className="tryon-btn tryon-btn-primary"
-                onClick={() =>
-                  window.open(
-                    state.product.affiliate_url,
-                    "_blank",
-                    "noopener,noreferrer"
-                  )
-                }
-              >
-                Shop the piece
-              </button>
-            </div>
+            <ResultActions
+              beforeUrl={state.beforeSignedUrl}
+              afterUrl={state.signedUrl}
+              shareTitle={`${state.product.brand ? state.product.brand + " " : ""}${state.product.product_title} · askmai.co`}
+              shopUrl={state.product.affiliate_url}
+              shopLabel="Shop the piece"
+            />
           </div>
         ) : null}
         {state.state === "blocked" ? (

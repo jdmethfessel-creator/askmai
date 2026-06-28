@@ -157,7 +157,7 @@ export async function POST(request: Request) {
 
   const userRow = await admin
     .from("users")
-    .select("age_verified_at, tryon_photo_path")
+    .select("age_verified_at, tryon_photo_path, tryon_original_path")
     .eq("id", session.userId)
     .maybeSingle();
   if (userRow.error || !userRow.data) {
@@ -283,9 +283,34 @@ export async function POST(request: Request) {
     );
   }
 
+  // Sign the user's ORIGINAL photo too so the modal can render
+  // the before/after reveal animation + export the side-by-side
+  // share image. Falls back to the canvas (tryon_photo_path) when
+  // the user uploaded pre-normalization and only has one path. Best-
+  // effort: a failure here does not block the response since the
+  // primary success (the rendered after) is already produced.
+  let beforeSignedUrl: string | null = null;
+  const originalPath =
+    (userRow.data.tryon_original_path as string | null) ?? photoPath;
+  if (originalPath) {
+    const sb = supabaseAdmin();
+    const signed = await sb.storage
+      .from("tryon-photos")
+      .createSignedUrl(originalPath, 60 * 60 * 24 * 7);
+    if (signed.data?.signedUrl) {
+      beforeSignedUrl = signed.data.signedUrl;
+    } else if (signed.error) {
+      console.warn(
+        "[render] before-image sign failed (continuing without it):",
+        signed.error.message
+      );
+    }
+  }
+
   return Response.json({
     ok: true,
     signed_url: stored.signedUrl,
+    before_signed_url: beforeSignedUrl,
     kind,
     source,
     included_remaining: consume.includedRemaining,
