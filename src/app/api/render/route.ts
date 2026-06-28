@@ -93,25 +93,46 @@ export async function POST(request: Request) {
   try {
     body = (await request.json()) as IncomingBody;
   } catch {
+    console.warn("[render] 400 invalid_request: body failed JSON parse");
     return Response.json({ error: "invalid_request" }, { status: 400 });
   }
 
   const kind = body.kind === "outfit" ? "outfit" : "single";
   const items = Array.isArray(body.items) ? body.items : [];
+  // Telemetry for the 400 path: when items arrive but none pass the
+  // server's URL validation, log each item's URL shape so the client-
+  // side bug is easy to identify (relative URL? proxied URL? missing?).
   const imageUrls: string[] = [];
+  const rejectedShapes: string[] = [];
   for (const item of items) {
     const url = typeof item?.image_url === "string" ? item.image_url.trim() : "";
-    if (!url) continue;
-    if (!/^https?:\/\//i.test(url)) continue;
+    if (!url) {
+      rejectedShapes.push("(empty/missing)");
+      continue;
+    }
+    if (!/^https?:\/\//i.test(url)) {
+      // Log enough of the URL to diagnose the bug without leaking
+      // arbitrarily long strings — first 40 chars is plenty for
+      // distinguishing "/api/img?..." from "data:..." from any
+      // mis-shaped value.
+      rejectedShapes.push(`(non-http: "${url.slice(0, 40)}")`);
+      continue;
+    }
     imageUrls.push(url);
   }
   if (imageUrls.length === 0) {
+    console.warn(
+      `[render] 400 no_items: kind=${kind} items_in=${items.length} rejected=[${rejectedShapes.join(", ")}]`
+    );
     return Response.json({ error: "no_items" }, { status: 400 });
   }
   if (kind === "single" && imageUrls.length > 1) {
     imageUrls.splice(1);
   }
   if (imageUrls.length > MAX_ITEMS_PER_RENDER) {
+    console.warn(
+      `[render] 400 too_many_items: kind=${kind} count=${imageUrls.length} max=${MAX_ITEMS_PER_RENDER}`
+    );
     return Response.json({ error: "too_many_items" }, { status: 400 });
   }
 

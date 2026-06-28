@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ChatMessage, Rec } from "@/lib/types";
-import { dedupeOutfitRecs } from "@/lib/outfitSlots";
+import { dedupeOutfitRecs, hasValidOutfitComposition } from "@/lib/outfitSlots";
 import SignInModal from "@/app/_components/SignInModal";
 
 const SUGGESTIONS = [
@@ -1917,6 +1917,12 @@ function OutfitRenderPill({
     )
   );
   if (qualifying.length < 2) return null;
+  // Composition gate: a coherent outfit needs a top-level garment
+  // (a dress, OR top + bottom). A pile of accessories (sunglasses +
+  // jewelry + bag) is not an outfit, so we hide the "Try This Outfit
+  // on Me" pill. Each accessory still has its per-card render pill,
+  // which is the right granularity for those items.
+  if (!hasValidOutfitComposition(qualifying)) return null;
   // Suppress while the message is mid-stream — the outfit pill would
   // appear before the final card render and look like a flicker.
   if (streaming) return null;

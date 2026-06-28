@@ -39,6 +39,7 @@ export type OutfitSlot =
   | "shoes"
   | "bag"
   | "jewelry"
+  | "sunglasses"
   | "accessory"
   | "other";
 
@@ -90,10 +91,18 @@ const SLOT_PATTERNS: Array<{ slot: OutfitSlot; pattern: RegExp }> = [
     pattern:
       /\b(pants?|jeans?|trousers?|shorts?|skirts?|leggings?|joggers?|chinos?|culottes?|capris?|denim)\b/i,
   },
+  // Sunglasses gets its own slot so a single "outfit" cannot end up
+  // with three sunglasses. (Eyewear is a distinct outfit feature
+  // from belts/hats/scarves — the model treats them as choosable in
+  // multiples and we have to gate that explicitly.)
+  {
+    slot: "sunglasses",
+    pattern: /\b(sunglasses?|shades|sunnies)\b/i,
+  },
   {
     slot: "accessory",
     pattern:
-      /\b(sunglasses?|glasses?|belts?|hats?|caps?|berets?|scarves?|scarf|gloves?|hairband|headband|ties?|fascinator)\b/i,
+      /\b(glasses?|belts?|hats?|caps?|berets?|scarves?|scarf|gloves?|hairband|headband|ties?|fascinator)\b/i,
   },
 ];
 
@@ -148,6 +157,35 @@ export function dedupeOutfitRecs(recs: Rec[]): Rec[] {
     out.push(rec);
   }
   return out;
+}
+
+/**
+ * A coherent outfit must include a TOP-LEVEL GARMENT — either a
+ * dress (single full-body garment) or a top + bottom combination.
+ * An assortment that's only accessories (sunglasses + jewelry +
+ * belt + bag with no actual clothing) is not an outfit; it's a
+ * pile of accessories.
+ *
+ * Used by the render trigger to decide whether to show the
+ * "Try This Outfit on Me" pill. If no top-level garment is
+ * present, the pill stays hidden — each item still gets its own
+ * per-card "Show This Item on Me" pill, but there's no "outfit"
+ * render path for an accessory pile.
+ *
+ * Also used by the server-side assembler to log when a deduped
+ * outfit comes back garmentless, so we can monitor the rate.
+ */
+export function hasValidOutfitComposition(recs: Rec[]): boolean {
+  let hasDress = false;
+  let hasTop = false;
+  let hasBottom = false;
+  for (const rec of recs) {
+    const slot = classifyOutfitSlot(rec);
+    if (slot === "dress") hasDress = true;
+    else if (slot === "top") hasTop = true;
+    else if (slot === "bottom") hasBottom = true;
+  }
+  return hasDress || (hasTop && hasBottom);
 }
 
 /**

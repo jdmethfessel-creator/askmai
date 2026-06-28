@@ -14,7 +14,10 @@ import {
   findCounterByFingerprint,
 } from "@/lib/usage";
 import { getServerSession } from "@/lib/session";
-import { dedupeOutfitPreservingOther } from "@/lib/outfitSlots";
+import {
+  dedupeOutfitPreservingOther,
+  hasValidOutfitComposition,
+} from "@/lib/outfitSlots";
 import type { ChatMessage, Creator, Rec } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -296,6 +299,17 @@ export async function POST(request: Request) {
           const after = coherentRecs.map((r) => r.name).join(", ");
           console.log(
             `[outfit] slot dedup: ${anchorPruned.length} -> ${coherentRecs.length}  in=[${before}]  out=[${after}]`
+          );
+        }
+        // Composition check: if the model emitted only accessories
+        // (sunglasses + necklace + bag with no actual garment), log
+        // it so we can monitor the rate. The cards still ship — they
+        // are real product picks — but the client-side
+        // OutfitRenderPill will hide the "Try This Outfit on Me"
+        // button on these responses, gated by hasValidOutfitComposition.
+        if (productRequest && coherentRecs.length >= 2 && !hasValidOutfitComposition(coherentRecs)) {
+          console.warn(
+            `[outfit] garmentless emit (no dress, no top+bottom): [${coherentRecs.map((r) => r.name).join(", ")}]`
           );
         }
         // Budget-board fallback. When the user asked a budget product
