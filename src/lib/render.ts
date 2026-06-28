@@ -322,33 +322,63 @@ async function applyBranding(pngBuffer: Buffer): Promise<Buffer> {
 // swap, neckline draping, hands, the rest of the body); the head
 // region is hard-restored to bit-exact identity.
 //
-// Two safety rails:
+// Alignment handling. gpt-image-1 often shifts the model's head
+// vertically (different framing / different stance). We classify the
+// shift and respond, instead of always skipping:
 //
-//   - The SegFormer Face+Hair bbox is computed on BOTH the input
-//     normalized photo and the OpenAI output. If they differ in
-//     center position (>8% of the image's larger dimension) or
-//     significantly in size (>30% area change), the model
-//     recomposed the body and pasting the head would land in the
-//     wrong spot. We fall back: return the OpenAI output without
-//     the composite, with a warning logged.
+//   ALIGNED        center within 8% of image max dim, size within
+//                  15% area delta. Composite at input position.
+//   TRANSLATE      moderate shift, sizes still similar (<=15% area
+//                  delta). Composite the input head shifted by
+//                  (outCx-inCx, outCy-inCy) so it lands at the
+//                  output bbox center.
+//   TRANSLATE+SCALE  shift AND sizes differ (15-40% area delta).
+//                  Composite shifted AND scaled to match the
+//                  output bbox size.
+//   SKIP           sizes differ >40% area, OR linear scale would
+//                  be outside [0.75, 1.33]. Pasting a scaled face
+//                  beyond that risks an uncanny / warped result.
+//                  Better to return the gpt-image-1 face than a
+//                  visibly wrong one.
 //
-//   - The Face+Hair binary mask is Gaussian-blurred (sigma 8) before
-//     it becomes the alpha channel, so the composite has a soft
-//     neckline gradient instead of a hard seam.
+// The Face+Hair binary mask is Gaussian-blurred (sigma 8) before it
+// becomes the alpha channel, so the composite has a soft neckline
+// gradient instead of a hard seam.
 //
 // Cost: one additional HF SegFormer call on the output (~$0.001).
 // Total per render now ~$0.065.
 
+type HeadAlignment =
+  | { kind: "aligned" }
+  | { kind: "translate"; dx: number; dy: number }
+  | { kind: "scale"; dx: number; dy: number; scale: number; inCx: number; inCy: number; outCx: number; outCy: number }
+  | { kind: "skip"; reason: string };
+
+// Linear-scale bounds beyond which we refuse to scale the input
+// face/hair patch. Outside this band the user's face would warp
+// visibly; we'd rather ship the gpt-image-1 face than an uncanny
+// one. (areaDelta 0.40 ≈ linearScale 0.77 / 1.30 around 1.0.)
+const SCALE_LINEAR_MIN = 0.75;
+const SCALE_LINEAR_MAX = 1.33;
+
+// When the centers are close AND sizes are within this area-delta,
+// no shift is needed and we composite at the input position.
+const ALIGNED_CENTER_PCT = 0.08;
+const ALIGNED_AREA_DELTA = 0.15;
+
+// When sizes differ more than this, translation alone leaves a
+// visibly wrong-sized head; we engage the scale path.
+const SCALE_TRIGGER_AREA_DELTA = 0.15;
+
 /**
- * Bbox-alignment check between input head and output head. Returns
- * true when the two bboxes are close enough that pasting the input
- * head over the output will land correctly.
+ * Classifies the input/output head bbox relationship into one of
+ * the four response modes above. Drives the composite branch.
  */
-function headBboxesAligned(
+function classifyHeadAlignment(
   inBox: Bbox,
   outBox: Bbox,
   imageDimMax: number
-): boolean {
+): HeadAlignment {
   const inCx = inBox.x + inBox.w / 2;
   const inCy = inBox.y + inBox.h / 2;
   const outCx = outBox.x + outBox.w / 2;
@@ -358,9 +388,31 @@ function headBboxesAligned(
 
   const inArea = Math.max(1, inBox.w * inBox.h);
   const outArea = Math.max(1, outBox.w * outBox.h);
-  const areaRatio = Math.abs(inArea - outArea) / inArea;
+  const areaDelta = Math.abs(inArea - outArea) / Math.max(inArea, outArea);
+  const linearScale = Math.sqrt(outArea / inArea);
 
-  return centerShiftPct <= 0.08 && areaRatio <= 0.3;
+  if (linearScale < SCALE_LINEAR_MIN || linearScale > SCALE_LINEAR_MAX) {
+    return {
+      kind: "skip",
+      reason: `linear scale ${linearScale.toFixed(2)} outside [${SCALE_LINEAR_MIN}, ${SCALE_LINEAR_MAX}]`,
+    };
+  }
+  if (centerShiftPct <= ALIGNED_CENTER_PCT && areaDelta <= ALIGNED_AREA_DELTA) {
+    return { kind: "aligned" };
+  }
+  if (areaDelta <= SCALE_TRIGGER_AREA_DELTA) {
+    return { kind: "translate", dx: outCx - inCx, dy: outCy - inCy };
+  }
+  return {
+    kind: "scale",
+    dx: outCx - inCx,
+    dy: outCy - inCy,
+    scale: linearScale,
+    inCx,
+    inCy,
+    outCx,
+    outCy,
+  };
 }
 
 /**
@@ -379,9 +431,27 @@ async function buildFeatheredHeadOverlay(args: {
   headMaskRaw: Buffer;
   width: number;
   height: number;
+  /**
+   * Optional reposition. When present, every output pixel (ox, oy)
+   * samples the source RGB + alpha at the inverse-mapped input
+   * coordinate. The inverse maps the output bbox center back to the
+   * input bbox center, applying the inverse scale around the input
+   * center. Omitting `transform` (or passing identity) keeps the
+   * original at-input-position composite for the ALIGNED path.
+   */
+  transform?: {
+    inCx: number;
+    inCy: number;
+    outCx: number;
+    outCy: number;
+    /** Linear scale; 1 = translation only. */
+    scale: number;
+  };
 }): Promise<Buffer> {
-  const expected1ch = args.width * args.height;
-  const expected3ch = args.width * args.height * 3;
+  const W = args.width;
+  const H = args.height;
+  const expected1ch = W * H;
+  const expected3ch = W * H * 3;
 
   // Assertion 1: the head mask handed to us must already be a true
   // 1-channel buffer (W*H bytes). segmentForRender now enforces this,
@@ -389,7 +459,7 @@ async function buildFeatheredHeadOverlay(args: {
   // as a clear error instead of rainbow scanlines in the output.
   if (args.headMaskRaw.length !== expected1ch) {
     throw new Error(
-      `buildFeatheredHeadOverlay: headMaskRaw wrong size: ${args.headMaskRaw.length} vs expected ${expected1ch} (${args.width}x${args.height} 1ch)`
+      `buildFeatheredHeadOverlay: headMaskRaw wrong size: ${args.headMaskRaw.length} vs expected ${expected1ch} (${W}x${H} 1ch)`
     );
   }
 
@@ -400,7 +470,7 @@ async function buildFeatheredHeadOverlay(args: {
   // 3 identical channels (W*H*3 bytes) and the downstream byte-write
   // loop reads at the wrong stride.
   const featheredAlpha = await sharp(args.headMaskRaw, {
-    raw: { width: args.width, height: args.height, channels: 1 },
+    raw: { width: W, height: H, channels: 1 },
   })
     .blur(8)
     .extractChannel(0)
@@ -415,7 +485,7 @@ async function buildFeatheredHeadOverlay(args: {
   // Extract the input photo's RGB channels at the same dimensions so
   // we can join the feathered alpha onto them.
   const { data: rgb, info } = await sharp(args.normalizedPerson)
-    .resize({ width: args.width, height: args.height, fit: "fill" })
+    .resize({ width: W, height: H, fit: "fill" })
     .removeAlpha()
     .raw()
     .toBuffer({ resolveWithObject: true });
@@ -426,15 +496,51 @@ async function buildFeatheredHeadOverlay(args: {
   }
 
   const rgba = Buffer.alloc(expected1ch * 4);
-  for (let i = 0; i < expected1ch; i++) {
-    const b = i * 4;
-    rgba[b] = rgb[i * 3];
-    rgba[b + 1] = rgb[i * 3 + 1];
-    rgba[b + 2] = rgb[i * 3 + 2];
-    rgba[b + 3] = featheredAlpha[i];
+
+  if (!args.transform) {
+    // Fast path: identity transform. Pixel-aligned, no resampling.
+    for (let i = 0; i < expected1ch; i++) {
+      const b = i * 4;
+      rgba[b] = rgb[i * 3];
+      rgba[b + 1] = rgb[i * 3 + 1];
+      rgba[b + 2] = rgb[i * 3 + 2];
+      rgba[b + 3] = featheredAlpha[i];
+    }
+  } else {
+    // Reposition path. For each output pixel (ox, oy), the source
+    // input pixel is:
+    //
+    //   px = inCx + (ox - outCx) / scale
+    //   py = inCy + (oy - outCy) / scale
+    //
+    // (i.e. inverse of "anchor the input center at the output center
+    // and scale around it"). Nearest-neighbor sampling is fine here
+    // because the head region is large and the alpha is feathered;
+    // bilinear would marginally smooth a hair edge but doubles the
+    // per-pixel cost.
+    const { inCx, inCy, outCx, outCy, scale } = args.transform;
+    const invScale = 1 / scale;
+    for (let oy = 0; oy < H; oy++) {
+      for (let ox = 0; ox < W; ox++) {
+        const px = Math.round(inCx + (ox - outCx) * invScale);
+        const py = Math.round(inCy + (oy - outCy) * invScale);
+        const b = (oy * W + ox) * 4;
+        if (px < 0 || px >= W || py < 0 || py >= H) {
+          // Source pixel out of frame; leave fully transparent
+          // (alpha default 0 from Buffer.alloc).
+          continue;
+        }
+        const srcIdx = py * W + px;
+        rgba[b] = rgb[srcIdx * 3];
+        rgba[b + 1] = rgb[srcIdx * 3 + 1];
+        rgba[b + 2] = rgb[srcIdx * 3 + 2];
+        rgba[b + 3] = featheredAlpha[srcIdx];
+      }
+    }
   }
+
   return sharp(rgba, {
-    raw: { width: args.width, height: args.height, channels: 4 },
+    raw: { width: W, height: H, channels: 4 },
   })
     .png()
     .toBuffer();
@@ -573,14 +679,13 @@ export async function runRender(args: {
   const raw = Buffer.from(b64, "base64");
 
   // 5. Post-hoc head composite. gpt-image-1 won't strictly preserve
-  //    the face even with a mask, so we re-run SegFormer on the
-  //    output, check that the head bbox is close enough to the input
-  //    bbox to safely paste, and (when aligned) composite the user's
-  //    actual head pixels back onto the output with a feathered
-  //    alpha. When the model has moved the head too far, we skip the
-  //    composite rather than land a face in the wrong spot — the
-  //    render still ships (no credit refund), just without identity
-  //    preservation on this one.
+  //    the face even with a mask. Re-run SegFormer on the output,
+  //    classify how the model moved the head, and respond:
+  //    ALIGNED → composite at input position. TRANSLATE → composite
+  //    shifted to the output bbox center. TRANSLATE+SCALE → composite
+  //    shifted AND scaled. SKIP → return the gpt-image-1 face
+  //    (uncanny paste would be worse than a slightly different face).
+  //    See classifyHeadAlignment above for thresholds.
   let composited: Buffer = raw;
   try {
     const outProbe = await probeHeadBbox(raw);
@@ -592,31 +697,53 @@ export async function runRender(args: {
       );
     } else {
       const imageDimMax = Math.max(outProbe.width, outProbe.height);
-      const aligned = headBboxesAligned(inputBbox, outputBbox, imageDimMax);
-      if (!aligned) {
-        const inCx = inputBbox.x + inputBbox.w / 2;
-        const inCy = inputBbox.y + inputBbox.h / 2;
-        const outCx = outputBbox.x + outputBbox.w / 2;
-        const outCy = outputBbox.y + outputBbox.h / 2;
+      const align = classifyHeadAlignment(inputBbox, outputBbox, imageDimMax);
+      const inCx = inputBbox.x + inputBbox.w / 2;
+      const inCy = inputBbox.y + inputBbox.h / 2;
+      const outCx = outputBbox.x + outputBbox.w / 2;
+      const outCy = outputBbox.y + outputBbox.h / 2;
+
+      if (align.kind === "skip") {
         console.warn(
-          `[render] head composite SKIPPED: misaligned (in center=${inCx.toFixed(0)},${inCy.toFixed(0)} out center=${outCx.toFixed(0)},${outCy.toFixed(0)})`
+          `[render] head composite SKIPPED: ${align.reason} (in center=${inCx.toFixed(0)},${inCy.toFixed(0)} size=${inputBbox.w}x${inputBbox.h} ; out center=${outCx.toFixed(0)},${outCy.toFixed(0)} size=${outputBbox.w}x${outputBbox.h})`
         );
       } else {
         // OpenAI returns 1024x1536, same as our normalized input
         // dimensions. Feathered overlay = input photo RGB + Face+Hair
-        // mask blurred into the alpha channel. Composite over raw.
+        // mask blurred into alpha. When the head moved, we pass a
+        // transform so the overlay's sampling maps the input bbox
+        // center to the output bbox center (and scales when needed).
+        const transform =
+          align.kind === "aligned"
+            ? undefined
+            : align.kind === "translate"
+            ? { inCx, inCy, outCx, outCy, scale: 1 }
+            : {
+                inCx: align.inCx,
+                inCy: align.inCy,
+                outCx: align.outCx,
+                outCy: align.outCy,
+                scale: align.scale,
+              };
         const overlay = await buildFeatheredHeadOverlay({
           normalizedPerson,
           headMaskRaw: seg.headMaskRaw,
           width: seg.width,
           height: seg.height,
+          transform,
         });
         composited = await sharp(raw)
           .composite([{ input: overlay, top: 0, left: 0, blend: "over" }])
           .png()
           .toBuffer();
+        const where =
+          align.kind === "aligned"
+            ? "at input position"
+            : align.kind === "translate"
+            ? `translated dx=${(outCx - inCx).toFixed(0)} dy=${(outCy - inCy).toFixed(0)}`
+            : `translated dx=${(outCx - inCx).toFixed(0)} dy=${(outCy - inCy).toFixed(0)} scale=${align.scale.toFixed(2)}`;
         console.log(
-          "[render] head composite APPLIED: face/hair restored from input"
+          `[render] head composite APPLIED (${align.kind}): face/hair restored from input ${where}`
         );
       }
     }
