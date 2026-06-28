@@ -14,6 +14,7 @@
 //   'shopmy' | null. Drives the dispatch in parsers/parse().
 
 import { fetchHtml } from "./fetch.mjs";
+import { deriveSubcategory } from "./categorize.mjs";
 
 // ---------------------------------------------------------------------
 // Shared helpers
@@ -190,6 +191,10 @@ export function parseShopbop({ html, pageUrl }) {
       pageParams
     );
 
+    const product_category = inferCategory({
+      titleHint: p.shortDescription,
+      brandHint: p.designerName,
+    });
     return {
       source_network: "shopbop",
       source_external_id: String(p.productSin),
@@ -199,9 +204,11 @@ export function parseShopbop({ html, pageUrl }) {
       price_display: priceDisplay,
       image_url,
       affiliate_url,
-      product_category: inferCategory({
-        titleHint: p.shortDescription,
-        brandHint: p.designerName,
+      product_category,
+      product_subcategory: deriveSubcategory({
+        title: p.shortDescription,
+        brand: p.designerName,
+        topLevelCategory: product_category,
       }),
       raw: { productCode: p.productCode, productSin: p.productSin },
       ingested_from: pageUrl,
@@ -256,6 +263,7 @@ export function parseRevolve({ html, pageUrl }) {
     const affiliate_url = composeAffiliateUrl(REVOLVE_ORIGIN, href, pageParams);
     const image_url = `${REVOLVE_IMAGE_ORIGIN}/${sku}_V1.jpg`;
 
+    const product_category = inferCategory({ titleHint: name, brandHint: brand });
     out.push({
       source_network: "revolve",
       source_external_id: sku,
@@ -265,7 +273,12 @@ export function parseRevolve({ html, pageUrl }) {
       price_display: priceDisplay || null,
       image_url,
       affiliate_url,
-      product_category: inferCategory({ titleHint: name, brandHint: brand }),
+      product_category,
+      product_subcategory: deriveSubcategory({
+        title: name,
+        brand,
+        topLevelCategory: product_category,
+      }),
       raw: { sku, href: href.replaceAll("&amp;", "&") },
       ingested_from: pageUrl,
     });
@@ -344,6 +357,9 @@ export function parseFwrd({ html, pageUrl }) {
     const affiliate_url = composeAffiliateUrl(FWRD_ORIGIN, productPath, pageParams);
     const image_url = btnImage || `${FWRD_IMAGE_ORIGIN}/${code}_V1.jpg`;
 
+    const product_category = btnCat1
+      ? mapFwrdCategory(btnCat1)
+      : inferCategory({ titleHint: title, brandHint: brand });
     out.push({
       source_network: "fwrd",
       source_external_id: code,
@@ -353,9 +369,13 @@ export function parseFwrd({ html, pageUrl }) {
       price_display: priceDisplay || (btnPrice ? `$${btnPrice}` : null),
       image_url,
       affiliate_url,
-      product_category: btnCat1
-        ? mapFwrdCategory(btnCat1)
-        : inferCategory({ titleHint: title, brandHint: brand }),
+      product_category,
+      product_subcategory: deriveSubcategory({
+        title,
+        brand,
+        fwrdCat1: btnCat1,
+        topLevelCategory: product_category,
+      }),
       raw: { code, cat1: btnCat1 || null },
       ingested_from: pageUrl,
     });
@@ -399,18 +419,23 @@ export function parseCsv({ text, sourceLabel = "csv" }) {
   return rows.slice(1).map((cells) => {
     const get = (k) => (ix[k] != null ? (cells[ix[k]] || "").trim() : "");
     const priceDisplay = get("price_display") || get("price");
+    const title = get("product_title");
+    const brand = get("brand") || null;
+    const product_category =
+      get("product_category") || inferCategory({ titleHint: title, brandHint: brand });
     return {
       source_network: get("source_network") || "csv",
       source_external_id: get("source_external_id") || null,
-      product_title: get("product_title"),
-      brand: get("brand") || null,
+      product_title: title,
+      brand,
       price: parsePriceNumber(get("price") || priceDisplay),
       price_display: priceDisplay || null,
       image_url: get("image_url"),
       affiliate_url: get("affiliate_url"),
-      product_category:
-        get("product_category") ||
-        inferCategory({ titleHint: get("product_title"), brandHint: get("brand") }),
+      product_category,
+      product_subcategory:
+        get("product_subcategory") ||
+        deriveSubcategory({ title, brand, topLevelCategory: product_category }),
       raw: null,
       ingested_from: sourceLabel,
     };
@@ -479,20 +504,25 @@ export async function fetchShopMyCollection({ collectionId, creatorSlug }) {
         "<custom_id>",
         `askmai-${creatorSlug || "creator"}`
       );
+      const title = (p.product?.title || p.title || "").trim();
+      const brand = (p.product?.AllBrand_name || "").trim() || null;
+      const product_category = inferCategory({ titleHint: title, brandHint: brand });
       return {
         source_network: "shopmy",
         source_external_id: String(p.id),
-        product_title: (p.product?.title || p.title || "").trim(),
-        brand: (p.product?.AllBrand_name || "").trim() || null,
+        product_title: title,
+        brand,
         price: p.product?.fallbackPrice ?? null,
         price_display: p.product?.fallbackPrice
           ? `$${p.product.fallbackPrice}`
           : null,
         image_url: p.image_url || p.product?.image_url || null,
         affiliate_url,
-        product_category: inferCategory({
-          titleHint: p.product?.title,
-          brandHint: p.product?.AllBrand_name,
+        product_category,
+        product_subcategory: deriveSubcategory({
+          title,
+          brand,
+          topLevelCategory: product_category,
         }),
         raw: { pinId: p.id },
         ingested_from: `shopmy:${collectionId}`,

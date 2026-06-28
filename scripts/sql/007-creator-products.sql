@@ -63,6 +63,14 @@ CREATE TABLE IF NOT EXISTS public.creator_products (
   -- absent.
   product_category    TEXT,
 
+  -- Granular sub-category derived for the PHASE 2 try-on grid filter
+  -- bar: 'dresses', 'tops', 'bottoms', 'shoes', 'bags', 'jewelry',
+  -- 'swim', 'outerwear', 'accessories', 'beauty', 'home', 'other'.
+  -- The grid pills are computed as DISTINCT subcategories present for
+  -- a given creator, so adding a new bucket is a categorize.mjs
+  -- concern, not a schema change.
+  product_subcategory TEXT,
+
   -- Original parsed payload so we can rebuild a row from scratch
   -- without re-fetching the source page. Helpful for debugging the
   -- parser when the upstream layout shifts.
@@ -88,6 +96,9 @@ CREATE INDEX IF NOT EXISTS creator_products_creator_idx
 
 CREATE INDEX IF NOT EXISTS creator_products_creator_network_idx
   ON public.creator_products (creator_id, source_network);
+
+CREATE INDEX IF NOT EXISTS creator_products_creator_subcategory_idx
+  ON public.creator_products (creator_id, product_subcategory);
 
 CREATE INDEX IF NOT EXISTS creator_products_created_at_idx
   ON public.creator_products (creator_id, created_at DESC);
