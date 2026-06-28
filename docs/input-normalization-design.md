@@ -44,15 +44,13 @@ We OR a subset of these for the editable clothing mask (Upper-clothes, Skirt, Pa
 | D. `briaai/RMBG-1.4` ONNX, run locally via `@huggingface/transformers` | Bundled in lambda | $0 per call | ~5–15 s on CPU | Very good | High: model weights add ~80 MB to deploy, cold-start grows |
 | E. MediaPipe Selfie Segmentation, browser-side | Browser | $0 | ~1 s on client | Good for portraits, varies by device | High: client-side dependency, results differ across devices |
 
-### Recommendation: **A (extend SegFormer-B2)**
+### Recommendation: **A (extend SegFormer-B2)** — CONFIRMED by advisor
 
 Reasoning:
 - We're already paying for this call. ORing all classes except `Background` is a line of code and zero extra latency.
 - The output is "polished catalog try-on," not photo-real matting. SegFormer-B2's edge quality is sufficient for catalog look (smaller flaws hide under the feather we already apply for the face mask).
 - Zero new dependencies, zero new failure modes to handle.
-- If a quality bar later requires better edges, **swap to RMBG-2.0 (option B) as a Phase-2 quality upgrade.** That's an isolated change behind the same segmentation interface; no other code moves.
-
-**Open question for advisor:** is RMBG-2.0 edge quality so much better than SegFormer-B2 that it's worth the new provider integration upfront, vs. a clean "ship Phase 1 with B2, upgrade if needed"? My read is no, but advisor pressure-test welcome.
+- **RMBG-2.0 is noted as a v2 edge-quality lever.** Don't block Phase 1 on it. Swap-in is isolated behind the same segmentation interface; no other code moves when we upgrade.
 
 ---
 
@@ -75,11 +73,12 @@ Once we have a person mask (binary, person=255, background=0), the rest is pure 
 | Pure white (#fff) | Brightest studio look | White garments blow out at boundary |
 | **Light gray (#f0f0f0 or #f5f5f5)** | Neutral, doesn't fight any garment color; matches existing `fit:contain` pad color | Slightly less editorial |
 
-### Recommendation: **light gray #f0f0f0**
+### Recommendation: **mid-neutral gray (#909090, in the #888–#999 band)** (REVISED per advisor)
 
-- Consistent with the existing pad color the renderer uses today, so the model already "knows" this background; no new bias.
-- Works for both dark and light garments.
-- Adjustable later (one constant) if Cass / Madison want a different look.
+- Original draft proposed #f0f0f0 (matching the existing pad color), but JD called the right shot: gpt-image-1 infers BODY LIGHTING from background tone. Light gray blows out the body; black crushes / moodies it (this is what was producing the "bar lighting" hallucinations on Cass's renders).
+- Mid-neutral gray sits at the perceptual middle and produces even, neutral light on the subject — the standard backdrop convention in lookbook / e-comm photography for exactly this reason.
+- Stored as a single tunable constant (`NORMALIZED_CANVAS_COLOR = "#909090"`) so it's a one-line dial if Cass / Madison push for a slightly different shade later.
+- The existing `fit:contain` pad color (#f5f5f5) stays separate — it's only used on the legacy render path, which is being replaced.
 
 ### Shadow / floor
 
@@ -140,15 +139,55 @@ offsetY     = TARGET_HEAD_TOP_Y                 // anchor top of head, not cente
 
 Person sharp-extract + resize via `scale`, then composite at `(offsetX, offsetY)` onto the gray canvas.
 
-### Edge cases (must reject at upload, with clear UX)
+### Edge cases — strictness REVISED per advisor
+
+The bar: hard-reject ONLY the two cases that break normalization itself; everything else warns and proceeds. Render quality is allowed to degrade gracefully under bad-input conditions; we don't gatekeep on perfection.
 
 | Case | Detection | UX |
 |---|---|---|
-| No face detected (back to camera, side profile) | Face+Hair mask empty | Reject: "We need to see your face for try-ons. Please upload a front-facing photo." |
-| Multiple people in frame | Multiple connected components in the person mask, each >5% of canvas | Reject: "We can only render one person. Please upload a solo photo." |
-| Feet not in frame (cropped at thighs/knees) | Bottom of person bbox is at `imageHeight - <threshold>` (i.e., person extends to bottom edge = likely cropped) | **Soft warn**, not reject. Normalize what we have but place feet "below canvas" so head still lands at target position. Mark with a `partial_body` flag so the user knows. |
-| Person too small (zoomed out, < 30% of canvas) | Person bbox height < 30% of source height | Soft warn but proceed (scaling up loses detail, but it'll still work). |
-| Pure white / pure black background already | Person mask coverage >99% (model thinks everything is person) | Reject: "We couldn't detect you in this photo. Please try a photo with more contrast against the background." |
+| **No person detected** | Person mask coverage < 3% of canvas (segmentation found basically nothing) | **HARD REJECT**: "We couldn't find you in this photo. Try one with more contrast between you and the background." |
+| **Multiple people in frame** | ≥2 connected components in the person mask each >5% of canvas | **HARD REJECT**: "We can only render one person. Please upload a solo photo." |
+| No face detected (back to camera, side profile) | Face+Hair mask empty | Warn + proceed. Renders without a face will probably look bad; user finds out and can re-upload. Don't gate. |
+| Feet not in frame (cropped at thighs/knees/waist) | Bottom of person bbox at `srcHeight - <threshold>` (person extends to bottom edge ≡ likely cropped) | Warn + proceed. **See "Scale math for partial-body inputs" below** — this is the critical-path case. |
+| Person too small (< 30% of source height) | Person bbox height < 30% of source height | Warn + proceed. Scaling up loses detail but works. |
+| Pure-color background (model thinks everything is person) | Person mask coverage > 99% | Warn + proceed. The grayscale composite will be near-identical to the input. |
+
+### Scale math for partial-body inputs (CRITICAL PATH)
+
+The base case is easy: feet detected → scale by head-to-feet height → place head top at y=100, feet at y=1450. Most real uploads aren't this. Most real uploads are cropped at the shin, knee, hip, or waist. If we naively scale a half-body crop to "fill head→feet," we blow the figure up to 2× true size and the proportions look wrong (the very thing producing the body-proportion artifacts we're killing).
+
+The rule: **never fake the missing part of the body.** Scale by what we can measure; let the visible body land wherever it lands; mark `partial_body=true` so downstream code knows.
+
+#### Anchor ladder (use the first one that's satisfied)
+
+| Anchor | Condition | Math | When this fires |
+|---|---|---|---|
+| **A. Head-to-feet** | Feet detected (bottom of person mask < srcHeight − 10 px) AND face detected | `scale = TARGET_PERSON_HEIGHT_PX / personBbox.h` (target = 1350 px) | Full-body shot, the ideal input |
+| **B. Head-to-knee or head-to-hip** | At least one leg class (`Left-leg` / `Right-leg`) present AND face detected. Hip y ≈ top of leg-class mask | `scale = TARGET_HEAD_TO_HIP_PX / (hipY − headTopY)` (target head-to-hip ≈ 765 px, ~50% of canvas) | Cropped below the knee (most common real upload) |
+| **C. Head size only** | Face detected, no usable lower-body landmarks | `scale = TARGET_HEAD_HEIGHT_PX / headBbox.h` (target = 215 px, ≈ 1/7 of figure per classical 7-head proportion rule) | Waist-up crop / "selfie" |
+| **D. Reject** | No face AND no person bbox usable | Hard-reject (already covered above) | — |
+
+#### Positioning post-scale
+
+Once `scale` is chosen:
+
+```
+scaledHeadTop  = headBbox.y * scale   // y of head top within the resized person
+offsetY        = TARGET_HEAD_TOP_Y - scaledHeadTop   // pin head top to y=100
+offsetX        = (CANVAS_W / 2) - (personCenterX * scale)   // center body on x=512
+```
+
+**Critically:** do NOT clamp `offsetY` to keep the body inside the canvas. If a half-body crop scales to a person who only fills the top half of the canvas, that's correct — we leave the bottom half as gray backdrop and mark `partial_body=true`. **Stretching a knee-cropped photo to "fake feet at y=1450" is exactly the failure mode producing the wrong-proportions complaint.**
+
+#### Storing what we measured
+
+The `tryon_geometry.partial_body` flag tells the render pipeline whether to expect a half-body result. Two downstream uses:
+1. The face composite's alignment classifier can tighten the SCALE-rejection threshold for partial-body inputs (less tolerance for the model resizing the head, because there are fewer landmarks to anchor against).
+2. The prompt can include "the figure may extend partially out of frame; do not fabricate the missing body parts" to keep gpt-image-1 from inventing legs.
+
+#### What this changes about the model's output
+
+With partial-body inputs handled honestly, the model sees: figure-on-gray, body proportions correct for the visible portion, no awkward scaling that signals "fix me." The hallucination risk drops because there's no proportional inconsistency for the model to try to "correct."
 
 ### Storing the geometry lock
 
@@ -164,9 +203,7 @@ After normalization, store the canonical metadata so render-time doesn't have to
 | `normalized_at` | timestamp | For migration ("re-normalize anyone with metadata older than X"). |
 | `normalization_version` | int | Bump when the algorithm changes; lets a migration find stale files. |
 
-**Storage shape:** new column on `public.users` called `tryon_geometry JSONB`. Versioned: `{ version: 1, head_bbox: {...}, person_bbox: {...}, feet_y, partial_body, canvas_dims: [1024,1536] }`. One column, one read, no extra table.
-
-**Open question for advisor:** the alternative is a sidecar JSON file in the bucket (e.g., `<userId>/<uuid>.geom.json` alongside the image). Sidecar wins if we ever want to inspect the geometry without touching the DB; JSONB column wins for atomic updates. I lean column; advisor pressure-test welcome.
+**Storage shape:** new column on `public.users` called `tryon_geometry JSONB` — CONFIRMED. Versioned: `{ version: 1, head_bbox: {...}, person_bbox: {...}, feet_y, partial_body, canvas_dims: [1024,1536] }`. One column, one read, no extra table.
 
 ---
 
@@ -291,14 +328,40 @@ I'd ship A and B together (one branch, one merge). C and D land as follow-up com
 - Pulling in a heavyweight matting model (RMBG-2.0, ONNX local) upfront. We can upgrade later if SegFormer-B2 edges aren't good enough; not before.
 - Touching the alignment classifier or the seam logic. They become safety nets, not main path. Tuning them down is a separate later decision based on observed prod data.
 
-## Open questions for the pressure test
+## Decisions (closed)
 
-1. **Canvas color.** Light gray (#f0f0f0) is my pick. Black or pure white are valid alternatives. Cass / Madison aesthetic input would help.
-2. **RMBG-2.0 upfront vs SegFormer-B2.** Is the edge-quality delta on hair flyaways big enough to justify a new provider integration in v1?
-3. **Geometry storage.** JSONB column on `users` vs sidecar JSON file in the bucket. I lean column for atomic updates; sidecar wins for "inspect without DB."
-4. **Upload UX wait.** Block the upload with a "we're optimizing your photo" indicator (~10 s), or accept instantly and run normalization in the background blocking only the first render?
-5. **Reject-at-upload thresholds.** What's the bar for "no face detected" vs "we'll try anyway"? Strict (any face below 80% confidence rejected) keeps quality high; lenient (try anything that has SOME face) reduces friction. My instinct is lenient + a `quality_warning` flag the user can dismiss.
-6. **Garment reference normalization.** Worth standardizing the garment-side cutout scale too in this branch, or save for a follow-up?
+1. **Canvas color** → mid-neutral gray `#909090` (in the #888–#999 band). Mid-gray gives even neutral light; light gray blows out, black crushes/moodies (which produced the bar-lighting hallucinations).
+2. **Segmentation** → SegFormer-B2 (extend the existing call). RMBG-2.0 is noted as a v2 edge-quality lever; do not block on it.
+3. **Geometry storage** → JSONB column on `users.tryon_geometry`.
+4. **Upload UX** → BLOCK the upload (~10 s) with an "optimizing your photo" indicator. Do NOT background-normalize. Background-normalize means the user's first try-on (the highest-stakes one) runs on the un-normalized photo, the exact failure mode we're killing. Eat the latency at upload.
+5. **Reject strictness** → lenient + warning EXCEPT hard-reject the two cases that break normalization itself: (a) no person detected; (b) multiple people. Everything else warns and proceeds.
+6. **Garment-side normalization** → out of scope for this branch; follow-up.
+
+## One-image proof gate (must pass before Phase A starts)
+
+Before committing 1.5–2 days to Phase A, run the proposed pipeline manually on a single real-world test case and eyeball the result. If the render quality visibly jumps, proceed. If it doesn't, the architecture is wrong and we stop — no Phase A code.
+
+**Test input**: JD's stored photo (the 468×1274, 0.367-aspect one already in `tryon-photos`). It's the same input that produced the restaurant-hallucination renders, so this is the highest-leverage A/B.
+
+**Proof script** (lives at `scripts/normalize-proof/proof.mjs`):
+
+1. Pull JD's photo from Supabase (`tryon-photos` bucket).
+2. Call SegFormer-B2 on it once. OR all non-Background classes into a person mask. Capture head bbox, person bbox, feet-y, partial-body flag.
+3. Apply the anchor-ladder scale logic (head-to-feet / head-to-hip / head-size). Resize person, composite onto a 1024×1536 mid-gray canvas with edge feather (~3 px).
+4. Write the intermediate files to `scripts/normalize-proof/output/`:
+   - `01-original.jpg` (the input as-stored)
+   - `02-person-mask.png` (the binary person mask, for visual sanity)
+   - `03-normalized.png` (the final 1024×1536 fed to gpt-image-1)
+   - `04-geometry.json` (head_bbox, person_bbox, feet_y, partial_body, anchor_used)
+5. Send `03-normalized.png` + one garment image (a clean catalog shot, e.g. one of Cass's Magda Butrym red dress images) to gpt-image-1 with the existing mask + render shape. Write the output to `05-render-normalized.png`.
+
+**Cost**: one HF segmentation (~$0.001) + one gpt-image-1 render at medium (~$0.063) = **~$0.064 total**. One image, one render.
+
+**Acceptance** (JD eyeballs):
+- Does the normalized intermediate look like a clean isolated figure on neutral gray, with the head at roughly the top sixth and the body centered?
+- Does the render show: no hallucinated scene background? Body proportions matching the original? Garment landing on the figure without weird drape? Face visibly recognizable?
+- If YES → greenlight Phase A.
+- If NO → stop and revisit the architecture before any more code.
 
 ---
 
