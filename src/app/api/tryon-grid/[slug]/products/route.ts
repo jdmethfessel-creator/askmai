@@ -35,7 +35,12 @@
  */
 
 import { supabaseAdmin } from "@/lib/supabase";
-import { describeFilters, parseQuery, type ParsedQuery } from "@/lib/tryonGridSearch";
+import {
+  describeFilters,
+  describeRelaxedFilters,
+  parseQuery,
+  type ParsedQuery,
+} from "@/lib/tryonGridSearch";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -155,6 +160,11 @@ export async function GET(
   }
 
   if (!chosen) {
+    const wanted = {
+      subcategory: effectiveSubcategory,
+      maxPrice: parsed.maxPrice,
+      descriptors: parsed.descriptors,
+    };
     return Response.json({
       products: [],
       nextCursor: null,
@@ -163,11 +173,8 @@ export async function GET(
         maxPrice: parsed.maxPrice,
         descriptors: parsed.descriptors,
         relaxed: "all" as const,
-        caption: describeFilters({
-          subcategory: effectiveSubcategory,
-          maxPrice: parsed.maxPrice,
-          descriptors: parsed.descriptors,
-        }),
+        caption: `No ${describeFilters(wanted).toLowerCase()}`,
+        wanted,
       },
     });
   }
@@ -183,6 +190,30 @@ export async function GET(
   const appliedDescriptors =
     chosen.key === "none" ? parsed.descriptors : [];
 
+  // Caption: when we relaxed anything, say so explicitly ("No black
+  // tops under $300, showing all tops under $300") instead of
+  // silently returning a different filter set. The user asked for X
+  // and we're showing Y; they should be told.
+  const caption =
+    chosen.key === "none"
+      ? describeFilters({
+          subcategory: appliedSub,
+          maxPrice: appliedPrice,
+          descriptors: appliedDescriptors,
+        })
+      : describeRelaxedFilters({
+          wanted: {
+            subcategory: effectiveSubcategory,
+            maxPrice: parsed.maxPrice,
+            descriptors: parsed.descriptors,
+          },
+          applied: {
+            subcategory: appliedSub,
+            maxPrice: appliedPrice,
+            descriptors: appliedDescriptors,
+          },
+        });
+
   return Response.json({
     products: chosen.rows,
     nextCursor: chosen.nextCursor,
@@ -191,11 +222,16 @@ export async function GET(
       maxPrice: appliedPrice,
       descriptors: appliedDescriptors,
       relaxed: chosen.key,
-      caption: describeFilters({
-        subcategory: appliedSub,
-        maxPrice: appliedPrice,
-        descriptors: appliedDescriptors,
-      }),
+      caption,
+      // Echo the parser's original signals too so the client (and
+      // operators inspecting via curl) can see what we interpreted
+      // before relaxation. Helpful for debugging "why did this query
+      // not find the obvious match" without a server log dive.
+      wanted: {
+        subcategory: effectiveSubcategory,
+        maxPrice: parsed.maxPrice,
+        descriptors: parsed.descriptors,
+      },
     },
   });
 }
@@ -265,14 +301,19 @@ async function fetchPage(opts: PageOpts): Promise<{
     query = query.lte("price", softCeiling);
   }
 
-  // Descriptors: ILIKE each against title OR brand. Multiple
-  // descriptors AND together (a "black silk top" should require BOTH
-  // black AND silk somewhere in the title/brand).
+  // Descriptors: ILIKE each against title OR brand OR affiliate_url.
+  // Most Cass products don't carry color in product_title (Revolve
+  // titles like "Isla Top" omit the colorway), but the URL slug
+  // almost always does ("eterne-isla-top-in-saffron", "halter-top-
+  // in-black"), so matching against affiliate_url catches the
+  // color-by-slug case. Multiple descriptors AND together (a "black
+  // silk top" must have BOTH black AND silk somewhere across those
+  // three fields).
   if (opts.descriptors.length) {
     for (const d of opts.descriptors) {
       const safe = d.replace(/[,()*]/g, " ").slice(0, 40);
       query = query.or(
-        `product_title.ilike.%${safe}%,brand.ilike.%${safe}%`
+        `product_title.ilike.%${safe}%,brand.ilike.%${safe}%,affiliate_url.ilike.%${safe}%`
       );
     }
   }

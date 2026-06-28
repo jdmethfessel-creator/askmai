@@ -211,3 +211,22 @@ export function describeFilters(opts: {
   const head = parts.join(" ");
   return opts.maxPrice ? `${head} under $${opts.maxPrice}` : head;
 }
+
+/**
+ * Caption for a relaxed search. Tells the user explicitly that the
+ * grid is showing a broader set than they asked for, e.g.
+ * "No black tops under $300, showing all tops under $300".
+ *
+ * The "wanted" half describes the original parsed intent; the
+ * "showing" half describes the actually-applied filter set after
+ * the relaxation ladder dropped one or more signals. Reading the
+ * two halves together tells the user exactly what got broadened.
+ */
+export function describeRelaxedFilters(opts: {
+  wanted: { subcategory: string | null; maxPrice: number | null; descriptors: string[] };
+  applied: { subcategory: string | null; maxPrice: number | null; descriptors: string[] };
+}): string {
+  const wantedStr = describeFilters(opts.wanted).toLowerCase();
+  const appliedStr = describeFilters(opts.applied).toLowerCase();
+  return `No ${wantedStr}, showing ${appliedStr}`;
+}
