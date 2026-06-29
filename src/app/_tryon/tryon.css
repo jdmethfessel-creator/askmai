@@ -164,30 +164,18 @@
  */
 .tryon-grid {
   display: grid !important;
-  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
-  gap: 12px;
-  /* Belt-and-suspenders: ensure no CSS columns survive any stale
-   * cascade. Modern Safari respects display:grid; this defangs
-   * any cached column-count from an older bundle. */
+  /* Single fluid track config replaces the breakpoint cascade.
+   * repeat(auto-fill, minmax(...)) packs as many columns as fit;
+   * clamp(150px, 22vw, 240px) ties each column to a viewport-
+   * scaled lower bound (150-240px) so columns grow naturally
+   * with screen size instead of stepping at fixed breakpoints.
+   * Mobile (390px) fits 2 cols at 150px; small tablet (640px)
+   * fits ~4; laptop (1024px+) fits 4-5; large screens cap at
+   * 240px column. column-count:unset defangs any stale cached
+   * masonry rule from earlier bundles. */
+  grid-template-columns: repeat(auto-fill, minmax(clamp(150px, 22vw, 240px), 1fr)) !important;
+  gap: 16px;
   column-count: unset !important;
-}
-@media (min-width: 640px) {
-  .tryon-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 14px;
-  }
-}
-@media (min-width: 960px) {
-  .tryon-grid {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 16px;
-  }
-}
-@media (min-width: 1280px) {
-  .tryon-grid {
-    grid-template-columns: repeat(5, minmax(0, 1fr));
-    gap: 16px;
-  }
 }
 
 .tryon-card {
