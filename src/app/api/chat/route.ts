@@ -320,7 +320,8 @@ export async function POST(request: Request) {
           const fallback = await assembleFallbackOutfit(
             catalog,
             budgetCeiling,
-            creatorRef
+            creatorRef,
+            message
           );
           if (fallback.length > 0) {
             console.log(
@@ -1981,10 +1982,44 @@ function pruneIncoherentOutfit(recs: Rec[]): Rec[] {
  * items; the caller then doesn't emit a marker and the response
  * stays prose-only (preferable to a single-item "outfit").
  */
+// Color vocabulary used to bias the fallback picker. Same list the
+// grid search's intent parser uses; if the user names a color we
+// prefer items whose product name contains it.
+const FALLBACK_COLOR_TOKENS = [
+  "black", "white", "red", "blue", "navy", "green", "olive", "yellow",
+  "pink", "rose", "purple", "lavender", "orange", "rust", "brown",
+  "tan", "beige", "cream", "ivory", "nude", "gray", "grey", "charcoal",
+  "gold", "silver", "burgundy", "maroon", "khaki", "taupe", "mustard",
+  "emerald", "teal", "coral", "sage", "lilac",
+];
+
+// Lightweight djb2-style string hash. Used to deterministically vary
+// the fallback pick across user messages so the same request always
+// returns the same outfit (idempotent / predictable) but two
+// different requests with the same budget pick different pieces
+// (the bug JD reported: Alrose Midi Skirt anchoring every fallback
+// outfit because the prior picker was pool.reduce(max-price), which
+// has zero variation across requests).
+function hashMessageSeed(s: string): number {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) {
+    h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+  }
+  return Math.abs(h);
+}
+
+function extractColorTokens(message: string): string[] {
+  const lc = (message || "").toLowerCase();
+  return FALLBACK_COLOR_TOKENS.filter((c) =>
+    new RegExp(`\\b${c}\\b`).test(lc)
+  );
+}
+
 async function assembleFallbackOutfit(
   _catalogIgnored: CatalogRow[],
   budgetCeiling: number,
-  creator: { id: string; slug: string; taste_profile?: unknown }
+  creator: { id: string; slug: string; taste_profile?: unknown },
+  message: string
 ): Promise<Rec[]> {
   // IMPORTANT: do NOT use the pre-loaded `catalog` from loadCatalog
   // here. That catalog is top-80 by price DESC; for a luxury-skewed
@@ -2015,14 +2050,37 @@ async function assembleFallbackOutfit(
     kind: inferGarmentKind(p.name, p.category ?? undefined),
   }));
 
+  const messageColors = extractColorTokens(message);
+  const seed = hashMessageSeed(message);
+
   function pick(kind: GarmentKind): Bucket | undefined {
-    // Highest-priced item of that kind within budget — reads as the
-    // most intentional pick rather than a basic-tier filler.
-    const pool = classified.filter((c) => c.kind === kind);
+    let pool = classified
+      .filter((c) => c.kind === kind)
+      .sort((a, b) => (b.row.price ?? 0) - (a.row.price ?? 0));
     if (pool.length === 0) return undefined;
-    return pool.reduce((best, c) =>
-      (c.row.price ?? 0) > (best.row.price ?? 0) ? c : best
-    );
+    // Color filter: if the user named a color, prefer items whose
+    // product name contains one of those colors. Falls back to the
+    // unconstrained pool when the color filter zeros out (so we
+    // don't return nothing just because the closest match isn't
+    // exact).
+    if (messageColors.length > 0) {
+      const filtered = pool.filter((c) => {
+        const nm = c.row.name.toLowerCase();
+        return messageColors.some((col) => nm.includes(col));
+      });
+      if (filtered.length > 0) pool = filtered;
+    }
+    // Take the top N intentional candidates (highest-priced after
+    // any color filter) then deterministically pick within that
+    // band using a hash of the user's message + the slot kind.
+    // Result: same prompt -> same pick (predictability for the
+    // user across page reloads), different prompts -> different
+    // picks (kills the "Alrose Midi Skirt anchors every outfit"
+    // bug from the prior single-max-price reducer).
+    const TOP_N = 8;
+    const top = pool.slice(0, Math.min(TOP_N, pool.length));
+    const idx = (seed + kind.length * 31) % top.length;
+    return top[idx];
   }
 
   let picks: Bucket[] = [];

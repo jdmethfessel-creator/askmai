@@ -1386,7 +1386,22 @@ function EditorialBoard({
     return null;
   }
   const looks = chunkIntoLooks(products);
-  const total = outfitTotal(products);
+  // Piece count + total must derive from the SAME set as the cards.
+  // LookSection internally drops anything without an image_url or
+  // marked synth (line ~1452); the parent's "N pieces · $X total"
+  // line was previously counting the full products array, so a
+  // dropped piece could land in the total but not on screen. Mirror
+  // the LookSection filter here so they always agree.
+  const displayed: Rec[] = [];
+  for (const look of looks) {
+    const hero = pickHeroCandidate(look);
+    if (!hero) continue;
+    displayed.push(hero);
+    for (const p of look) {
+      if (p !== hero && p.image_url && !p.synth) displayed.push(p);
+    }
+  }
+  const total = outfitTotal(displayed);
   return (
     <div className="space-y-5">
       {looks.map((look, idx) => (
@@ -1403,7 +1418,7 @@ function EditorialBoard({
           className="text-[11px] uppercase tracking-[0.2em] opacity-65 font-medium pt-0.5"
           style={{ color: "var(--ink)" }}
         >
-          ${total.toLocaleString()} total · {products.length} pieces
+          ${total.toLocaleString()} total · {displayed.length} pieces
         </p>
       )}
       {!streaming && (
