@@ -580,6 +580,21 @@
   background: var(--t-accent, #a26a5a);
   color: #fff;
 }
+/* Slot conflict: a different card already fills this slot (or a
+ * dress / separates conflict blocks it). The + reads as
+ * unavailable but still occupies the same position so cards don't
+ * shift when toggling outfit selections. */
+.tryon-card-select.is-blocked {
+  opacity: 0.35;
+  cursor: not-allowed;
+  pointer-events: none;
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--t-ink, #221d18);
+  transform: none;
+}
+.tryon-card-select.is-blocked:hover {
+  transform: none;
+}
 
 /* Bottom outfit tray (above the search asker) */
 .tryon-outfit-tray {

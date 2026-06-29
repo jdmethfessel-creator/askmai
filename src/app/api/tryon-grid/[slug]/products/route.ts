@@ -331,6 +331,51 @@ function fixImageUrl(url: string | null | undefined): string | null {
   return url;
 }
 
+// Server-side rewrite of mis-bucketed subcategories. Same pattern
+// as fixImageUrl: an inline correction on every read so the API
+// output is always right regardless of what the DB stored. The
+// underlying categorize.mjs rule was plural-blind for a long time
+// (\bjean\b matched "Jean" but not "Jeans"), so many Shopbop and
+// FWRD rows with plural titles ("Leena Jeans", "501 Jeans", "High
+// Baggy Shorts") fell through to "other" or got hit by an unrelated
+// fallback like "accessories" via Shopbop's topLevelCategory. The
+// source rule is fixed in scripts/ingest-creator-products/
+// categorize.mjs; this is the runtime backfill.
+//
+// Only triggers when the stored value is the catch-all "other" or
+// the off-target "accessories"; properly-bucketed rows pass through
+// unchanged. Rule order mirrors categorize.mjs so a Midi Skirt
+// (matches both dresses and bottoms in the source) lands as
+// bottoms, not dresses.
+const SUBCATEGORY_REWRITE_RULES: Array<{ sub: string; re: RegExp }> = [
+  { sub: "swim", re: /\b(bikinis?|swim(suits?|wear)?|monokinis?|tankinis?|trunks?)\b/i },
+  { sub: "outerwear", re: /\b(blazers?|coats?|jackets?|trench(es)?|parkas?|puffers?|capes?|ponchos?|vests?|overcoats?)\b/i },
+  { sub: "shoes", re: /\b(shoes?|sneakers?|boots?|booties?|heels?|pumps?|sandals?|flats?|loafers?|mules?|slippers?|wedges?|espadrilles?|clogs?|slides?)\b/i },
+  { sub: "bags", re: /\b(bags?|totes?|clutch(es)?|hobos?|satchels?|crossbody|backpacks?|wallets?|wristlets?|baguette|handbags?|purses?)\b/i },
+  { sub: "jewelry", re: /\b(earrings?|necklaces?|rings?|bracelets?|bangles?|anklets?|pendants?|chokers?)\b/i },
+  // bottoms BEFORE dresses so "Midi Skirt" routes here, not dresses
+  { sub: "bottoms", re: /\b(pants?|jeans?|trousers?|shorts?|skirts?|leggings?|denim|chinos?|cargos?|joggers?)\b/i },
+  // dresses only when the noun is unambiguous (no bare "midi" /
+  // "mini" / "maxi" since those decorate skirts too)
+  { sub: "dresses", re: /\b(dress(es)?|gowns?|sundress(es)?|jumpsuits?|rompers?)\b/i },
+  { sub: "tops", re: /\b(tops?|tees?|tanks?|shirts?|blouses?|sweaters?|knits?|polos?|camis?|bodysuits?|halters?|tunics?|pullovers?|hoodies?|sweatshirts?)\b/i },
+];
+
+function fixSubcategory(
+  current: string | null,
+  title: string | null,
+  brand: string | null
+): string | null {
+  // Only correct rows that are in the catch-alls. Properly-bucketed
+  // rows (tops/bottoms/dresses/shoes/bags/etc.) keep their value.
+  if (current !== "other" && current !== "accessories") return current;
+  const hay = `${title ?? ""} ${brand ?? ""}`;
+  for (const rule of SUBCATEGORY_REWRITE_RULES) {
+    if (rule.re.test(hay)) return rule.sub;
+  }
+  return current;
+}
+
 function decodeInterleaveCursor(raw: string | null): InterleaveCursor {
   if (!raw) return {};
   try {
@@ -515,12 +560,27 @@ async function fetchPage(opts: PageOpts): Promise<{
     return s.rows.length > 0 || s.mayHaveMore;
   });
 
-  // Strip created_at + rewrite known-bad image URL patterns before
-  // handing rows to the client. fixImageUrl is a no-op on every
-  // network except shopbop's bad-prefix subset.
+  // Strip created_at + apply runtime rewrites before handing rows
+  // to the client:
+  //   - fixImageUrl: repairs the Shopbop "/Shopbop/prod/" missing
+  //     "/p/" prefix bug.
+  //   - fixSubcategory: re-derives subcategory for rows stuck in
+  //     "other" or "accessories" because the source categorizer's
+  //     regex was plural-blind. Both fixes also exist at ingest
+  //     time; the runtime layer makes the API output correct
+  //     regardless of DB state.
   const rows = picked.map(({ created_at: _c, ...rest }) => {
-    const fixed = fixImageUrl(rest.image_url);
-    return { ...rest, image_url: fixed ?? rest.image_url } as Product;
+    const fixedUrl = fixImageUrl(rest.image_url);
+    const fixedSub = fixSubcategory(
+      rest.product_subcategory,
+      rest.product_title,
+      rest.brand
+    );
+    return {
+      ...rest,
+      image_url: fixedUrl ?? rest.image_url,
+      product_subcategory: fixedSub,
+    } as Product;
   });
   return {
     rows,

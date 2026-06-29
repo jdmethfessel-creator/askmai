@@ -419,6 +419,34 @@ export default function TryOnGrid({
     [outfit]
   );
 
+  // Slot-conflict gate for the + button. Returns true when this
+  // product's slot is already filled by a DIFFERENT item, or when
+  // a dress/separates conflict blocks the slot entirely:
+  //   - top filled  -> all other tops blocked
+  //   - bottom filled -> all other bottoms blocked
+  //   - dress filled -> all tops AND all bottoms blocked
+  //   - top OR bottom filled -> all dresses blocked
+  // The currently-selected item stays unblocked (the user can tap
+  // ✓ to deselect). Non-eligible items (shoes, jewelry, etc.) are
+  // never blocked because they never reach the + button anyway.
+  const isOutfitSlotBlocked = useCallback(
+    (product: Product): boolean => {
+      const slot = slotFor(product);
+      if (!slot) return false;
+      // The selected item in its own slot is always interactable
+      // (deselecting reopens the slot).
+      if (outfit[slot]?.id === product.id) return false;
+      // Same-slot already has a different item.
+      if (outfit[slot]) return true;
+      // Cross-slot conflicts: dress excludes separates and vice
+      // versa. A dress occupies both top and bottom slots.
+      if (slot === "dress" && (outfit.top || outfit.bottom)) return true;
+      if ((slot === "top" || slot === "bottom") && outfit.dress) return true;
+      return false;
+    },
+    [outfit]
+  );
+
   const runOutfitRender = useCallback(async () => {
     if (outfitItems.length === 0) return;
     setOutfitRender({ state: "loading", products: outfitItems });
@@ -533,6 +561,7 @@ export default function TryOnGrid({
             onTryOn={onTryOn}
             tryOnEligible={isEligibleForTryOn(p)}
             inOutfit={isInOutfit(p)}
+            slotBlocked={isOutfitSlotBlocked(p)}
             onToggleOutfit={toggleOutfit}
           />
         ))}
@@ -602,12 +631,14 @@ function ProductCard({
   onTryOn,
   tryOnEligible,
   inOutfit,
+  slotBlocked,
   onToggleOutfit,
 }: {
   product: Product;
   onTryOn: (p: Product) => void;
   tryOnEligible: boolean;
   inOutfit: boolean;
+  slotBlocked: boolean;
   onToggleOutfit: (p: Product) => void;
 }) {
   // Client-side safety net for broken images. The primary fix is
@@ -632,11 +663,20 @@ function ProductCard({
         {tryOnEligible ? (
           <button
             type="button"
-            className={`tryon-card-select ${inOutfit ? "is-selected" : ""}`}
+            className={`tryon-card-select ${inOutfit ? "is-selected" : ""} ${slotBlocked ? "is-blocked" : ""}`}
             aria-pressed={inOutfit}
-            aria-label={inOutfit ? "Remove from outfit" : "Add to outfit"}
+            aria-disabled={slotBlocked}
+            aria-label={
+              slotBlocked
+                ? "This slot is already filled"
+                : inOutfit
+                ? "Remove from outfit"
+                : "Add to outfit"
+            }
+            disabled={slotBlocked}
             onClick={(e) => {
               e.stopPropagation();
+              if (slotBlocked) return;
               onToggleOutfit(product);
             }}
           >

@@ -18,7 +18,18 @@
 // so "blazer" beats "jacket"-style fallbacks for outerwear, etc.
 const KEYWORD_RULES = [
   // dresses
-  { sub: "dresses", re: /\b(dress(es)?|gown|frock|sundress|maxi|midi|mini)\b/i },
+  //
+  // Note: bare "midi" and "mini" used to match here, but they also
+  // appear in skirt/bottom titles ("Midi Skirt", "Mini Skirt") and
+  // the dresses rule runs before bottoms, so skirts were bucketing
+  // as dresses. The current rule requires "midi" / "mini" to be
+  // followed by an actual dress noun (or a single word away from
+  // it) so "Midi Dress" still matches but "Midi Skirt" falls
+  // through to the bottoms rule.
+  {
+    sub: "dresses",
+    re: /\b(dress(es)?|gowns?|frocks?|sundress(es)?|(maxi|midi|mini)\s+dress(es)?)\b/i,
+  },
 
   // swim
   { sub: "swim", re: /\b(bikini|swim(suit|wear)?|one[-\s]?piece|monokini|cover[-\s]?up|tankini|trunks)\b/i },
@@ -51,10 +62,26 @@ const KEYWORD_RULES = [
   { sub: "home", re: /\b(candle|vase|throw|pillow|towel|sheet|mug|tray|bowl|plate|rug|napkin|coaster|decor)\b/i },
 
   // bottoms (before tops since "set" is ambiguous; specific bottom words win)
-  { sub: "bottoms", re: /\b(pant|jean|trouser|short|skirt|legging|denim|chino|cargo|jogger|jumpsuit|romper)\b/i },
+  //
+  // Plural-tolerant: \bjean\b matches "Jean" but not "Jeans" (no
+  // word boundary between "n" and "s"). Adding s? to every noun
+  // catches both forms. Same fix applies to shorts/pants/trousers/
+  // skirts/leggings/chinos/cargos/joggers/jumpsuits/rompers; the
+  // catalog mixes singular (Revolve) and plural (Shopbop, FWRD)
+  // forms, and we want both to bucket consistently.
+  {
+    sub: "bottoms",
+    re: /\b(pants?|jeans?|trousers?|shorts?|skirts?|leggings?|denim|chinos?|cargos?|joggers?|jumpsuits?|rompers?)\b/i,
+  },
 
   // tops (after dresses, outerwear, swim — fall-through for upper body)
-  { sub: "tops", re: /\b(top|tee|tank|shirt|blouse|sweater|knit|polo|camisole|cami|bodysuit|crop|halter|tunic|pullover|hoodie|sweatshirt)\b/i },
+  //
+  // Same plural-tolerance fix as bottoms. "Tee" / "tees", "tank" /
+  // "tanks", "shirt" / "shirts", etc. all match either form.
+  {
+    sub: "tops",
+    re: /\b(tops?|tees?|tanks?|shirts?|blouses?|sweaters?|knits?|polos?|camisoles?|camis?|bodysuits?|crops?|halters?|tunics?|pullovers?|hoodies?|sweatshirts?)\b/i,
+  },
 
   // accessories (catch-all for non-jewelry non-bag accessories)
   { sub: "accessories", re: /\b(sunglass|hat|cap|beanie|scarf|belt|tie|glove|hair|headband|barrette|umbrella|fan)\b/i },
