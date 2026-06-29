@@ -198,6 +198,16 @@
   border-radius: 14px;
   overflow: hidden;
   transition: transform 160ms, box-shadow 160ms;
+  /* CSS Grid items default to min-width:auto which can refuse to
+   * shrink below the intrinsic content width. With
+   * grid-template-columns:repeat(2, minmax(0, 1fr)) on the
+   * parent, the minmax(0, ...) already counters this, but
+   * setting min-width:0 here is the redundant belt-and-
+   * suspenders fix that hardens against any other parent
+   * configuration. */
+  min-width: 0 !important;
+  width: 100% !important;
+  box-sizing: border-box;
 }
 .tryon-card:hover {
   transform: translateY(-1px);
@@ -206,15 +216,28 @@
 .tryon-card-image-wrap {
   background: #f1ede4;
   width: 100% !important;
-  /* Uniform card heights: every image area is 3:4 portrait
-   * regardless of the source image's actual aspect, so the 2-col
-   * mobile grid lines up in even rows. object-fit:cover crops the
-   * source to fill the slot without distortion. !important
-   * defends against any stale cached rule that let height vary
-   * with the source image. */
+  /* Uniform card heights via the padding-bottom 3:4 trick AS THE
+   * PRIMARY MECHANISM (not aspect-ratio). iOS Safari has known
+   * bugs with `aspect-ratio` inside `display:flex` containers on
+   * several iOS versions: the property gets ignored, and the
+   * image-wrap collapses to the natural image height. The
+   * padding-bottom pseudo-element pattern works everywhere and
+   * predates aspect-ratio. We keep aspect-ratio as well so modern
+   * non-flex contexts get the spec-clean behavior. The inner img
+   * uses position:absolute to fill the slot inside-out. */
   aspect-ratio: 3 / 4 !important;
+  height: 0 !important;
+  padding-bottom: 133.333% !important; /* 4 / 3 = 1.3333 */
   position: relative;
   overflow: hidden;
+}
+.tryon-card-image-wrap > img {
+  position: absolute !important;
+  inset: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  -o-object-fit: cover;
+  object-fit: cover;
 }
 .tryon-card-image {
   display: block;
@@ -312,23 +335,25 @@
 
 /* ---------- pinned ask/search bar ---------- */
 .tryon-asker {
-  /* CHANGED from position:fixed to position:sticky.
+  /* Sticky inside .tryon-page. Sits at natural DOM position
+   * (below the grid) on short pages, sticks to viewport bottom
+   * when the user scrolls past. JD reported the bar "floating
+   * in the middle of the grid" with position:fixed because on
+   * a short page (few products), fixed anchors to viewport
+   * bottom which IS the middle of the visible area. Sticky
+   * eliminates that.
    *
-   * Reason: with fixed positioning, the bar always anchors to the
-   * viewport bottom. On a short page (few products, or before
-   * client-side pagination kicks in) the visual effect is the bar
-   * "floating in the middle of the grid" because the viewport is
-   * taller than the content. JD's specific complaint.
-   *
-   * With sticky inside .tryon-page, the bar sits at its natural
-   * DOM position (below the grid) when the page is short, and
-   * sticks to viewport bottom when the user scrolls past it. No
-   * more midair float over a short grid; still pinned-bottom
-   * behavior on long pages. */
-  position: -webkit-sticky;
-  position: sticky;
-  bottom: max(14px, env(safe-area-inset-bottom, 14px));
-  margin: 24px auto max(14px, env(safe-area-inset-bottom, 14px));
+   * !important on the layout-defining properties defends
+   * against any stale cached rule from an earlier deploy that
+   * still uses position:fixed. */
+  position: -webkit-sticky !important;
+  position: sticky !important;
+  top: auto !important;
+  left: auto !important;
+  right: auto !important;
+  bottom: max(14px, env(safe-area-inset-bottom, 14px)) !important;
+  transform: none !important;
+  margin: 24px auto max(14px, env(safe-area-inset-bottom, 14px)) !important;
   width: min(680px, calc(100% - 28px));
   display: flex;
   gap: 8px;

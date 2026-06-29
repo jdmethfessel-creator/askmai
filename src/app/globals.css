@@ -21,6 +21,23 @@ body {
   font-family: var(--font-sans);
 }
 
+/* Defensive: body must fill the viewport horizontally. Tailwind
+ * preflight already sets body { margin: 0 } but does not set width
+ * or display, and some Tailwind utility class interactions on
+ * mobile Safari can leave the body shrink-wrapped to content.
+ * Asserting width here guarantees the .tryon-root (and every
+ * descendant) has a full-viewport box to fill. !important defends
+ * against any stale cached rule. */
+html {
+  width: 100% !important;
+}
+body {
+  margin: 0 !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  min-width: 0;
+}
+
 @keyframes blink {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.2; }
