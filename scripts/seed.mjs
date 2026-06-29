@@ -189,7 +189,7 @@ async function main() {
   const { data: existing, error: readErr } = await supabase
     .from("creators")
     .select("id, slug, name, theme")
-    .eq("slug", "cass")
+    .eq("slug", "janesmith")
     .maybeSingle();
 
   if (readErr) {
@@ -198,7 +198,7 @@ async function main() {
   }
   if (!existing) {
     console.error(
-      "No creator with slug 'cass' found. Create the row in Supabase first."
+      "No creator with slug 'janesmith' found. Create the row in Supabase first."
     );
     process.exit(1);
   }
@@ -212,14 +212,14 @@ async function main() {
   const { error: updateErr } = await supabase
     .from("creators")
     .update(patch)
-    .eq("slug", "cass");
+    .eq("slug", "janesmith");
 
   if (updateErr) {
     console.error("Update failed:", updateErr.message);
     process.exit(1);
   }
 
-  console.log("Seeded cass:");
+  console.log("Seeded janesmith:");
   console.log("  voice_prompt:", VOICE_PROMPT.length, "chars");
   console.log("  taste_profile keys:", Object.keys(TASTE_PROFILE).join(", "));
   console.log("  theme:", existing.theme ? "kept existing" : "set default");
@@ -227,7 +227,7 @@ async function main() {
   const { data: verify, error: verifyErr } = await supabase
     .from("creators")
     .select("voice_prompt, taste_profile")
-    .eq("slug", "cass")
+    .eq("slug", "janesmith")
     .maybeSingle();
   if (verifyErr || !verify) {
     console.error("\nVerification read failed:", verifyErr?.message);

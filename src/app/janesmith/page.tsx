@@ -1,10 +1,15 @@
 /**
- * /cassdimicconew: unified creator page with two modes (Shop / Ask).
+ * /janesmith: unified creator page with two modes (Shop / Ask).
  *
- * Layout contract (per JD's spec):
+ * (Display-name shim. The underlying creator row is the same one
+ * historically known as "Cass DiMicco"; the visible name was
+ * changed to "Jane Smith" as a temporary placeholder. The legacy
+ * /cassdimicconew URL 301s here via next.config.js.)
+ *
+ * Layout contract:
  *   ┌──────────────────────────────────────┐
  *   │  [eyebrow line, mode-aware]          │   <-- shared header,
- *   │  Cass DiMicco                        │       stays put when
+ *   │  Jane Smith                          │       stays put when
  *   │  [Shop]  [Ask]                       │       toggling.
  *   ├──────────────────────────────────────┤
  *   │                                      │
@@ -39,7 +44,7 @@ import Chat from "../[slug]/Chat";
 import type { Creator } from "@/lib/types";
 import "../_tryon/tryon.css";
 
-const CREATOR_SLUG = "cass";
+const CREATOR_SLUG = "janesmith";
 
 const fraunces = Fraunces({
   subsets: ["latin"],
@@ -62,9 +67,9 @@ const SUBTITLE_SHOP = "Search my closet and favorite finds";
 const SUBTITLE_ASK = "Ask me anything";
 
 export const metadata: Metadata = {
-  title: "Cass DiMicco · AskMai",
+  title: "Jane Smith · AskMai",
   description:
-    "Shop Cass DiMicco's picks or ask her your style, dining, and travel questions.",
+    "Shop Jane Smith's picks or ask her your style, dining, and travel questions.",
   robots: { index: false, follow: false },
 };
 

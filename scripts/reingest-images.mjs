@@ -122,10 +122,10 @@ async function main() {
   const { data: creator } = await sb
     .from("creators")
     .select("id, slug")
-    .eq("slug", "cass")
+    .eq("slug", "janesmith")
     .maybeSingle();
   if (!creator) {
-    console.error("No creator with slug 'cass'.");
+    console.error("No creator with slug 'janesmith'.");
     process.exit(1);
   }
 

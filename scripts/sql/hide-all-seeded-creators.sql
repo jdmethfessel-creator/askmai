@@ -4,7 +4,7 @@
 UPDATE creators
   SET hidden = true
   WHERE slug IN (
-    'cass',
+    'janesmith',
     'tezza',
     'weworewhat',
     'somethingnavy',

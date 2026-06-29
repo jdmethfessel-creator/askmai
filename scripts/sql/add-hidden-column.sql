@@ -6,7 +6,10 @@
 ALTER TABLE creators
   ADD COLUMN IF NOT EXISTS hidden BOOLEAN NOT NULL DEFAULT false;
 
--- Cass is temporarily hidden. Flip back to false to restore.
+-- This creator is temporarily hidden. Flip back to false to restore.
+-- (Slug renamed from "cass" -> "janesmith"; hidden state was preserved
+-- across the rename so this UPDATE remains a no-op replay against the
+-- already-hidden row.)
 UPDATE creators
   SET hidden = true
-  WHERE slug = 'cass';
+  WHERE slug = 'janesmith';

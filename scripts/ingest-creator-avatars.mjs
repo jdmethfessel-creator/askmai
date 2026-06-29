@@ -33,7 +33,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // right person (there are many "Emily Henderson"s; "interior designer"
 // pins the lookup). Order matters: we use the FIRST .iusc result.
 const QUERIES = [
-  { slug: "cass", query: "Cass DiMicco fashion influencer NYC" },
+  { slug: "janesmith", query: "Cass DiMicco fashion influencer NYC" },
   { slug: "tezza", query: "Tezza Barton photographer creator" },
   { slug: "weworewhat", query: "Danielle Bernstein WeWoreWhat" },
   { slug: "somethingnavy", query: "Arielle Charnas Something Navy" },

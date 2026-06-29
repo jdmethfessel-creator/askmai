@@ -49,7 +49,14 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
 
-const CREATOR_SLUG = "cass";
+// Slug was renamed from "cass" -> "janesmith" as a cosmetic display-
+// name change (Cass is using "Jane Smith" as a placeholder while
+// finishing the platform). The DB row, the creator_id UUID, all
+// product rows, voice/taste profile, and renders.creator_slug
+// audit log are otherwise unchanged. Admin route directory name
+// stays at /recategorize-cass for backwards compatibility with
+// any curl bookmarks; only the slug literal it queries changes.
+const CREATOR_SLUG = "janesmith";
 
 // ShopMy Category_name -> canonical subcategory. MUST stay in sync
 // with SHOPMY_CATEGORY_NAME_MAP in scripts/ingest-creator-products/parsers.mjs.

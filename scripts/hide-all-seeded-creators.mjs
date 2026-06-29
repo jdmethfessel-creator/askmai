@@ -18,7 +18,7 @@ const sb = createClient(url, key, {
   auth: { persistSession: false, autoRefreshToken: false },
 });
 
-const SLUGS = ["cass", "tezza", "weworewhat", "somethingnavy", "emilyhenderson"];
+const SLUGS = ["janesmith", "tezza", "weworewhat", "somethingnavy", "emilyhenderson"];
 
 const before = await sb
   .from("creators")

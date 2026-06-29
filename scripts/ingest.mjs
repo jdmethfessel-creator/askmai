@@ -46,9 +46,9 @@ async function getCass() {
   const { data, error } = await sb
     .from("creators")
     .select("id, slug")
-    .eq("slug", "cass")
+    .eq("slug", "janesmith")
     .maybeSingle();
-  if (error || !data) throw new Error("Creator slug 'cass' not found.");
+  if (error || !data) throw new Error("Creator slug 'janesmith' not found.");
   return data;
 }
 
@@ -153,7 +153,7 @@ async function countByNetwork(creator_id) {
 async function main() {
   await ensureSchema();
   const cass = await getCass();
-  console.log(`Creator: cass (id=${cass.id})`);
+  console.log(`Creator: janesmith (id=${cass.id})`);
 
   const summary = { sources: {} };
 

@@ -65,7 +65,7 @@ for (const src of SOURCES) {
     if (src.kind === "url") {
       rows = await ingestUrl(src.url);
     } else if (src.kind === "shopmy-shop") {
-      rows = await fetchShopMyShop({ username: src.username, creatorSlug: "cass" });
+      rows = await fetchShopMyShop({ username: src.username, creatorSlug: "janesmith" });
     } else {
       throw new Error(`unknown source kind: ${src.kind}`);
     }
@@ -126,10 +126,10 @@ const sb = createClient(
 const { data: creator } = await sb
   .from("creators")
   .select("id")
-  .eq("slug", "cass")
+  .eq("slug", "janesmith")
   .maybeSingle();
 if (!creator) {
-  console.error("creator slug 'cass' not found");
+  console.error("creator slug 'janesmith' not found");
   process.exit(1);
 }
 const payload = allRows.map((r) => ({ ...r, creator_id: creator.id }));
