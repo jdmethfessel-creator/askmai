@@ -30,7 +30,12 @@
 .tryon-page {
   max-width: 1320px;
   margin: 0 auto;
-  padding: 0 16px 140px;
+  /* Bottom padding was 140px when the asker was fixed-positioned
+   * (reserved space below the last row so the fixed bar didn't
+   * cover cards). Asker is now sticky inside this container, so
+   * it takes its own in-flow space; 32px is just breathing room
+   * below the asker. */
+  padding: 0 16px 32px;
 }
 
 /* ---------- header ---------- */
@@ -58,16 +63,23 @@
   margin: 12px 0 0;
 }
 
-/* ---------- category pills (sticky) ---------- */
+/* ---------- category pills (sticky) ----------
+ *
+ * Pills scroll horizontally on narrow viewports. The mask-image
+ * gives a fade affordance on the right edge so it's obvious
+ * there's more to scroll. iOS Safari 15+, all modern Chrome /
+ * Firefox respect mask-image. */
 .tryon-pills {
   position: sticky;
   top: 0;
   z-index: 30;
   display: flex;
   gap: 8px;
-  padding: 12px 0;
+  padding: 12px 28px 12px 0;
   overflow-x: auto;
   scroll-snap-type: x proximity;
+  -webkit-mask-image: linear-gradient(to right, #000 0%, #000 calc(100% - 28px), transparent 100%);
+  mask-image: linear-gradient(to right, #000 0%, #000 calc(100% - 28px), transparent 100%);
   background: linear-gradient(
     to bottom,
     var(--t-bg) 0%,
@@ -146,11 +158,18 @@
  * heights). Uniform aspect ratio fixes that and rows line up
  * predictably. Trade-off: lose some of the Pinterest texture; net
  * positive on mobile where alignment matters more.
+ *
+ * !important on display and grid-template-columns is defensive
+ * against any stale cached masonry (column-count) rule.
  */
 .tryon-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  display: grid !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
   gap: 12px;
+  /* Belt-and-suspenders: ensure no CSS columns survive any stale
+   * cascade. Modern Safari respects display:grid; this defangs
+   * any cached column-count from an older bundle. */
+  column-count: unset !important;
 }
 @media (min-width: 640px) {
   .tryon-grid {
@@ -186,13 +205,16 @@
 }
 .tryon-card-image-wrap {
   background: #f1ede4;
-  width: 100%;
+  width: 100% !important;
   /* Uniform card heights: every image area is 3:4 portrait
    * regardless of the source image's actual aspect, so the 2-col
    * mobile grid lines up in even rows. object-fit:cover crops the
-   * source to fill the slot without distortion. */
-  aspect-ratio: 3 / 4;
+   * source to fill the slot without distortion. !important
+   * defends against any stale cached rule that let height vary
+   * with the source image. */
+  aspect-ratio: 3 / 4 !important;
   position: relative;
+  overflow: hidden;
 }
 .tryon-card-image {
   display: block;
@@ -290,16 +312,23 @@
 
 /* ---------- pinned ask/search bar ---------- */
 .tryon-asker {
-  position: fixed;
-  /* env(safe-area-inset-bottom) covers iOS home-indicator overlap;
-   * the fallback 14px applies on every other browser. The bar
-   * never floats in the middle: it's anchored to the viewport
-   * bottom and .tryon-page's bottom padding (140px) reserves
-   * clear space below the last row so it never overlaps cards
-   * when scrolled to end. */
+  /* CHANGED from position:fixed to position:sticky.
+   *
+   * Reason: with fixed positioning, the bar always anchors to the
+   * viewport bottom. On a short page (few products, or before
+   * client-side pagination kicks in) the visual effect is the bar
+   * "floating in the middle of the grid" because the viewport is
+   * taller than the content. JD's specific complaint.
+   *
+   * With sticky inside .tryon-page, the bar sits at its natural
+   * DOM position (below the grid) when the page is short, and
+   * sticks to viewport bottom when the user scrolls past it. No
+   * more midair float over a short grid; still pinned-bottom
+   * behavior on long pages. */
+  position: -webkit-sticky;
+  position: sticky;
   bottom: max(14px, env(safe-area-inset-bottom, 14px));
-  left: 50%;
-  transform: translateX(-50%);
+  margin: 24px auto max(14px, env(safe-area-inset-bottom, 14px));
   width: min(680px, calc(100% - 28px));
   display: flex;
   gap: 8px;
@@ -459,11 +488,20 @@
    * page-level band, not a narrow island in the top-left. Inner
    * items are centered via align-items + text-align so the
    * "Cass DiMicco" title and Shop/Ask toggle sit in the middle
-   * regardless of width. */
-  width: 100%;
-  margin: 0 auto;
+   * regardless of width.
+   *
+   * !important on width + display defeats any older cached rule
+   * (Safari iOS aggressively caches CSS by hash; if the prior
+   * version had a constrained header, the cached file would win
+   * over a fresh one with the same hash collision risk). The
+   * !important makes the mobile-correct layout robust against
+   * any stale cascade. */
+  width: 100% !important;
+  max-width: 100% !important;
+  margin: 0 !important;
+  box-sizing: border-box;
   padding: 24px 20px 8px;
-  display: flex;
+  display: flex !important;
   flex-direction: column;
   align-items: center;
   gap: 10px;
