@@ -445,6 +445,28 @@
   flex-direction: column;
   align-items: stretch;
 }
+/* Ask mode body: chat content constrained to a centered reading
+ * column so the greeting bubble, suggested-prompt rows, message
+ * thread, and input bar don't span the full viewport on desktop.
+ * 720px is in JD's spec range (640-720) and gives comfortable
+ * line lengths. On narrow viewports the max-width is the
+ * viewport itself; horizontal padding handles the rest.
+ *
+ * Chat's internal layout (form + input + suggestions) uses
+ * regular flow positioning (no fixed bars), so this parent
+ * constraint propagates cleanly: the input bar stops at the
+ * column edge, not the viewport edge.
+ *
+ * Shop body uses .tryon-page's own max-width (1320px) for the
+ * masonry grid; both are centered via margin:auto so the
+ * vertical center axis matches the shared header. No header
+ * shift when toggling. */
+.creator-page-chat-wrap {
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 0 16px;
+}
 
 /* Card outfit-select affordance */
 .tryon-card { position: relative; }

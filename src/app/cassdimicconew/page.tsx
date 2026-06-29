@@ -56,7 +56,10 @@ const manrope = Manrope({
 const DEFAULT_ACCENT = "#a26a5a";
 
 const SUBTITLE_SHOP = "Search my closet and favorite finds";
-const SUBTITLE_ASK = "Ask me about my closet, routine, travel, and finds";
+// Intentionally short and topic-free; the chat's greeting bubble
+// inside Ask mode carries the closet/routine/travel/finds topic
+// list so the eyebrow doesn't read as a duplicate of the greeting.
+const SUBTITLE_ASK = "Ask me anything";
 
 export const metadata: Metadata = {
   title: "Cass DiMicco · AskMai",
@@ -123,13 +126,15 @@ export default async function Page({
             signedIn={Boolean(session)}
           />
         ) : (
-          <Chat
-            slug={typedCreator.slug}
-            accent={accent}
-            creatorFirstName={creatorFirstName}
-            signedIn={Boolean(session)}
-            isSubscribed={session?.subscriptionStatus === "active"}
-          />
+          <div className="creator-page-chat-wrap">
+            <Chat
+              slug={typedCreator.slug}
+              accent={accent}
+              creatorFirstName={creatorFirstName}
+              signedIn={Boolean(session)}
+              isSubscribed={session?.subscriptionStatus === "active"}
+            />
+          </div>
         )}
       </main>
     </div>
