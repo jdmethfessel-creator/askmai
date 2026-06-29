@@ -305,6 +305,32 @@ type InterleaveCursor = Partial<Record<Network, NetworkCursor>>;
 const SELECT_COLS =
   "id, source_network, product_title, brand, price, price_display, image_url, affiliate_url, product_category, product_subcategory, created_at";
 
+// Server-side rewrite of the known-bad Shopbop CDN URL pattern.
+// Background: the parser was historically writing image_urls
+// missing the "/p/" segment between "/Shopbop/" and "/prod/", e.g.
+// .../Shopbop/prod/products/X.jpg (404)
+// when the working URL is
+// .../Shopbop/p/prod/products/X.jpg (200)
+// The parser is fixed in scripts/ingest-creator-products/parsers.mjs
+// (SHOPBOP_PRODUCT_IMAGE_ORIGIN includes "/p/") and the
+// /api/admin/recategorize-cass route backfills existing rows.
+//
+// Rewriting on read here so the API output is ALWAYS correct
+// regardless of DB state: any row whose stored image_url still
+// has the bad pattern is silently fixed before going to the
+// client. Eliminates the dependency on the admin curl having run.
+// Cost: a single string check + replace per row, negligible.
+const SHOPBOP_BAD_PREFIX = "/Shopbop/prod/";
+const SHOPBOP_GOOD_PREFIX = "/Shopbop/p/prod/";
+
+function fixImageUrl(url: string | null | undefined): string | null {
+  if (!url || typeof url !== "string") return null;
+  if (url.includes(SHOPBOP_BAD_PREFIX)) {
+    return url.replace(SHOPBOP_BAD_PREFIX, SHOPBOP_GOOD_PREFIX);
+  }
+  return url;
+}
+
 function decodeInterleaveCursor(raw: string | null): InterleaveCursor {
   if (!raw) return {};
   try {
@@ -489,7 +515,13 @@ async function fetchPage(opts: PageOpts): Promise<{
     return s.rows.length > 0 || s.mayHaveMore;
   });
 
-  const rows = picked.map(({ created_at: _c, ...rest }) => rest) as Product[];
+  // Strip created_at + rewrite known-bad image URL patterns before
+  // handing rows to the client. fixImageUrl is a no-op on every
+  // network except shopbop's bad-prefix subset.
+  const rows = picked.map(({ created_at: _c, ...rest }) => {
+    const fixed = fixImageUrl(rest.image_url);
+    return { ...rest, image_url: fixed ?? rest.image_url } as Product;
+  });
   return {
     rows,
     nextCursor: anyMore ? encodeInterleaveCursor(newCursor) : null,

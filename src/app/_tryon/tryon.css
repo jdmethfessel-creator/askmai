@@ -2,6 +2,14 @@
    here leaks into the existing creator chat page or marketing site. */
 
 .tryon-root {
+  /* Explicit width + display so the page chrome never collapses
+   * to a content-sized box (some Tailwind utilities + font
+   * variable classes can clash on the html/body container,
+   * leaving the root visually pinned top-left on mobile if the
+   * width isn't asserted here). */
+  display: block;
+  width: 100%;
+  min-height: 100dvh;
   --t-bg: #fafaf7;
   --t-surface: #ffffff;
   --t-ink: #18140e;
@@ -128,40 +136,48 @@
   color: var(--t-muted-dim);
 }
 
-/* ---------- masonry ---------- */
+/* ---------- grid ----------
+ *
+ * Switched from CSS columns (Pinterest-style masonry, variable card
+ * heights) to CSS grid with fixed 3:4 image aspect so the two-col
+ * mobile grid lines up in even rows. Variable-height cards on the
+ * masonry made the mobile experience read as "ragged" (e.g. a
+ * shoe card next to a long-coat card with wildly different
+ * heights). Uniform aspect ratio fixes that and rows line up
+ * predictably. Trade-off: lose some of the Pinterest texture; net
+ * positive on mobile where alignment matters more.
+ */
 .tryon-grid {
-  column-count: 2;
-  column-gap: 12px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
 }
 @media (min-width: 640px) {
   .tryon-grid {
-    column-count: 3;
-    column-gap: 14px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 14px;
   }
 }
 @media (min-width: 960px) {
   .tryon-grid {
-    column-count: 4;
-    column-gap: 16px;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 16px;
   }
 }
 @media (min-width: 1280px) {
   .tryon-grid {
-    column-count: 5;
-    column-gap: 16px;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 16px;
   }
 }
 
 .tryon-card {
-  break-inside: avoid;
-  -webkit-column-break-inside: avoid;
-  page-break-inside: avoid;
-  display: block;
+  display: flex;
+  flex-direction: column;
   background: var(--t-surface);
   border: 1px solid var(--t-line);
   border-radius: 14px;
   overflow: hidden;
-  margin: 0 0 14px;
   transition: transform 160ms, box-shadow 160ms;
 }
 .tryon-card:hover {
@@ -171,14 +187,32 @@
 .tryon-card-image-wrap {
   background: #f1ede4;
   width: 100%;
-  /* Preserve natural aspect — images vary; the masonry layout depends
-     on this. */
+  /* Uniform card heights: every image area is 3:4 portrait
+   * regardless of the source image's actual aspect, so the 2-col
+   * mobile grid lines up in even rows. object-fit:cover crops the
+   * source to fill the slot without distortion. */
+  aspect-ratio: 3 / 4;
+  position: relative;
 }
 .tryon-card-image {
   display: block;
   width: 100%;
-  height: auto;
+  height: 100%;
   object-fit: cover;
+}
+/* When an image errors out (404 / hotlink reject / CORS), the
+ * ProductCard sets data-failed on the wrap and we hide the
+ * <img> so the browser's broken-image glyph never paints.
+ * The beige wrap fills the slot cleanly. */
+.tryon-card-image-wrap[data-failed="true"] img {
+  display: none;
+}
+.tryon-card-image-wrap[data-failed="true"]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--t-line);
+  opacity: 0.4;
 }
 .tryon-card-meta {
   padding: 10px 12px 4px;
@@ -257,7 +291,13 @@
 /* ---------- pinned ask/search bar ---------- */
 .tryon-asker {
   position: fixed;
-  bottom: 14px;
+  /* env(safe-area-inset-bottom) covers iOS home-indicator overlap;
+   * the fallback 14px applies on every other browser. The bar
+   * never floats in the middle: it's anchored to the viewport
+   * bottom and .tryon-page's bottom padding (140px) reserves
+   * clear space below the last row so it never overlaps cards
+   * when scrolled to end. */
+  bottom: max(14px, env(safe-area-inset-bottom, 14px));
   left: 50%;
   transform: translateX(-50%);
   width: min(680px, calc(100% - 28px));
@@ -415,10 +455,14 @@
  * tied to the mode so the text cross-fades when toggling without
  * the surrounding layout shifting. */
 .creator-page-header {
+  /* Full width on every viewport so the header reads as a true
+   * page-level band, not a narrow island in the top-left. Inner
+   * items are centered via align-items + text-align so the
+   * "Cass DiMicco" title and Shop/Ask toggle sit in the middle
+   * regardless of width. */
   width: 100%;
-  max-width: 560px;
   margin: 0 auto;
-  padding: 24px 16px 8px;
+  padding: 24px 20px 8px;
   display: flex;
   flex-direction: column;
   align-items: center;

@@ -610,11 +610,21 @@ function ProductCard({
   inOutfit: boolean;
   onToggleOutfit: (p: Product) => void;
 }) {
+  // Client-side safety net for broken images. The primary fix is
+  // server-side in /api/tryon-grid/.../products which rewrites
+  // known-bad URL patterns before sending. This onError handler
+  // catches anything that slipped through (truly dead URLs, CORS
+  // failures, network errors at fetch time). On error we unmount
+  // the card entirely so the grid reflows and the browser's
+  // broken-image glyph never paints. Early-return goes AFTER the
+  // hooks so the hook call order is stable across renders.
+  const [imageFailed, setImageFailed] = useState(false);
   const onShop = useCallback(() => {
     // Open the byte-for-byte stored affiliate URL. NEVER massage it;
     // every tracking param is the creator's attribution.
     window.open(product.affiliate_url, "_blank", "noopener,noreferrer");
   }, [product.affiliate_url]);
+  if (imageFailed) return null;
 
   return (
     <article className={`tryon-card ${inOutfit ? "is-in-outfit" : ""}`}>
@@ -640,6 +650,7 @@ function ProductCard({
           alt={product.product_title}
           loading="lazy"
           decoding="async"
+          onError={() => setImageFailed(true)}
         />
       </div>
       <div className="tryon-card-meta">
