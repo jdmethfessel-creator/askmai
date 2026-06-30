@@ -83,7 +83,7 @@ function parseMode(raw: unknown): Mode {
 export default async function Page({
   searchParams,
 }: {
-  searchParams: { mode?: string; all?: string };
+  searchParams: { mode?: string; curated?: string };
 }) {
   const admin = supabaseAdmin();
   const { data: creator } = await admin
@@ -109,7 +109,7 @@ export default async function Page({
   const editCookie = cookieStore.get("askmai_edit")?.value ?? null;
   const editMode =
     Boolean(editCookie) && editCookie === process.env.ADMIN_EDIT_KEY;
-  const showAll = searchParams?.all === "1";
+  const curated = searchParams?.curated === "1";
   const typedCreator = creator as Pick<
     Creator,
     "id" | "slug" | "name" | "bio" | "theme"
@@ -144,7 +144,7 @@ export default async function Page({
             creatorSlug={typedCreator.slug}
             signedIn={Boolean(session)}
             editMode={editMode}
-            initialShowAll={showAll}
+            initialCurated={curated}
           />
         ) : (
           <div className="creator-page-chat-wrap">

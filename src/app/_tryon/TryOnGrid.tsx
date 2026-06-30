@@ -212,7 +212,7 @@ export default function TryOnGrid({
   creatorSlug,
   signedIn,
   editMode = false,
-  initialShowAll = false,
+  initialCurated = false,
 }: {
   creatorSlug: string;
   signedIn: boolean;
@@ -220,8 +220,9 @@ export default function TryOnGrid({
    *  toggle that flips creator_products.featured. Activated via
    *  /api/admin/edit-mode?key=<ADMIN_EDIT_KEY>. */
   editMode?: boolean;
-  /** Whether the page mounted with ?all=1 (Shop-everything URL). */
-  initialShowAll?: boolean;
+  /** Whether the page mounted with ?curated=1 (her-picks URL).
+   *  Default false = full catalog (the new default). */
+  initialCurated?: boolean;
 }) {
   const [products, setProducts] = useState<Product[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
@@ -251,11 +252,12 @@ export default function TryOnGrid({
   const fetchTokenRef = useRef(0);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
 
-  // "Shop everything" toggle. When false (default), the grid sees
-  // the creator's curated featured set; when true, it sees the
-  // full catalog. Mirrors the ?all=1 URL param state but lives
-  // client-side so toggling doesn't trigger a full page reload.
-  const [showAll, setShowAll] = useState<boolean>(initialShowAll);
+  // Curated-view toggle. Default false = full catalog (tryable-
+  // first then recency). When true, filter to the creator's
+  // featured edit (with server-side fallback to the full catalog
+  // if no rows are starred yet, so the page never goes blank).
+  // Mirrors the ?curated=1 URL param.
+  const [curated, setCurated] = useState<boolean>(initialCurated);
   // Local optimistic mirror of each card's featured flag so the
   // star toggle reads in real-time without a full grid refetch.
   // Keyed by product id.
@@ -333,7 +335,7 @@ export default function TryOnGrid({
         if (!opts.reset && cursor) params.set("cursor", cursor);
         if (activeCategory !== "all") params.set("subcategory", activeCategory);
         if (appliedQuery) params.set("q", appliedQuery);
-        if (showAll) params.set("all", "1");
+        if (curated) params.set("curated", "1");
         const res = await fetch(
           `/api/tryon-grid/${creatorSlug}/products?${params.toString()}`
         );
@@ -356,11 +358,11 @@ export default function TryOnGrid({
         if (token === fetchTokenRef.current) setLoadingPage(false);
       }
     },
-    [activeCategory, appliedQuery, creatorSlug, cursor, showAll]
+    [activeCategory, appliedQuery, creatorSlug, cursor, curated]
   );
 
-  // Reset + first page whenever the filter, search, or "Shop
-  // everything" toggle changes.
+  // Reset + first page whenever the filter, search, or curated-
+  // view toggle changes.
   useEffect(() => {
     setProducts([]);
     setCursor(null);
@@ -369,7 +371,7 @@ export default function TryOnGrid({
     // intentionally exclude fetchPage from deps so it doesn't loop on
     // the page-cursor change cycle.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeCategory, appliedQuery, creatorSlug, showAll]);
+  }, [activeCategory, appliedQuery, creatorSlug, curated]);
 
   // Infinite scroll sentinel: load the next page when the trailing
   // div enters the viewport. The 600px rootMargin pre-fetches before
@@ -707,15 +709,14 @@ export default function TryOnGrid({
         ))}
       </nav>
 
-      {/* Scope banner: "her picks" (default) vs "full catalog"
-          (after Shop everything). Hidden when an active search
-          query is showing its own interpreted caption, since the
-          search caption already explains the scope. Always shows
-          the toggle link to flip scope. */}
+      {/* Scope banner: default is the full catalog; clicking the
+          toggle opts into her curated picks. Hidden when an active
+          search query is showing its own interpreted caption, since
+          the search caption already explains the scope. */}
       {!appliedQuery ? (
         <div className="tryon-scope-banner">
           <span className="tryon-scope-label">
-            {showAll ? "Showing her full catalog" : "Showing her picks"}
+            {curated ? "Showing her picks" : "Showing her full catalog"}
             {editMode ? (
               <span className="tryon-scope-edit-tag"> · EDIT MODE</span>
             ) : null}
@@ -723,9 +724,9 @@ export default function TryOnGrid({
           <button
             type="button"
             className="tryon-scope-toggle"
-            onClick={() => setShowAll((v) => !v)}
+            onClick={() => setCurated((v) => !v)}
           >
-            {showAll ? "Back to her picks" : "Shop everything"} →
+            {curated ? "See everything" : "See her picks"} →
           </button>
         </div>
       ) : null}

@@ -77,9 +77,11 @@ type PageOpts = {
   parsedSubcategory: string | null;
   maxPrice: number | null;
   descriptors: string[];
-  /** "Shop everything" flag: when true, ignore the featured-only
-   *  default and serve the full catalog. */
-  showAll: boolean;
+  /** Curated-edit opt-in. When true, filter to featured=true rows
+   *  (with fallback to the full catalog if the creator has no
+   *  featured rows yet). When false (the default), serve the full
+   *  catalog sorted tryable-first then recency. */
+  curated: boolean;
 };
 
 // Subcategories that get sorted FIRST in the default view. Items
@@ -117,12 +119,18 @@ export async function GET(
   const pillRaw = url.searchParams.get("subcategory");
   const pillSubcategory = pillRaw && pillRaw !== "all" ? pillRaw : null;
   const rawQ = (url.searchParams.get("q") || "").trim();
-  // `?all=1` (or any truthy value): "Shop everything" mode. Bypasses
-  // the featured-only default and serves the full catalog. When
-  // omitted, the grid filters to featured=true rows IF any exist;
-  // otherwise (creator has no curated edit yet) falls back to the
-  // full catalog so the page never goes blank.
-  const showAll = url.searchParams.get("all") === "1";
+  // Default behavior: full catalog (sorted tryable-first then
+  // recency). The page lands full and active with zero curation
+  // required.
+  //
+  // `?curated=1`: opt-in to the creator's featured edit (the
+  // starred set). If the creator has no featured rows yet, falls
+  // back to the full catalog so the page never goes blank.
+  //
+  // Legacy `?all=1` is preserved as a no-op (it used to flip from
+  // featured-default to full-catalog; that flip is now the default,
+  // so the param is silently ignored). No old links break.
+  const curated = url.searchParams.get("curated") === "1";
 
   const admin = supabaseAdmin();
 
@@ -145,7 +153,7 @@ export async function GET(
       parsedSubcategory: null,
       maxPrice: null,
       descriptors: [],
-      showAll,
+      curated,
     });
     return Response.json({
       products: rows,
@@ -184,11 +192,11 @@ export async function GET(
   const attempts: Array<{ key: "none" | "descriptors" | "subcategory" | "all"; opts: PageOpts }> = [
     {
       key: "none",
-      opts: makeOpts(creator.id, limit, cursor, pillSubcategory, parsed, true, true, showAll),
+      opts: makeOpts(creator.id, limit, cursor, pillSubcategory, parsed, true, true, curated),
     },
     {
       key: "descriptors",
-      opts: makeOpts(creator.id, limit, cursor, pillSubcategory, parsed, false, true, showAll),
+      opts: makeOpts(creator.id, limit, cursor, pillSubcategory, parsed, false, true, curated),
     },
   ];
   // Only add the "drop subcategory" rung when the parser inferred one
@@ -198,7 +206,7 @@ export async function GET(
     attempts.push({
       key: "subcategory",
       opts: {
-        ...makeOpts(creator.id, limit, cursor, null, parsed, false, true, showAll),
+        ...makeOpts(creator.id, limit, cursor, null, parsed, false, true, curated),
         parsedSubcategory: null,
       },
     });
@@ -297,7 +305,7 @@ function makeOpts(
   parsed: ParsedQuery,
   withDescriptors: boolean,
   withPrice: boolean,
-  showAll: boolean
+  curated: boolean
 ): PageOpts {
   return {
     creatorId,
@@ -307,7 +315,7 @@ function makeOpts(
     parsedSubcategory: pillSubcategory ? null : parsed.subcategory,
     maxPrice: withPrice ? parsed.maxPrice : null,
     descriptors: withDescriptors ? parsed.descriptors : [],
-    showAll,
+    curated,
   };
 }
 
@@ -470,12 +478,10 @@ async function fetchOneNetwork(args: {
     .order("id", { ascending: false })
     .limit(args.perLimit);
 
-  // Default Shop view: featured rows only. The route caller
-  // (fetchPage) computes featuredOnly as "user didn't pass ?all=1
-  // AND the creator has at least one featured row." If neither
-  // condition holds, featuredOnly is false and we serve the full
-  // catalog (preserves the legacy behavior for unfeatured creators
-  // and the explicit "Shop everything" toggle).
+  // Curated-view filter. fetchPage computes featuredOnly as "the
+  // caller passed ?curated=1 AND the creator has at least one
+  // featured row." Default view is the full catalog, so this is
+  // off unless the user opted in.
   if (args.featuredOnly) {
     query = query.eq("featured", true);
   }
@@ -539,14 +545,13 @@ async function fetchPage(opts: PageOpts): Promise<{
   const effectiveSubcategory =
     opts.pillSubcategory ?? opts.parsedSubcategory ?? null;
 
-  // Compute featuredOnly: default Shop view filters to the
-  // curated edit IFF the creator has any featured rows. Fallback
-  // (zero featured) serves the full catalog so the page never
-  // goes blank for a creator without an edit. The "Shop
-  // everything" toggle (?all=1) always serves the full catalog
-  // regardless of featured state.
+  // Compute featuredOnly: only when the user opted into the
+  // curated view AND the creator has any featured rows. If they
+  // opted in but no rows are starred yet, featuredOnly stays
+  // false and we serve the full catalog (the page never goes
+  // blank). Default (curated=false) is always the full catalog.
   let featuredOnly = false;
-  if (!opts.showAll) {
+  if (opts.curated) {
     const admin = supabaseAdmin();
     const { count } = await admin
       .from("creator_products")
