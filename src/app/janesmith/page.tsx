@@ -109,7 +109,7 @@ function parseMode(raw: unknown): Mode {
 export default async function Page({
   searchParams,
 }: {
-  searchParams: { mode?: string; curated?: string };
+  searchParams: { mode?: string; recent?: string; curated?: string };
 }) {
   const admin = supabaseAdmin();
   const { data: creator } = await admin
@@ -135,7 +135,11 @@ export default async function Page({
   const editCookie = cookieStore.get("askmai_edit")?.value ?? null;
   const editMode =
     Boolean(editCookie) && editCookie === process.env.ADMIN_EDIT_KEY;
-  const curated = searchParams?.curated === "1";
+  // Accept ?recent=1 (canonical) OR ?curated=1 (back-compat alias
+  // from the prior featured-only mode that's been repurposed into
+  // the recent-picks filter).
+  const recent =
+    searchParams?.recent === "1" || searchParams?.curated === "1";
   const typedCreator = creator as Pick<
     Creator,
     "id" | "slug" | "name" | "bio" | "theme"
@@ -210,7 +214,7 @@ export default async function Page({
             creatorFirstName={creatorFirstName}
             signedIn={Boolean(session)}
             editMode={editMode}
-            initialCurated={curated}
+            initialRecent={recent}
           />
         ) : mode === "room" ? (
           <DressingRoom creatorSlug={typedCreator.slug} />

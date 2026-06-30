@@ -77,12 +77,24 @@ type PageOpts = {
   parsedSubcategory: string | null;
   maxPrice: number | null;
   descriptors: string[];
-  /** Curated-edit opt-in. When true, filter to featured=true rows
-   *  (with fallback to the full catalog if the creator has no
-   *  featured rows yet). When false (the default), serve the full
-   *  catalog sorted tryable-first then recency. */
-  curated: boolean;
+  /** "Recent picks" opt-in. When true, filter to items added in
+   *  the last RECENT_WINDOW_DAYS and sort by pure recency (no
+   *  tryable-first re-sort). When false (the default), serve the
+   *  full catalog sorted tryable-first then recency. This flag
+   *  replaces the old `featured`-only "curated" mode which was
+   *  never being maintained; URL param `?curated=1` is preserved
+   *  as a back-compat alias for `?recent=1` so prior bookmarks
+   *  keep working. */
+  recent: boolean;
 };
+
+// Recency window for the "Recent picks" filter. 90 days is wide
+// enough that a creator ingested 2-3 months ago still has SOMETHING
+// to show under the toggle, and tight enough that for a creator
+// being re-ingested weekly the toggle filters to the genuine new
+// adds. For catalogs older than the window the toggle becomes a
+// near-noop visually -- documented trade-off for v1.
+const RECENT_WINDOW_DAYS = 90;
 
 // Subcategories that get sorted FIRST in the default view. Items
 // in these buckets show a Try-On button and should dominate the
@@ -123,14 +135,15 @@ export async function GET(
   // recency). The page lands full and active with zero curation
   // required.
   //
-  // `?curated=1`: opt-in to the creator's featured edit (the
-  // starred set). If the creator has no featured rows yet, falls
-  // back to the full catalog so the page never goes blank.
+  // `?recent=1` (and the back-compat alias `?curated=1`): opt-in to
+  // the "Recent picks" view that filters to items added in the last
+  // RECENT_WINDOW_DAYS and sorts by pure recency. Replaces the old
+  // featured-only curated mode (which the team wasn't maintaining).
   //
-  // Legacy `?all=1` is preserved as a no-op (it used to flip from
-  // featured-default to full-catalog; that flip is now the default,
-  // so the param is silently ignored). No old links break.
-  const curated = url.searchParams.get("curated") === "1";
+  // Legacy `?all=1` is preserved as a no-op for old bookmarks.
+  const recent =
+    url.searchParams.get("recent") === "1" ||
+    url.searchParams.get("curated") === "1";
 
   const admin = supabaseAdmin();
 
@@ -153,7 +166,7 @@ export async function GET(
       parsedSubcategory: null,
       maxPrice: null,
       descriptors: [],
-      curated,
+      recent,
     });
     return Response.json({
       products: rows,
@@ -192,11 +205,11 @@ export async function GET(
   const attempts: Array<{ key: "none" | "descriptors" | "subcategory" | "all"; opts: PageOpts }> = [
     {
       key: "none",
-      opts: makeOpts(creator.id, limit, cursor, pillSubcategory, parsed, true, true, curated),
+      opts: makeOpts(creator.id, limit, cursor, pillSubcategory, parsed, true, true, recent),
     },
     {
       key: "descriptors",
-      opts: makeOpts(creator.id, limit, cursor, pillSubcategory, parsed, false, true, curated),
+      opts: makeOpts(creator.id, limit, cursor, pillSubcategory, parsed, false, true, recent),
     },
   ];
   // Only add the "drop subcategory" rung when the parser inferred one
@@ -206,7 +219,7 @@ export async function GET(
     attempts.push({
       key: "subcategory",
       opts: {
-        ...makeOpts(creator.id, limit, cursor, null, parsed, false, true, curated),
+        ...makeOpts(creator.id, limit, cursor, null, parsed, false, true, recent),
         parsedSubcategory: null,
       },
     });
@@ -305,7 +318,7 @@ function makeOpts(
   parsed: ParsedQuery,
   withDescriptors: boolean,
   withPrice: boolean,
-  curated: boolean
+  recent: boolean
 ): PageOpts {
   return {
     creatorId,
@@ -315,7 +328,7 @@ function makeOpts(
     parsedSubcategory: pillSubcategory ? null : parsed.subcategory,
     maxPrice: withPrice ? parsed.maxPrice : null,
     descriptors: withDescriptors ? parsed.descriptors : [],
-    curated,
+    recent,
   };
 }
 
@@ -502,7 +515,9 @@ async function fetchOneNetwork(args: {
   effectiveSubcategory: string | null;
   maxPrice: number | null;
   descriptors: string[];
-  featuredOnly: boolean;
+  /** ISO timestamp floor for the "Recent picks" filter; rows older
+   *  than this are excluded. null = no recency filter (default). */
+  recentCutoff: string | null;
 }): Promise<{ rows: Array<Product & { created_at: string }>; mayHaveMore: boolean }> {
   // Column-tolerant fetch: try with SELECT_COLS (includes
   // `featured`) and, on the Postgres 42703 "column does not exist"
@@ -522,15 +537,14 @@ async function fetchOneNetwork(args: {
       .order("id", { ascending: false })
       .limit(args.perLimit);
 
-    // Curated-view filter. fetchPage computes featuredOnly as "the
-    // caller passed ?curated=1 AND the creator has at least one
-    // featured row." Default view is the full catalog, so this is
-    // off unless the user opted in. If `featured` is missing on the
-    // DB, fetchPage's count probe returns 0 so featuredOnly is also
-    // false here, meaning we never reach the .eq("featured", true)
-    // line with a missing column.
-    if (args.featuredOnly) {
-      q = q.eq("featured", true);
+    // "Recent picks" filter. fetchPage computes the cutoff date as
+    // NOW() - RECENT_WINDOW_DAYS when opts.recent is true; null
+    // otherwise. Server-side filter keeps the per-network row
+    // budget honest -- a network that only has old items still
+    // honors perLimit, just returns 0 rows here instead of
+    // returning fresh-looking ranks from the older pool.
+    if (args.recentCutoff) {
+      q = q.gte("created_at", args.recentCutoff);
     }
 
     if (args.cursor) {
@@ -614,31 +628,12 @@ async function fetchPage(opts: PageOpts): Promise<{
   const effectiveSubcategory =
     opts.pillSubcategory ?? opts.parsedSubcategory ?? null;
 
-  // Compute featuredOnly: only when the user opted into the
-  // curated view AND the creator has any featured rows. If they
-  // opted in but no rows are starred yet, featuredOnly stays
-  // false and we serve the full catalog (the page never goes
-  // blank). Default (curated=false) is always the full catalog.
-  let featuredOnly = false;
-  if (opts.curated) {
-    const admin = supabaseAdmin();
-    const { count, error } = await admin
-      .from("creator_products")
-      .select("id", { count: "exact", head: true })
-      .eq("creator_id", opts.creatorId)
-      .eq("featured", true);
-    // 42703 = column not yet migrated. Treat as "no featured rows"
-    // so the curated opt-in falls through to the full catalog,
-    // matching the documented fallback. Any other error stays
-    // featuredOnly=false too (safer than blanking the page).
-    if (error && error.code !== "42703") {
-      console.error(
-        "[tryon-grid/products] featured-count error:",
-        error
-      );
-    }
-    featuredOnly = (count ?? 0) > 0;
-  }
+  // Compute the recency cutoff for "Recent picks" mode. Null when
+  // recent is off so fetchOneNetwork skips the .gte filter entirely
+  // (default full catalog behavior).
+  const recentCutoff = opts.recent
+    ? new Date(Date.now() - RECENT_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString()
+    : null;
 
   // Per-network overfetch budget. The round-robin pulls one row from
   // each network in rotation, so each network contributes roughly
@@ -659,7 +654,7 @@ async function fetchPage(opts: PageOpts): Promise<{
         effectiveSubcategory,
         maxPrice: opts.maxPrice,
         descriptors: opts.descriptors,
-        featuredOnly,
+        recentCutoff,
       }).then((r) => ({ net, ...r }))
     )
   );
@@ -690,28 +685,31 @@ async function fetchPage(opts: PageOpts): Promise<{
     if (!progress) break;
   }
 
-  // Tryable-first re-sort. Round-robin already mixes networks for
-  // visual variety; layered on top, sort the picked set so
-  // try-on-eligible items dominate the fold. Within each rank,
-  // preserve created_at DESC (recency tiebreak). The cursor logic
-  // is unchanged; the cursor records the per-network (ts, id)
-  // boundary regardless of our cosmetic re-sort here.
-  //
-  // Note: this is a re-sort of the page-sized window. If page 1
-  // returns 40 items with 30 tryable + 10 non-tryable, the user
-  // sees 30 tryable up front then 10 non-tryable. Page 2 pulls the
-  // next 40 with its own tryable-first re-sort. Across pages the
-  // pattern repeats — predictable from the user's POV.
-  picked.sort((a, b) => {
-    const ra = tryableRank(a.product_subcategory);
-    const rb = tryableRank(b.product_subcategory);
-    if (ra !== rb) return ra - rb;
-    // Same tryable_rank: keep recency DESC.
-    if (a.created_at !== b.created_at) {
-      return a.created_at < b.created_at ? 1 : -1;
-    }
-    return a.id < b.id ? 1 : -1;
-  });
+  // Tryable-first re-sort, with one exception. In default mode
+  // (recent=false) we lead the fold with try-on-eligible items so
+  // the most useful affordance dominates first paint. In "Recent
+  // picks" mode (recent=true) we sort by pure recency instead --
+  // the user clicked specifically to see what's new, so re-ordering
+  // their actual freshness signal behind a tryable bias would be a
+  // surprise. Cursor logic is unchanged either way.
+  if (!opts.recent) {
+    picked.sort((a, b) => {
+      const ra = tryableRank(a.product_subcategory);
+      const rb = tryableRank(b.product_subcategory);
+      if (ra !== rb) return ra - rb;
+      if (a.created_at !== b.created_at) {
+        return a.created_at < b.created_at ? 1 : -1;
+      }
+      return a.id < b.id ? 1 : -1;
+    });
+  } else {
+    picked.sort((a, b) => {
+      if (a.created_at !== b.created_at) {
+        return a.created_at < b.created_at ? 1 : -1;
+      }
+      return a.id < b.id ? 1 : -1;
+    });
+  }
 
   // Build next cursor: carry forward each network's input cursor,
   // overlaid with any advances from this page. A network that did not

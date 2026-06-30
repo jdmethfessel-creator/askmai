@@ -115,21 +115,23 @@ export default function TryOnGrid({
   creatorFirstName,
   signedIn,
   editMode = false,
-  initialCurated = false,
+  initialRecent = false,
 }: {
   creatorSlug: string;
   /** First name only, used for the scope banner ("Showing Jane's
-   *  picks") + edit-mode star tooltips ("Add to Jane's picks"). The
-   *  page server-component derives it from creators.name. */
+   *  recent picks") + edit-mode star tooltips ("Add to Jane's
+   *  picks"). The page server-component derives it from
+   *  creators.name. */
   creatorFirstName?: string;
   signedIn: boolean;
   /** Phase-1 curation gate. When true, each card shows a star
    *  toggle that flips creator_products.featured. Activated via
    *  /api/admin/edit-mode?key=<ADMIN_EDIT_KEY>. */
   editMode?: boolean;
-  /** Whether the page mounted with ?curated=1 (the curated URL).
-   *  Default false = full catalog (the new default). */
-  initialCurated?: boolean;
+  /** Whether the page mounted with ?recent=1 (or the back-compat
+   *  alias ?curated=1) — server filters to the last 90 days when
+   *  true. Default false = full catalog. */
+  initialRecent?: boolean;
 }) {
   const possessive = creatorPossessive(creatorFirstName);
   const [products, setProducts] = useState<Product[]>([]);
@@ -160,7 +162,11 @@ export default function TryOnGrid({
   // featured edit (with server-side fallback to the full catalog
   // if no rows are starred yet, so the page never goes blank).
   // Mirrors the ?curated=1 URL param.
-  const [curated, setCurated] = useState<boolean>(initialCurated);
+  // Was previously "curated" (featured-only). Repurposed: when true,
+  // the server filters to the last 90 days and sorts pure-recency.
+  // URL flag accepts ?recent=1 (canonical) or ?curated=1 (back-compat
+  // alias) so old links keep working.
+  const [recent, setRecent] = useState<boolean>(initialRecent);
   // Local optimistic mirror of each card's featured flag so the
   // star toggle reads in real-time without a full grid refetch.
   // Keyed by product id.
@@ -238,7 +244,7 @@ export default function TryOnGrid({
         if (!opts.reset && cursor) params.set("cursor", cursor);
         if (activeCategory !== "all") params.set("subcategory", activeCategory);
         if (appliedQuery) params.set("q", appliedQuery);
-        if (curated) params.set("curated", "1");
+        if (recent) params.set("recent", "1");
         const res = await fetch(
           `/api/tryon-grid/${creatorSlug}/products?${params.toString()}`
         );
@@ -261,7 +267,7 @@ export default function TryOnGrid({
         if (token === fetchTokenRef.current) setLoadingPage(false);
       }
     },
-    [activeCategory, appliedQuery, creatorSlug, cursor, curated]
+    [activeCategory, appliedQuery, creatorSlug, cursor, recent]
   );
 
   // Reset + first page whenever the filter, search, or curated-
@@ -274,7 +280,7 @@ export default function TryOnGrid({
     // intentionally exclude fetchPage from deps so it doesn't loop on
     // the page-cursor change cycle.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeCategory, appliedQuery, creatorSlug, curated]);
+  }, [activeCategory, appliedQuery, creatorSlug, recent]);
 
   // Infinite scroll sentinel: load the next page when the trailing
   // div enters the viewport. The 600px rootMargin pre-fetches before
@@ -518,8 +524,8 @@ export default function TryOnGrid({
       {!appliedQuery ? (
         <div className="tryon-scope-banner">
           <span className="tryon-scope-label">
-            {curated
-              ? `Showing ${possessive} picks`
+            {recent
+              ? `Showing ${possessive} recent picks`
               : `Showing ${possessive} full catalog`}
             {editMode ? (
               <span className="tryon-scope-edit-tag"> · EDIT MODE</span>
@@ -528,9 +534,9 @@ export default function TryOnGrid({
           <button
             type="button"
             className="tryon-scope-toggle"
-            onClick={() => setCurated((v) => !v)}
+            onClick={() => setRecent((v) => !v)}
           >
-            {curated ? "See everything" : `See ${possessive} picks`} →
+            {recent ? "See everything" : `See ${possessive} recent picks`} →
           </button>
         </div>
       ) : null}
