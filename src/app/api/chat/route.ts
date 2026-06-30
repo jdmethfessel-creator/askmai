@@ -19,6 +19,7 @@ import {
   hasValidOutfitComposition,
 } from "@/lib/outfitSlots";
 import type { ChatMessage, Creator, Rec } from "@/lib/types";
+import { extractGarmentTypes, parseQuery } from "@/lib/tryonGridSearch";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -151,13 +152,14 @@ export async function POST(request: Request) {
   const rawHistory = body.history ?? [];
   const recentlyShown = collectRecentlyShown(rawHistory);
   const recentlyShownText = formatRecentlyShownForPrompt(rawHistory);
-  const catalog = await loadCatalog(
+  const catalogSelection = await loadCatalog(
     creatorId,
     message,
     budgetCeilingPrefetch,
     recentlyShown.ids,
     creator.taste_profile
   );
+  const catalog = catalogSelection.rows;
   const knownProducts = buildKnownProducts(catalog, creator.taste_profile);
   const creatorRef = {
     id: creatorId,
@@ -171,7 +173,9 @@ export async function POST(request: Request) {
     catalog,
     budgetCeiling,
     productRequest,
-    recentlyShownText
+    recentlyShownText,
+    catalogSelection.relaxLevel,
+    catalogSelection.requestedTypes
   );
   const history = sanitizeHistory(rawHistory);
 
@@ -2284,48 +2288,151 @@ function collectPreferredBrands(
   return out;
 }
 
+/**
+ * Result of catalog selection. Carries the rows the prompt will see
+ * PLUS the relaxation level that produced them, so buildSystemPrompt
+ * can flag honesty when no exact garment-type match exists.
+ */
+type CatalogSelection = {
+  rows: CatalogRow[];
+  /** "exact" = subcategory + garment-type + soft descriptors all
+   *  satisfied. "soft_relaxed" = type held but color/material was
+   *  dropped. "type_relaxed" = no item matched the garment type at
+   *  all -- the prompt MUST tell the LLM not to mislabel.
+   *  "broad" = no type was requested or no filters were specific. */
+  relaxLevel: "exact" | "soft_relaxed" | "type_relaxed" | "broad";
+  /** Canonical garment-type keys the user asked for, when any. */
+  requestedTypes: string[];
+};
+
 async function loadCatalog(
   creatorId: string,
   userMessage: string,
   budgetCeiling: number | null,
   excludeIds: Set<string> = new Set(),
   taste: Creator["taste_profile"] = null
-): Promise<CatalogRow[]> {
+): Promise<CatalogSelection> {
   const sb = supabaseAdmin();
-  const matched = new Set<string>();
+  // Coarse category from CATEGORY_HINTS (fashion / accessories /
+  // beauty etc) -- kept as the safety floor in every relaxation
+  // level. Without this the "broad" fallback would dump the entire
+  // catalog into the prompt window.
+  const coarseCategories = new Set<string>();
   for (const hint of CATEGORY_HINTS) {
     if (hint.keywords.test(userMessage)) {
-      for (const c of hint.categories) matched.add(c);
+      for (const c of hint.categories) coarseCategories.add(c);
     }
   }
-  // Query creator_products (the full 2,634-row catalog populated by
-  // the same Shopbop / Revolve / FWRD / ShopMy ingestion pipeline
-  // that Shop runs against) instead of the legacy `products` table
-  // which only had the ~80-row ShopMy collection 3711656. Field-name
-  // map: product_title -> name, product_category -> category. The
-  // chat-level category vocab (fashion / beauty / accessories /
-  // lifestyle / travel / dining) matches what the ingest parsers
-  // write into product_category, so the existing CATEGORY_HINTS
-  // filter still works against the new column.
-  let query = sb
-    .from("creator_products")
-    .select(
-      "id, product_title, brand, product_category, product_subcategory, price"
-    )
-    .eq("creator_id", creatorId)
-    .order("price", { ascending: false, nullsFirst: false })
-    .limit(500);
-  if (matched.size > 0) {
-    query = query.in("product_category", Array.from(matched));
-  }
-  const { data, error } = await query;
-  if (error) {
-    console.error("[chat/loadCatalog] creator_products query failed:", error);
-    return [];
-  }
-  // Map creator_products schema to the CatalogRow shape the rest of
-  // the chat pipeline expects. Single shape downstream means no
-  // other function needs to know which table the rows came from.
+  const parsed = parseQuery(userMessage);
+  const types = extractGarmentTypes(userMessage);
+  // Subcategory: prefer the garment-type hint (specific) over
+  // parseQuery's bucket (broad). "midi skirt" pins to bottoms via
+  // the GARMENT_TYPES entry; "skirt" alone pins via parseQuery.
+  const targetSubcategory =
+    types.subcategoryHint ?? parsed.subcategory ?? null;
+  const softDescriptors = parsed.descriptors;
+  const typeAliases = types.titleAliases;
+
+  /**
+   * Build a query at a given relaxation level. Returns the raw
+   * Supabase query so callers can compose .order/.limit consistently.
+   *
+   * Levels (strictest -> broadest):
+   *   strict           coarse + subcategory + typeAliases + softDescriptors
+   *   type_with_sub    coarse + subcategory + typeAliases
+   *   type_no_sub      coarse                + typeAliases    (catches
+   *                                                   mis-bucketed rows
+   *                                                   e.g. midi skirts
+   *                                                   bucketed as dresses)
+   *   sub_no_type      coarse + subcategory                   (no item
+   *                                                   matched the type
+   *                                                   at all)
+   *   broad            coarse only
+   */
+  const buildQuery = (
+    level:
+      | "strict"
+      | "type_with_sub"
+      | "type_no_sub"
+      | "sub_no_type"
+      | "broad"
+  ) => {
+    let q = sb
+      .from("creator_products")
+      .select(
+        "id, product_title, brand, product_category, product_subcategory, price"
+      )
+      .eq("creator_id", creatorId)
+      .order("price", { ascending: false, nullsFirst: false })
+      .limit(500);
+    if (coarseCategories.size > 0) {
+      q = q.in("product_category", Array.from(coarseCategories));
+    }
+    // Subcategory pin applies at the levels that still want one.
+    if (
+      (level === "strict" ||
+        level === "type_with_sub" ||
+        level === "sub_no_type") &&
+      targetSubcategory
+    ) {
+      q = q.eq("product_subcategory", targetSubcategory);
+    }
+    // Type-alias ILIKE applies whenever we're trying to satisfy type.
+    if (
+      (level === "strict" ||
+        level === "type_with_sub" ||
+        level === "type_no_sub") &&
+      typeAliases.length > 0
+    ) {
+      // OR-union ILIKE across every alias in product_title. Each
+      // alias becomes its own ilike clause; supabase-js .or() takes
+      // a comma-separated string of clauses inside one .or() call.
+      const clauses = typeAliases
+        .map((a) => `product_title.ilike.%${escapeIlike(a)}%`)
+        .join(",");
+      q = q.or(clauses);
+    }
+    // Soft descriptors only apply at strict.
+    if (level === "strict" && softDescriptors.length > 0) {
+      for (const d of softDescriptors) {
+        q = q.or(
+          `product_title.ilike.%${escapeIlike(d)}%,brand.ilike.%${escapeIlike(d)}%`
+        );
+      }
+    }
+    return q;
+  };
+
+  // Relaxation ladder. Try strictest first; on zero rows step down.
+  // Track the level that yielded results so the prompt can tell the
+  // model whether to flag a substitution.
+  //
+  // The "type_no_sub" rung is what catches subcategory mis-bucketing
+  // (e.g. several "Midi Skirt" rows live under product_subcategory=
+  // "dresses" instead of "bottoms" because the ingest categorizer
+  // ran dress-regex before bottoms-regex). We treat that as still a
+  // legitimate type match -- the LLM gets a real midi skirt, no
+  // honesty flag needed.
+  type Rung = {
+    queryLevel: "strict" | "type_with_sub" | "type_no_sub" | "sub_no_type" | "broad";
+    reportedAs: CatalogSelection["relaxLevel"];
+  };
+  const ladder: Rung[] =
+    typeAliases.length === 0
+      ? [{ queryLevel: "broad", reportedAs: "broad" }]
+      : [
+          ...(softDescriptors.length > 0
+            ? [{ queryLevel: "strict", reportedAs: "exact" } as Rung]
+            : []),
+          { queryLevel: "type_with_sub", reportedAs: softDescriptors.length > 0 ? "soft_relaxed" : "exact" },
+          // type-found-but-mis-bucketed still counts as exact for the
+          // user's stated need; the catalog had it, we just had to
+          // ignore the subcategory pin to find it.
+          { queryLevel: "type_no_sub", reportedAs: softDescriptors.length > 0 ? "soft_relaxed" : "exact" },
+          { queryLevel: "sub_no_type", reportedAs: "type_relaxed" },
+          { queryLevel: "broad", reportedAs: "broad" },
+        ];
+
   type CPRow = {
     id: string;
     product_title: string;
@@ -2334,40 +2441,63 @@ async function loadCatalog(
     product_subcategory: string | null;
     price: number | null;
   };
-  let rows: CatalogRow[] = ((data ?? []) as CPRow[]).map((r) => ({
-    id: r.id,
-    name: r.product_title,
-    brand: r.brand,
-    category: r.product_category,
-    price: r.price,
-  }));
-  // Drop rows the assistant has already shown earlier in this
-  // conversation so the catalog selector can't keep handing the
-  // same Alrose midi back to the model. Done before the
-  // budget/representative slicer so dedup is honored even when
-  // the slicer would otherwise pull a duplicate into tier1.
-  if (excludeIds.size > 0) {
-    rows = rows.filter((r) => !excludeIds.has(r.id));
+
+  let chosen: { rows: CatalogRow[]; level: CatalogSelection["relaxLevel"] } | null = null;
+  for (const rung of ladder) {
+    const { data, error } = await buildQuery(rung.queryLevel);
+    if (error) {
+      console.error(`[chat/loadCatalog] ${rung.queryLevel} query failed:`, error);
+      continue;
+    }
+    const mapped: CatalogRow[] = ((data ?? []) as CPRow[]).map((r) => ({
+      id: r.id,
+      name: r.product_title,
+      brand: r.brand,
+      category: r.product_category,
+      price: r.price,
+    }));
+    const filtered =
+      excludeIds.size > 0
+        ? mapped.filter((r) => !excludeIds.has(r.id))
+        : mapped;
+    if (filtered.length > 0) {
+      chosen = { rows: filtered, level: rung.reportedAs };
+      break;
+    }
   }
-  // Brands-loved boost: stable-sort so rows whose brand matches the
-  // creator's brands_loved (or her owned-brands) land at the front
-  // of every tier the selector subsequently builds. Boost-only —
-  // off-taste rows still flow through, so a creator with thin or
-  // missing brands_loved coverage doesn't get an empty Ask. When
-  // brands_loved is empty (no taste profile, or no fashion section)
-  // this becomes a no-op and the existing price-DESC order stands.
+  if (!chosen) {
+    return { rows: [], relaxLevel: "broad", requestedTypes: types.keys };
+  }
+
+  // Brands-loved boost runs WITHIN the chosen relaxation level --
+  // never overrides garment type. By the time we sort, every row
+  // in `chosen.rows` already satisfies the type filter (or the
+  // type filter was relaxed away because no item matched, in which
+  // case brand-love sorting is appropriate again).
   const preferred = collectPreferredBrands(taste);
   if (preferred.size > 0) {
-    rows.sort((a, b) => {
+    chosen.rows.sort((a, b) => {
       const ap = a.brand && preferred.has(a.brand.toLowerCase()) ? 0 : 1;
       const bp = b.brand && preferred.has(b.brand.toLowerCase()) ? 0 : 1;
       return ap - bp;
     });
   }
-  if (budgetCeiling != null) {
-    return selectCatalogForBudget(rows, budgetCeiling, CATALOG_PROMPT_CAP);
-  }
-  return selectCatalogRepresentative(rows, CATALOG_PROMPT_CAP);
+
+  const sliced =
+    budgetCeiling != null
+      ? selectCatalogForBudget(chosen.rows, budgetCeiling, CATALOG_PROMPT_CAP)
+      : selectCatalogRepresentative(chosen.rows, CATALOG_PROMPT_CAP);
+
+  return {
+    rows: sliced,
+    relaxLevel: chosen.level,
+    requestedTypes: types.keys,
+  };
+}
+
+/** Escape % and _ wildcards in user-supplied terms before ILIKE. */
+function escapeIlike(s: string): string {
+  return s.replace(/[\\%_]/g, (m) => `\\${m}`);
 }
 
 /**
@@ -2629,7 +2759,9 @@ function buildSystemPrompt(
   catalog: CatalogRow[],
   budgetCeiling: number | null,
   productRequest: boolean,
-  recentlyShownText: string
+  recentlyShownText: string,
+  catalogRelaxLevel: "exact" | "soft_relaxed" | "type_relaxed" | "broad",
+  requestedTypes: string[]
 ) {
   const tasteJson = c.taste_profile
     ? JSON.stringify(c.taste_profile, null, 2)
@@ -2809,6 +2941,32 @@ RECENTLY SHOWN THIS CONVERSATION (do not repeat these in this reply):
 ${recentlyShownText}
 
 The list above is what you've already shown the user in earlier turns of this chat. Do NOT re-card any of those items in this reply, even if they fit the current question well — the user wants variety, not the same midi-skirt-shaped answer every time. If the obvious best pick is on that list, pick the SECOND-best item and surface it. The only exception is if the user explicitly asks for the same item again ("the Alrose skirt you mentioned earlier — link?"). Don't say anything in prose about "I already showed you that"; just silently pick something different.
+
+GARMENT-TYPE HONESTY (read before reading the catalog):
+${(() => {
+  if (requestedTypes.length === 0) {
+    return "- The user did not name a specific garment type, so the catalog below is the broad in-category set. Pick whatever genuinely fits the question.";
+  }
+  const typeList = requestedTypes.join(", ");
+  if (catalogRelaxLevel === "exact") {
+    return `- The catalog below is FILTERED to the user's requested garment type (${typeList}) AND their color/material descriptors. Every item below genuinely matches the type; you can recommend confidently. Still verify the visual match against the title -- e.g. a "Mock Neck Bodysuit" satisfies "turtleneck," a "Sleeveless Square Neck Top" does NOT.`;
+  }
+  if (catalogRelaxLevel === "soft_relaxed") {
+    return `- The catalog below is filtered to the user's requested garment type (${typeList}) but did NOT have items matching every color/material they named. Recommend a type-match and acknowledge the descriptor mismatch in prose ("don't have it in [color] but here's the [type] I do have in [actual color]"). Never pretend the descriptor matched.`;
+  }
+  if (catalogRelaxLevel === "type_relaxed") {
+    return `- HONESTY REQUIRED: ${c.name}'s catalog does NOT contain the user's requested garment type (${typeList}). She does not have one. The catalog below is the broader subcategory, NOT the type they asked for.
+
+  You have exactly two valid responses:
+    1) Lead with: "I don't actually have a ${typeList} in my closet right now — closest thing I've got is [item from catalog below], not a [requested type] but it might work depending on the vibe." Then pick the closest item from the catalog and emit it as a card. Be specific that it is NOT a ${typeList}.
+    2) Lead with: "I don't have a ${typeList} that fits this one. Want me to look outside my closet?" — then stop, no cards.
+
+  FORBIDDEN under any circumstances: silently substituting a non-${typeList} item and calling it a "${typeList}" or some adjacent label ("fitted knit" for a sleeveless top, "midi" for a mini, etc.). The user explicitly asked for ${typeList}; if you don't have it, you don't have it. Honesty beats fake authority.`;
+  }
+  // "broad" with requestedTypes: shouldn't normally happen (broad
+  // means no type was extracted), but covered for completeness.
+  return `- The catalog below is the broad in-category set. Verify garment-type match against each title before recommending.`;
+})()}
 
 CATALOG (real products from ${c.name}'s feeds, with affiliate links the platform will attach):
 ${formatCatalogForPrompt(catalog)}

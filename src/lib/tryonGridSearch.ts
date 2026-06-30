@@ -108,6 +108,121 @@ const DESCRIPTOR_VOCAB = new Set<string>([
   "short", "midi", "maxi", "mini", "strapless", "sleeveless", "ribbed",
 ]);
 
+// ---- garment-type vocabulary (HARD constraints) ---------------------
+//
+// Distinct from DESCRIPTOR_VOCAB: when a user asks for a specific
+// garment TYPE, a wrong-type item is disqualifying, not down-rankable.
+// "white turtleneck sweater" -> a sleeveless square-neck top is a
+// confidently-wrong answer no matter how good the brand match is.
+//
+// Each entry is a logical type (the key) with an array of title-token
+// aliases. Chat's loadCatalog ORs the aliases inside a single .ilike
+// clause so "turtle top" and "mock neck bodysuit" both satisfy
+// "turtleneck." Plural-tolerant via the alias list (sneaker / sneakers).
+//
+// The set is intentionally narrow to start: well-defined garment types
+// with stable vocabulary. Broader semantic understanding ("puffy
+// sleeve," "off-shoulder," "going-out") needs embeddings -- documented
+// trade-off. Add entries here as real user queries surface new types.
+export const GARMENT_TYPES: Array<{
+  /** Canonical key surfaced to the prompt/caption. */
+  key: string;
+  /** Lower-cased trigger words/phrases (with word boundaries) that
+   *  identify this type in the user's query. */
+  triggers: RegExp[];
+  /** Lower-cased substrings to look for in product_title (one or
+   *  more must match for the row to qualify). */
+  titleAliases: string[];
+  /** Optional subcategory pin so a query like "midi" doesn't pull
+   *  midi dresses when the user said "midi skirt." */
+  subcategoryHint?: string;
+}> = [
+  // necklines
+  { key: "turtleneck", triggers: [/\bturtle(?:neck)?\b/], titleAliases: ["turtleneck", "turtle", "mock neck", "mockneck"], subcategoryHint: "tops" },
+  { key: "mock neck", triggers: [/\bmock[-\s]?neck\b/], titleAliases: ["mock neck", "mockneck", "mock-neck"], subcategoryHint: "tops" },
+  { key: "v-neck", triggers: [/\bv[-\s]?neck\b/], titleAliases: ["v-neck", "vneck", "v neck"], subcategoryHint: "tops" },
+  { key: "crew neck", triggers: [/\bcrew(?:[-\s]?neck)?\b/], titleAliases: ["crew", "crewneck", "crew neck", "crew-neck"], subcategoryHint: "tops" },
+  { key: "halter", triggers: [/\bhalters?\b/], titleAliases: ["halter"], subcategoryHint: "tops" },
+  { key: "tank", triggers: [/\btanks?\b/], titleAliases: ["tank"], subcategoryHint: "tops" },
+  { key: "tee", triggers: [/\b(?:tee|t[-\s]?shirt)s?\b/], titleAliases: ["tee", "t-shirt", "tshirt"], subcategoryHint: "tops" },
+  { key: "bodysuit", triggers: [/\bbodysuits?\b/], titleAliases: ["bodysuit"], subcategoryHint: "tops" },
+  { key: "blouse", triggers: [/\bblouses?\b/], titleAliases: ["blouse"], subcategoryHint: "tops" },
+  { key: "button-down", triggers: [/\bbutton[-\s]?(?:up|down)\b/], titleAliases: ["button up", "button down", "button-up", "button-down"], subcategoryHint: "tops" },
+  // bottoms
+  { key: "midi skirt", triggers: [/\bmidi\s+skirts?\b/], titleAliases: ["midi skirt", "midi"], subcategoryHint: "bottoms" },
+  { key: "mini skirt", triggers: [/\bmini\s+skirts?\b/], titleAliases: ["mini skirt", "mini"], subcategoryHint: "bottoms" },
+  { key: "maxi skirt", triggers: [/\bmaxi\s+skirts?\b/], titleAliases: ["maxi skirt", "maxi"], subcategoryHint: "bottoms" },
+  { key: "trouser", triggers: [/\btrousers?\b/], titleAliases: ["trouser", "trousers"], subcategoryHint: "bottoms" },
+  { key: "jeans", triggers: [/\bjeans?\b/], titleAliases: ["jean", "jeans", "denim"], subcategoryHint: "bottoms" },
+  { key: "shorts", triggers: [/\bshorts?\b/], titleAliases: ["short"], subcategoryHint: "bottoms" },
+  { key: "leggings", triggers: [/\bleggings?\b/], titleAliases: ["legging"], subcategoryHint: "bottoms" },
+  // dresses
+  { key: "midi dress", triggers: [/\bmidi\s+dress(es)?\b/], titleAliases: ["midi"], subcategoryHint: "dresses" },
+  { key: "mini dress", triggers: [/\bmini\s+dress(es)?\b/], titleAliases: ["mini"], subcategoryHint: "dresses" },
+  { key: "maxi dress", triggers: [/\bmaxi\s+dress(es)?\b/], titleAliases: ["maxi"], subcategoryHint: "dresses" },
+  { key: "slip dress", triggers: [/\bslip\s+dress(es)?\b/], titleAliases: ["slip"], subcategoryHint: "dresses" },
+  { key: "jumpsuit", triggers: [/\bjumpsuits?\b/], titleAliases: ["jumpsuit"], subcategoryHint: "dresses" },
+  // outerwear
+  { key: "blazer", triggers: [/\bblazers?\b/], titleAliases: ["blazer"], subcategoryHint: "outerwear" },
+  { key: "trench", triggers: [/\btrenches?\b/, /\btrench[-\s]?coats?\b/], titleAliases: ["trench"], subcategoryHint: "outerwear" },
+  { key: "bomber", triggers: [/\bbombers?\b/], titleAliases: ["bomber"], subcategoryHint: "outerwear" },
+  { key: "parka", triggers: [/\bparkas?\b/], titleAliases: ["parka"], subcategoryHint: "outerwear" },
+  { key: "puffer", triggers: [/\bpuffers?\b/], titleAliases: ["puffer"], subcategoryHint: "outerwear" },
+  { key: "cardigan", triggers: [/\bcardigans?\b/], titleAliases: ["cardigan"], subcategoryHint: "outerwear" },
+  // shoes
+  { key: "sneaker", triggers: [/\bsneakers?\b/], titleAliases: ["sneaker"], subcategoryHint: "shoes" },
+  { key: "boot", triggers: [/\bbooties?\b/, /\bboots?\b/], titleAliases: ["boot", "bootie"], subcategoryHint: "shoes" },
+  { key: "heel", triggers: [/\bheels?\b/], titleAliases: ["heel", "pump"], subcategoryHint: "shoes" },
+  { key: "sandal", triggers: [/\bsandals?\b/], titleAliases: ["sandal"], subcategoryHint: "shoes" },
+  { key: "loafer", triggers: [/\bloafers?\b/], titleAliases: ["loafer"], subcategoryHint: "shoes" },
+  { key: "mule", triggers: [/\bmules?\b/], titleAliases: ["mule"], subcategoryHint: "shoes" },
+  { key: "flat", triggers: [/\bflats?\b/], titleAliases: ["flat", "ballet"], subcategoryHint: "shoes" },
+  // bags
+  { key: "tote", triggers: [/\btotes?\b/], titleAliases: ["tote"], subcategoryHint: "bags" },
+  { key: "clutch", triggers: [/\bclutch(es)?\b/], titleAliases: ["clutch"], subcategoryHint: "bags" },
+  { key: "crossbody", triggers: [/\bcrossbody\b/, /\bcross[-\s]?body\b/], titleAliases: ["crossbody", "cross-body"], subcategoryHint: "bags" },
+  { key: "shoulder bag", triggers: [/\bshoulder\s+bags?\b/], titleAliases: ["shoulder"], subcategoryHint: "bags" },
+  { key: "satchel", triggers: [/\bsatchels?\b/], titleAliases: ["satchel"], subcategoryHint: "bags" },
+  { key: "hobo", triggers: [/\bhobos?\b/], titleAliases: ["hobo"], subcategoryHint: "bags" },
+  // jewelry
+  { key: "hoop earrings", triggers: [/\bhoops?\b/], titleAliases: ["hoop"], subcategoryHint: "jewelry" },
+  { key: "stud earrings", triggers: [/\bstuds?\b/], titleAliases: ["stud"], subcategoryHint: "jewelry" },
+  { key: "drop earrings", triggers: [/\bdrop\s+earrings?\b/], titleAliases: ["drop"], subcategoryHint: "jewelry" },
+  { key: "pendant", triggers: [/\bpendants?\b/], titleAliases: ["pendant"], subcategoryHint: "jewelry" },
+  { key: "necklace", triggers: [/\bnecklaces?\b/, /\bchains?\b/], titleAliases: ["necklace", "chain"], subcategoryHint: "jewelry" },
+  { key: "bracelet", triggers: [/\bbracelets?\b/, /\bbangles?\b/, /\bcuffs?\b/], titleAliases: ["bracelet", "bangle", "cuff"], subcategoryHint: "jewelry" },
+  { key: "ring", triggers: [/\brings?\b/], titleAliases: ["ring"], subcategoryHint: "jewelry" },
+];
+
+/**
+ * Extract every garment-type the user query named. Multiple types
+ * can co-occur ("white turtleneck sweater" hits turtleneck only;
+ * "midi skirt" hits midi skirt). Returns the canonical keys + the
+ * union of titleAliases (for SQL ILIKE) + first subcategoryHint.
+ */
+export function extractGarmentTypes(query: string): {
+  keys: string[];
+  titleAliases: string[];
+  subcategoryHint: string | null;
+} {
+  const lc = (query || "").toLowerCase();
+  const keys: string[] = [];
+  const aliases = new Set<string>();
+  let subHint: string | null = null;
+  for (const t of GARMENT_TYPES) {
+    if (t.triggers.some((re) => re.test(lc))) {
+      keys.push(t.key);
+      for (const a of t.titleAliases) aliases.add(a);
+      if (!subHint && t.subcategoryHint) subHint = t.subcategoryHint;
+    }
+  }
+  return {
+    keys,
+    titleAliases: Array.from(aliases),
+    subcategoryHint: subHint,
+  };
+}
+
 // ---- price extraction -------------------------------------------------------
 //
 // Recognized forms:
