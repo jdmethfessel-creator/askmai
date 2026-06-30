@@ -142,7 +142,21 @@ export async function POST(request: Request) {
   }
 
   const budgetCeilingPrefetch = extractBudgetCeiling(message);
-  const catalog = await loadCatalog(creatorId, message, budgetCeilingPrefetch);
+  // Collect everything the assistant has already shown earlier in
+  // the conversation so loadCatalog can skip those ids and the
+  // system prompt can warn the model not to repeat them. Computed
+  // before sanitizeHistory because recs only live on the raw
+  // history payload (sanitize strips them down to role+content for
+  // the Anthropic API call).
+  const rawHistory = body.history ?? [];
+  const recentlyShown = collectRecentlyShown(rawHistory);
+  const recentlyShownText = formatRecentlyShownForPrompt(rawHistory);
+  const catalog = await loadCatalog(
+    creatorId,
+    message,
+    budgetCeilingPrefetch,
+    recentlyShown.ids
+  );
   const knownProducts = buildKnownProducts(catalog, creator.taste_profile);
   const creatorRef = {
     id: creatorId,
@@ -155,9 +169,10 @@ export async function POST(request: Request) {
     creator,
     catalog,
     budgetCeiling,
-    productRequest
+    productRequest,
+    recentlyShownText
   );
-  const history = sanitizeHistory(body.history ?? []);
+  const history = sanitizeHistory(rawHistory);
 
   const client = new Anthropic();
   const model = isSubscribed ? SONNET_MODEL : HAIKU_MODEL;
@@ -226,7 +241,8 @@ export async function POST(request: Request) {
           proseText,
           knownProducts,
           creatorRef,
-          budgetCeiling
+          budgetCeiling,
+          recentlyShown
         );
         const brandFuzzyAugmented = await augmentWithBrandFuzzyMentions(
           catalogAugmented,
@@ -720,13 +736,20 @@ async function augmentWithMissingMentions(
   proseText: string,
   known: KnownProduct[],
   creator: { id: string; slug: string },
-  budgetCeiling: number | null
+  budgetCeiling: number | null,
+  recentlyShown: RecentlyShown = { ids: new Set(), names: new Set() }
 ): Promise<Rec[]> {
   if (!proseText || known.length === 0) return enriched;
   const prose = proseText.toLowerCase();
 
-  const seenNames = new Set<string>();
-  const seenIds = new Set<string>();
+  // Seed the dedup sets with the conversation's recently-shown
+  // items so the prose scanner doesn't accidentally re-emit a card
+  // for something the user already saw in an earlier turn — the
+  // system prompt asks the model not to repeat, but if it slips
+  // and mentions an earlier item by name in prose, the augmenter
+  // would otherwise reattach a card for it.
+  const seenNames = new Set<string>(recentlyShown.names);
+  const seenIds = new Set<string>(recentlyShown.ids);
   for (const r of enriched) {
     if (r.name) seenNames.add(r.name.toLowerCase());
     if (r.product_id) seenIds.add(r.product_id);
@@ -2199,7 +2222,8 @@ const CATALOG_PROMPT_CAP = 80;
 async function loadCatalog(
   creatorId: string,
   userMessage: string,
-  budgetCeiling: number | null
+  budgetCeiling: number | null,
+  excludeIds: Set<string> = new Set()
 ): Promise<CatalogRow[]> {
   const sb = supabaseAdmin();
   const matched = new Set<string>();
@@ -2218,7 +2242,15 @@ async function loadCatalog(
     query = query.in("category", Array.from(matched));
   }
   const { data } = await query;
-  const rows = (data ?? []) as CatalogRow[];
+  let rows = (data ?? []) as CatalogRow[];
+  // Drop rows the assistant has already shown earlier in this
+  // conversation so the catalog selector can't keep handing the
+  // same Alrose midi back to the model. Done before the
+  // budget/representative slicer so dedup is honored even when
+  // the slicer would otherwise pull a duplicate into tier1.
+  if (excludeIds.size > 0) {
+    rows = rows.filter((r) => !excludeIds.has(r.id));
+  }
   if (budgetCeiling != null) {
     return selectCatalogForBudget(rows, budgetCeiling, CATALOG_PROMPT_CAP);
   }
@@ -2403,6 +2435,60 @@ function sanitizeHistory(history: ChatMessage[]) {
     .map((m) => ({ role: m.role, content: m.content }));
 }
 
+/**
+ * Collect every product the assistant has already shown earlier in
+ * this conversation. Used to kill the "same Frankie Shop Alrose midi
+ * keeps coming back across different queries" failure mode — the
+ * catalog selector skips ids in `ids`, the prompt gets a
+ * RECENTLY-SHOWN list, and the prose-mention augmenters seed their
+ * de-dup sets with `names`.
+ *
+ * Capped at the last RECENTLY_SHOWN_CAP recs so a long chat doesn't
+ * inflate the prompt or starve the catalog. Cap covers ~4-6
+ * exchanges worth of cards, which is the relevant horizon for
+ * "don't repeat the last few" without forbidding a genuinely-
+ * appropriate re-pick weeks later.
+ */
+const RECENTLY_SHOWN_CAP = 30;
+type RecentlyShown = { ids: Set<string>; names: Set<string> };
+function collectRecentlyShown(history: ChatMessage[]): RecentlyShown {
+  const ids = new Set<string>();
+  const names = new Set<string>();
+  // Walk newest -> oldest so the most recent N take priority when
+  // the cap kicks in.
+  let count = 0;
+  for (let i = history.length - 1; i >= 0; i--) {
+    const m = history[i];
+    if (m.role !== "assistant" || !Array.isArray(m.recs)) continue;
+    for (const r of m.recs) {
+      if (count >= RECENTLY_SHOWN_CAP) return { ids, names };
+      if (r.product_id) ids.add(r.product_id);
+      if (typeof r.name === "string" && r.name.trim().length > 0) {
+        names.add(r.name.trim().toLowerCase());
+      }
+      count++;
+    }
+  }
+  return { ids, names };
+}
+
+function formatRecentlyShownForPrompt(history: ChatMessage[]): string {
+  const lines: string[] = [];
+  let count = 0;
+  for (let i = history.length - 1; i >= 0; i--) {
+    const m = history[i];
+    if (m.role !== "assistant" || !Array.isArray(m.recs)) continue;
+    for (const r of m.recs) {
+      if (count >= RECENTLY_SHOWN_CAP) break;
+      const brand = r.brand ? `${r.brand} — ` : "";
+      lines.push(`  - ${brand}${r.name}`);
+      count++;
+    }
+    if (count >= RECENTLY_SHOWN_CAP) break;
+  }
+  return lines.length > 0 ? lines.join("\n") : "(nothing yet)";
+}
+
 function describeOwnedBrands(taste: Creator["taste_profile"]): string {
   if (!taste || typeof taste !== "object") return "";
   const identity = (taste as Record<string, unknown>).identity;
@@ -2429,7 +2515,8 @@ function buildSystemPrompt(
   c: Pick<Creator, "name" | "bio" | "voice_prompt" | "taste_profile">,
   catalog: CatalogRow[],
   budgetCeiling: number | null,
-  productRequest: boolean
+  productRequest: boolean,
+  recentlyShownText: string
 ) {
   const tasteJson = c.taste_profile
     ? JSON.stringify(c.taste_profile, null, 2)
@@ -2604,6 +2691,11 @@ Rules:
 - After the marker, output ONLY a valid JSON array. No prose, no markdown fences.
 - One rec per purchasable item named in prose. Usually 2–3; can be more when you list more. Order best/most-relevant first.
 - "why" is one tight line.
+
+RECENTLY SHOWN THIS CONVERSATION (do not repeat these in this reply):
+${recentlyShownText}
+
+The list above is what you've already shown the user in earlier turns of this chat. Do NOT re-card any of those items in this reply, even if they fit the current question well — the user wants variety, not the same midi-skirt-shaped answer every time. If the obvious best pick is on that list, pick the SECOND-best item and surface it. The only exception is if the user explicitly asks for the same item again ("the Alrose skirt you mentioned earlier — link?"). Don't say anything in prose about "I already showed you that"; just silently pick something different.
 
 CATALOG (real products from ${c.name}'s feeds, with affiliate links the platform will attach):
 ${formatCatalogForPrompt(catalog)}
