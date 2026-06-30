@@ -1,0 +1,182 @@
+/* Self-serve edit page for creator voice + taste. Lean utility
+ * styles; same Fraunces / Manrope pairing as the creator page,
+ * monospace for the JSON textarea so column alignment is
+ * readable. */
+
+.edit-root {
+  --t-bg: #fafaf7;
+  --t-ink: #1c1a17;
+  --t-muted: #6b6660;
+  --t-line: rgba(24, 20, 14, 0.08);
+  --t-accent: #1c1a17;
+  background: var(--t-bg);
+  color: var(--t-ink);
+  font-family: var(--font-body), -apple-system, BlinkMacSystemFont,
+    "Segoe UI", sans-serif;
+  min-height: 100dvh;
+  -webkit-font-smoothing: antialiased;
+}
+
+.edit-page {
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 48px 24px 96px;
+}
+
+.edit-header {
+  margin-bottom: 36px;
+}
+.edit-eyebrow {
+  font: 600 11px/1 var(--font-body), system-ui, sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: var(--t-muted);
+  margin: 0 0 8px;
+}
+.edit-title {
+  font: 600 36px/1.05 var(--font-display), Georgia, serif;
+  margin: 0 0 12px;
+  letter-spacing: -0.01em;
+}
+.edit-sub {
+  font-size: 14px;
+  color: var(--t-muted);
+  margin: 0 0 14px;
+}
+.edit-link {
+  color: var(--t-ink);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.edit-note {
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--t-muted);
+  background: rgba(24, 20, 14, 0.04);
+  padding: 12px 14px;
+  border-radius: 12px;
+  margin: 0;
+}
+
+.edit-form {
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+}
+
+.edit-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.edit-label {
+  font: 600 14px/1.2 var(--font-body), system-ui, sans-serif;
+  color: var(--t-ink);
+}
+.edit-help {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--t-muted);
+  margin: 0;
+}
+
+.edit-textarea {
+  width: 100%;
+  padding: 14px 16px;
+  border-radius: 12px;
+  border: 1px solid var(--t-line);
+  background: #fff;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--t-ink);
+  font-family: var(--font-body), system-ui, sans-serif;
+  resize: vertical;
+  outline: none;
+  transition: border-color 120ms ease;
+}
+.edit-textarea:focus {
+  border-color: var(--t-accent);
+}
+.edit-textarea-voice {
+  min-height: 320px;
+}
+.edit-textarea-json {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo,
+    Monaco, Consolas, monospace;
+  font-size: 12.5px;
+  line-height: 1.5;
+  min-height: 480px;
+}
+
+.edit-meta {
+  font-size: 11px;
+  color: var(--t-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin: 0;
+}
+
+.edit-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.edit-btn {
+  padding: 12px 22px;
+  border-radius: 999px;
+  font: 600 14px/1 var(--font-body), system-ui, sans-serif;
+  letter-spacing: 0.02em;
+  border: 1px solid transparent;
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.edit-btn-primary {
+  background: var(--t-accent);
+  color: #fff;
+}
+.edit-btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.edit-btn-secondary {
+  background: transparent;
+  color: var(--t-ink);
+  border-color: var(--t-line);
+}
+
+.edit-toast {
+  margin: 8px 0 0;
+  font-size: 13px;
+  padding: 10px 14px;
+  border-radius: 10px;
+}
+.edit-toast-ok {
+  background: rgba(40, 120, 60, 0.08);
+  color: #1f5a30;
+}
+.edit-toast-err {
+  background: rgba(180, 40, 40, 0.08);
+  color: #8e2222;
+}
+
+@media (max-width: 480px) {
+  .edit-page {
+    padding: 24px 16px 80px;
+  }
+  .edit-title {
+    font-size: 28px;
+  }
+  .edit-textarea-voice {
+    min-height: 260px;
+  }
+  .edit-textarea-json {
+    min-height: 360px;
+    font-size: 12px;
+  }
+}

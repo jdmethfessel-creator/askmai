@@ -19,9 +19,9 @@ const manrope = Manrope({
 });
 
 export const metadata: Metadata = {
-  title: "Apply — AskMai",
+  title: "Launch your AskMai twin",
   description:
-    "Apply to get an AskMai twin. Lead-capture for creator interest; we onboard approved creators manually.",
+    "Drop your affiliate links and a few words about how you write. Your AskMai twin goes live in about a minute.",
 };
 
 export const dynamic = "force-dynamic";
@@ -47,15 +47,17 @@ export default function CreatorSignupPage() {
 
         <section className="signup-section">
           <div className="signup-inner">
-            <p className="lp-eyebrow">Apply</p>
+            <p className="lp-eyebrow">Launch</p>
             <h1 className="signup-h1">
-              Get your{" "}
-              <span className="lp-accent-ink">AskMai twin.</span>
+              Your AI twin,{" "}
+              <span className="lp-accent-ink">live in a minute.</span>
             </h1>
             <p className="signup-sub">
-              Tell us where to find you. We&apos;re onboarding a small
-              group of creators by hand and will reach out personally
-              once we&apos;ve had a look at your feed.
+              Drop your affiliate links and a few hundred words in
+              your own voice. We pull your catalog, generate your AI
+              twin, and publish your page automatically. You&apos;ll
+              get a live URL and an edit link in the response — no
+              waiting on us.
             </p>
 
             <SignupForm />

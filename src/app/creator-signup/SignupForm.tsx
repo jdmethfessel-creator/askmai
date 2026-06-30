@@ -1,202 +1,468 @@
 "use client";
 
-import { useState } from "react";
+/**
+ * Self-serve creator onboarding form. Submits to
+ * /api/creator-onboarding which runs the full pipeline (ingest +
+ * voice gen + creator row + live page) synchronously and returns
+ * the live URL + edit link in one response.
+ *
+ * UX shape:
+ *   - Top: name / email / slug (auto-derived, editable)
+ *   - Middle (PROMINENT): interview text + blog URL.
+ *     These are the load-bearing inputs for voice quality. The form
+ *     copy explains directly that without them the AI twin will
+ *     sound generic. One of the two is effectively required (or at
+ *     least: the submit button warns if both are empty).
+ *   - Below: affiliate links (one field per source so the network
+ *     detector has clean input)
+ *   - Below: socials + short bio
+ *
+ *   On submit: a rotating progress message simulates pipeline
+ *   stages (ingest → voice → live) so a 60-90s wait doesn't look
+ *   stuck. Success state shows live URL + edit link + iframe
+ *   preview of the live page.
+ */
 
-type FormState = "idle" | "sending" | "done" | "error";
+import { useEffect, useState } from "react";
 
-export const FOLLOWER_RANGES = [
-  "Under 10K",
-  "10K – 50K",
-  "50K – 250K",
-  "250K – 1M",
-  "1M+",
-] as const;
-type FollowerRange = (typeof FOLLOWER_RANGES)[number];
+type FormState =
+  | { kind: "idle" }
+  | { kind: "submitting"; startedAt: number }
+  | {
+      kind: "done";
+      result: {
+        slug: string;
+        preview_url: string;
+        edit_url: string | null;
+        ingested: { total: number; by_network: Record<string, number> };
+        skipped: Array<{ url: string; reason: string }>;
+        voice_source: "llm" | "fallback";
+      };
+    }
+  | { kind: "error"; message: string };
+
+const PROGRESS_MESSAGES = [
+  "Pulling your affiliate catalogs…",
+  "Counting your products…",
+  "Reading your interview + blog text…",
+  "Generating your AI voice (this is the slow part)…",
+  "Drafting your taste profile…",
+  "Going live…",
+];
 
 export function SignupForm() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
+  const [slugHint, setSlugHint] = useState("");
+  const [autoSlug, setAutoSlug] = useState(true);
+
+  const [interviewText, setInterviewText] = useState("");
+  const [blogUrls, setBlogUrls] = useState("");
+
   const [shopmyUrl, setShopmyUrl] = useState("");
-  const [ltkUrl, setLtkUrl] = useState("");
+  const [shopbopUrl, setShopbopUrl] = useState("");
+  const [revolveUrl, setRevolveUrl] = useState("");
+  const [fwrdUrl, setFwrdUrl] = useState("");
+
   const [igHandle, setIgHandle] = useState("");
   const [tiktokHandle, setTiktokHandle] = useState("");
-  // Newer fields per the onboarding-form spec — captured for the
-  // founder email; not stored in creator_applications (no schema
-  // column for them, and they're decision-time signal, not record-
-  // of-truth data).
-  const [followerRange, setFollowerRange] = useState<FollowerRange | "">("");
-  const [affiliateNetworks, setAffiliateNetworks] = useState("");
-  const [note, setNote] = useState("");
-  const [state, setState] = useState<FormState>("idle");
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [bioHint, setBioHint] = useState("");
 
-  const profileSignals =
-    shopmyUrl.trim() ||
-    ltkUrl.trim() ||
-    igHandle.trim() ||
-    tiktokHandle.trim();
+  const [state, setState] = useState<FormState>({ kind: "idle" });
+  const [progressIdx, setProgressIdx] = useState(0);
+
+  // Keep slug auto-derived from name until the user explicitly
+  // edits the slug input.
+  useEffect(() => {
+    if (autoSlug) setSlugHint(slugify(name));
+  }, [name, autoSlug]);
+
+  // Rotate the progress message so the spinner doesn't read as
+  // stuck during the 60-90s pipeline wait.
+  useEffect(() => {
+    if (state.kind !== "submitting") return;
+    const id = setInterval(() => {
+      setProgressIdx((i) => (i + 1) % PROGRESS_MESSAGES.length);
+    }, 7_000);
+    return () => clearInterval(id);
+  }, [state.kind]);
+
+  const affiliateUrls = [
+    shopmyUrl,
+    shopbopUrl,
+    revolveUrl,
+    fwrdUrl,
+  ]
+    .map((u) => u.trim())
+    .filter((u) => u.length > 0);
+  const blogUrlList = blogUrls
+    .split(/\s*[\n,]\s*/)
+    .map((u) => u.trim())
+    .filter(Boolean);
+
+  const hasVoiceInput =
+    interviewText.trim().length >= 200 || blogUrlList.length > 0;
+  const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+
   const canSubmit =
     name.trim().length > 0 &&
-    /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()) &&
-    Boolean(profileSignals) &&
-    state !== "sending" &&
-    state !== "done";
+    emailValid &&
+    affiliateUrls.length > 0 &&
+    state.kind !== "submitting" &&
+    state.kind !== "done";
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!canSubmit) return;
-    setState("sending");
-    setErrorMessage(null);
+    setState({ kind: "submitting", startedAt: Date.now() });
+    setProgressIdx(0);
     try {
-      const res = await fetch("/api/creator-applications", {
+      const r = await fetch("/api/creator-onboarding", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "content-type": "application/json" },
         body: JSON.stringify({
           name: name.trim(),
           email: email.trim(),
-          shopmy_url: shopmyUrl.trim() || null,
-          ltk_url: ltkUrl.trim() || null,
-          ig_handle: igHandle.trim() || null,
-          tiktok_handle: tiktokHandle.trim() || null,
-          follower_range: followerRange || null,
-          affiliate_networks: affiliateNetworks.trim() || null,
-          note: note.trim() || null,
+          slug_hint: slugHint.trim() || undefined,
+          bio_hint: bioHint.trim() || undefined,
+          ig_handle: igHandle.trim() || undefined,
+          tiktok_handle: tiktokHandle.trim() || undefined,
+          affiliate_urls: affiliateUrls,
+          blog_urls: blogUrlList,
+          interview_text: interviewText.trim() || undefined,
         }),
       });
-      if (!res.ok) {
-        const data = await res.json().catch(() => null);
-        const err = data?.error ?? `status_${res.status}`;
-        setState("error");
-        setErrorMessage(messageFor(err));
+      if (!r.ok) {
+        const data = await r.json().catch(() => null);
+        if (data?.error === "slug_taken" && data?.suggested) {
+          setState({
+            kind: "error",
+            message: `That URL is taken (askmai.co/${data.slug}). Try ${data.suggested}.`,
+          });
+          setSlugHint(data.suggested);
+          setAutoSlug(false);
+          return;
+        }
+        setState({
+          kind: "error",
+          message: messageFor(data?.error ?? `http_${r.status}`),
+        });
         return;
       }
-      setState("done");
-    } catch {
-      setState("error");
-      setErrorMessage("Network blip. Try again?");
+      const result = (await r.json()) as Extract<FormState, { kind: "done" }>["result"];
+      setState({ kind: "done", result });
+    } catch (err) {
+      setState({
+        kind: "error",
+        message:
+          err instanceof Error
+            ? `Network error: ${err.message}`
+            : "Network error. Try again?",
+      });
     }
   }
 
-  if (state === "done") {
-    return (
-      <div className="signup-success">
-        <h2 className="signup-success-h2">
-          Thanks — we&apos;ll be in touch{" "}
-          <span className="lp-accent-ink">to set up your twin.</span>
-        </h2>
-        <p className="signup-success-sub">
-          Your application is in. We review by hand and reach out
-          personally once we&apos;ve had a look at your feed. You
-          should hear from us within a few days.
-        </p>
-      </div>
-    );
+  if (state.kind === "done") {
+    return <SuccessCard result={state.result} />;
   }
 
   return (
     <form onSubmit={onSubmit} className="signup-form" noValidate>
-      <div className="signup-grid">
-        <Field
-          id="name"
-          label="Your name"
-          value={name}
-          onChange={setName}
-          autoComplete="name"
-          maxLength={120}
-          required
-        />
-        <Field
-          id="email"
-          label="Email"
-          type="email"
-          value={email}
-          onChange={setEmail}
-          autoComplete="email"
-          maxLength={200}
-          required
-        />
-        <Field
-          id="shopmy"
-          label="ShopMy profile or URL"
-          placeholder="e.g. shopmy.us/shop/yourhandle"
-          value={shopmyUrl}
-          onChange={setShopmyUrl}
-          maxLength={400}
-        />
-        <Field
-          id="ltk"
-          label="LTK profile or URL"
-          placeholder="e.g. shopltk.com/profile/yourhandle"
-          value={ltkUrl}
-          onChange={setLtkUrl}
-          maxLength={400}
-        />
-        <Field
-          id="ig"
-          label="Instagram"
-          placeholder="@yourhandle"
-          value={igHandle}
-          onChange={setIgHandle}
-          maxLength={120}
-        />
-        <Field
-          id="tiktok"
-          label="TikTok"
-          placeholder="@yourhandle"
-          value={tiktokHandle}
-          onChange={setTiktokHandle}
-          maxLength={120}
-        />
-      </div>
+      <section className="signup-section">
+        <h2 className="signup-h2">Who you are</h2>
+        <div className="signup-grid">
+          <Field
+            id="name"
+            label="Your name"
+            value={name}
+            onChange={setName}
+            autoComplete="name"
+            required
+            maxLength={120}
+          />
+          <Field
+            id="email"
+            label="Email"
+            type="email"
+            value={email}
+            onChange={setEmail}
+            autoComplete="email"
+            required
+            maxLength={200}
+          />
+          <Field
+            id="slug"
+            label="Your URL"
+            value={slugHint}
+            onChange={(v) => {
+              setSlugHint(v);
+              setAutoSlug(false);
+            }}
+            placeholder="auto-fills from your name"
+            prefix="askmai.co/"
+            maxLength={48}
+          />
+        </div>
+      </section>
 
-      <div className="signup-grid">
-        <FieldSelect
-          id="follower_range"
-          label="Follower range"
-          value={followerRange}
-          onChange={(v) => setFollowerRange(v as FollowerRange | "")}
-          options={[
-            { value: "", label: "Select…" },
-            ...FOLLOWER_RANGES.map((r) => ({ value: r, label: r })),
-          ]}
+      <section className="signup-section signup-section-highlight">
+        <h2 className="signup-h2">
+          Voice <span className="signup-required">*</span>
+        </h2>
+        <p className="signup-section-sub">
+          This is the most important part. Your AI twin will sound
+          generic without your real words to learn from. Paste an
+          interview, a long-form caption, a personal essay — anything
+          that captures how you actually talk. Or drop a blog URL we
+          can read.
+        </p>
+        <FieldTextarea
+          id="interview_text"
+          label="Interview text, personal essay, or your own writing"
+          help={`Paste raw text. Longer is better. 500+ words = a believable voice. The text never leaves AskMai.`}
+          value={interviewText}
+          onChange={setInterviewText}
+          rows={10}
+          maxLength={50_000}
+          placeholder={`Example: an interview transcript, a Substack post, a Notes app entry where you talk about your closet, your routine, your travel taste…`}
         />
         <Field
-          id="affiliate_networks"
-          label="Other affiliate networks"
-          placeholder="e.g. ShopMy, LTK, RewardStyle, Skimlinks…"
-          value={affiliateNetworks}
-          onChange={setAffiliateNetworks}
-          maxLength={300}
+          id="blog_urls"
+          label="Blog / Substack / portfolio URLs (one or more)"
+          help="Comma- or newline-separated. We fetch and read these to learn your phrasing."
+          value={blogUrls}
+          onChange={setBlogUrls}
+          placeholder="https://yourblog.com/about, https://yourblog.com/2024/best-of"
+          maxLength={2000}
         />
-      </div>
+        {!hasVoiceInput && interviewText.length + blogUrls.length > 0 ? (
+          <p className="signup-warn">
+            Heads up: your AI twin will sound generic without 200+
+            words of interview text OR at least one blog URL we can
+            read. You can still submit, but plan to edit your voice
+            right after.
+          </p>
+        ) : null}
+      </section>
 
-      <FieldTextarea
-        id="note"
-        label="Other links to get to know you (blogs, other link networks, interviews, etc.)"
-        value={note}
-        onChange={setNote}
-        maxLength={1200}
-      />
+      <section className="signup-section">
+        <h2 className="signup-h2">
+          Where your products live <span className="signup-required">*</span>
+        </h2>
+        <p className="signup-section-sub">
+          Paste your public affiliate URLs. We pull every product
+          we can find. LTK isn&apos;t supported yet — anything we
+          can&apos;t read gets skipped and reported back to you.
+        </p>
+        <div className="signup-grid">
+          <Field
+            id="shopmy"
+            label="ShopMy"
+            placeholder="shopmy.us/shop/yourhandle"
+            value={shopmyUrl}
+            onChange={setShopmyUrl}
+            maxLength={400}
+          />
+          <Field
+            id="shopbop"
+            label="Shopbop hearts"
+            placeholder="shopbop.com/hearts/yourhandle/..."
+            value={shopbopUrl}
+            onChange={setShopbopUrl}
+            maxLength={400}
+          />
+          <Field
+            id="revolve"
+            label="Revolve favorites"
+            placeholder="revolve.com/content/favorites/..."
+            value={revolveUrl}
+            onChange={setRevolveUrl}
+            maxLength={400}
+          />
+          <Field
+            id="fwrd"
+            label="FWRD wishlist"
+            placeholder="fwrd.com/fw/PublicWishListView..."
+            value={fwrdUrl}
+            onChange={setFwrdUrl}
+            maxLength={400}
+          />
+        </div>
+      </section>
 
-      <p className="signup-helper">
-        Add at least one of ShopMy, LTK, Instagram, or TikTok so we have
-        somewhere to find you.
-      </p>
+      <section className="signup-section">
+        <h2 className="signup-h2">Optional context</h2>
+        <div className="signup-grid">
+          <Field
+            id="ig"
+            label="Instagram handle"
+            placeholder="@yourhandle"
+            value={igHandle}
+            onChange={setIgHandle}
+            maxLength={120}
+          />
+          <Field
+            id="tiktok"
+            label="TikTok handle"
+            placeholder="@yourhandle"
+            value={tiktokHandle}
+            onChange={setTiktokHandle}
+            maxLength={120}
+          />
+        </div>
+        <FieldTextarea
+          id="bio_hint"
+          label="Short bio (optional)"
+          help="One or two sentences that capture who you are. Shows up on your page."
+          value={bioHint}
+          onChange={setBioHint}
+          rows={3}
+          maxLength={600}
+        />
+      </section>
 
       <button
         type="submit"
         className="lp-btn lp-btn-primary lp-btn-large signup-submit"
         disabled={!canSubmit}
       >
-        {state === "sending" ? "Sending…" : "Apply"}
+        {state.kind === "submitting" ? "Building…" : "Launch my AskMai twin"}
       </button>
 
-      {state === "error" && (
-        <p className="signup-error">{errorMessage}</p>
-      )}
+      {state.kind === "submitting" ? (
+        <ProgressPanel
+          message={PROGRESS_MESSAGES[progressIdx]}
+          startedAt={state.startedAt}
+        />
+      ) : null}
+      {state.kind === "error" ? (
+        <p className="signup-error">{state.message}</p>
+      ) : null}
     </form>
   );
 }
+
+function ProgressPanel({
+  message,
+  startedAt,
+}: {
+  message: string;
+  startedAt: number;
+}) {
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => {
+      setElapsed(Math.round((Date.now() - startedAt) / 1000));
+    }, 500);
+    return () => clearInterval(id);
+  }, [startedAt]);
+  return (
+    <div className="signup-progress">
+      <p className="signup-progress-msg">{message}</p>
+      <p className="signup-progress-sub">
+        {elapsed}s — this typically takes 30-90 seconds. Don&apos;t
+        close the tab.
+      </p>
+    </div>
+  );
+}
+
+function SuccessCard({
+  result,
+}: {
+  result: Extract<FormState, { kind: "done" }>["result"];
+}) {
+  const byNetwork = Object.entries(result.ingested.by_network)
+    .map(([net, n]) => `${net}: ${n}`)
+    .join(", ");
+  return (
+    <div className="signup-success">
+      <h2 className="signup-success-h2">
+        Your AskMai twin is{" "}
+        <span className="lp-accent-ink">live.</span>
+      </h2>
+      <p className="signup-success-sub">
+        Open your page in a new tab to share it. Use the edit link to
+        tune your voice and taste at any time.
+      </p>
+
+      <div className="signup-success-actions">
+        <a
+          href={result.preview_url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="lp-btn lp-btn-primary lp-btn-large"
+        >
+          Open my page →
+        </a>
+        {result.edit_url ? (
+          <a
+            href={result.edit_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="lp-btn lp-btn-secondary lp-btn-large"
+          >
+            Edit my voice
+          </a>
+        ) : null}
+      </div>
+
+      <div className="signup-success-preview-wrap">
+        <p className="signup-success-preview-label">Live preview</p>
+        <div className="signup-success-preview">
+          <iframe
+            src={result.preview_url}
+            title="Your AskMai page preview"
+            loading="lazy"
+            className="signup-success-iframe"
+          />
+        </div>
+      </div>
+
+      <dl className="signup-success-meta">
+        <div className="signup-meta-row">
+          <dt>URL</dt>
+          <dd>askmai.co/{result.slug}</dd>
+        </div>
+        <div className="signup-meta-row">
+          <dt>Catalog ingested</dt>
+          <dd>
+            {result.ingested.total} items
+            {byNetwork ? ` (${byNetwork})` : null}
+          </dd>
+        </div>
+        <div className="signup-meta-row">
+          <dt>AI voice</dt>
+          <dd>
+            {result.voice_source === "llm"
+              ? "Generated from your inputs."
+              : "Templated fallback — definitely tune it via the edit link."}
+          </dd>
+        </div>
+        {result.skipped.length > 0 ? (
+          <div className="signup-meta-row">
+            <dt>Skipped sources</dt>
+            <dd>
+              <ul className="signup-skipped-list">
+                {result.skipped.map((s) => (
+                  <li key={s.url}>
+                    <code>{s.url}</code> — {s.reason}
+                  </li>
+                ))}
+              </ul>
+            </dd>
+          </div>
+        ) : null}
+      </dl>
+
+      <p className="signup-success-email">
+        We also emailed both links so you can come back later.
+      </p>
+    </div>
+  );
+}
+
+// ----- Field primitives -----
 
 function Field({
   id,
@@ -208,6 +474,8 @@ function Field({
   autoComplete,
   maxLength,
   required,
+  prefix,
+  help,
 }: {
   id: string;
   label: string;
@@ -218,6 +486,8 @@ function Field({
   autoComplete?: string;
   maxLength?: number;
   required?: boolean;
+  prefix?: string;
+  help?: string;
 }) {
   return (
     <label className="signup-field" htmlFor={id}>
@@ -225,49 +495,21 @@ function Field({
         {label}
         {required && <span className="signup-field-required"> *</span>}
       </span>
-      <input
-        id={id}
-        type={type}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-        autoComplete={autoComplete}
-        maxLength={maxLength}
-        required={required}
-        className="signup-input"
-      />
-    </label>
-  );
-}
-
-function FieldSelect({
-  id,
-  label,
-  value,
-  onChange,
-  options,
-}: {
-  id: string;
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-  options: { value: string; label: string }[];
-}) {
-  return (
-    <label className="signup-field" htmlFor={id}>
-      <span className="signup-field-label">{label}</span>
-      <select
-        id={id}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="signup-input"
-      >
-        {options.map((o) => (
-          <option key={o.value} value={o.value}>
-            {o.label}
-          </option>
-        ))}
-      </select>
+      <div className={`signup-input-wrap${prefix ? " has-prefix" : ""}`}>
+        {prefix ? <span className="signup-input-prefix">{prefix}</span> : null}
+        <input
+          id={id}
+          type={type}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+          autoComplete={autoComplete}
+          maxLength={maxLength}
+          required={required}
+          className="signup-input"
+        />
+      </div>
+      {help ? <span className="signup-field-help">{help}</span> : null}
     </label>
   );
 }
@@ -277,27 +519,50 @@ function FieldTextarea({
   label,
   value,
   onChange,
+  rows = 4,
   maxLength,
+  placeholder,
+  help,
 }: {
   id: string;
   label: string;
   value: string;
   onChange: (v: string) => void;
+  rows?: number;
   maxLength?: number;
+  placeholder?: string;
+  help?: string;
 }) {
   return (
     <label className="signup-field" htmlFor={id}>
       <span className="signup-field-label">{label}</span>
+      {help ? <span className="signup-field-help">{help}</span> : null}
       <textarea
         id={id}
         value={value}
         onChange={(e) => onChange(e.target.value)}
+        rows={rows}
         maxLength={maxLength}
-        rows={4}
+        placeholder={placeholder}
         className="signup-textarea"
       />
     </label>
   );
+}
+
+// Local slug helper -- mirrors src/lib/onboarding/slug.ts so the
+// form can preview the auto-derived URL without an extra round
+// trip. Keep in sync with the server's slugify() (lowercase,
+// hyphenate non-alphanumeric runs, strip combining marks).
+function slugify(input: string): string {
+  if (!input) return "";
+  return input
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
 }
 
 function messageFor(code: string): string {
@@ -306,11 +571,15 @@ function messageFor(code: string): string {
       return "Please add your name.";
     case "invalid_email":
       return "That email doesn't look right.";
-    case "missing_profile_signal":
-      return "Add at least one of ShopMy, LTK, Instagram, or TikTok.";
-    case "store_failed":
-      return "We couldn't save it. Try again, or email hi@askmai.co.";
+    case "insufficient_input":
+      return "Add at least one affiliate URL, OR 200+ words of interview text, OR a blog URL we can read.";
+    case "slug_underivable":
+      return "We couldn't make a URL from your name. Try filling in the URL field manually.";
+    case "application_store_failed":
+      return "Something went wrong saving your application. Try again, or email hi@askmai.co.";
+    case "creator_create_failed":
+      return "Something went wrong creating your page. Try again, or email hi@askmai.co.";
     default:
-      return "Something went wrong. Try again, or email hi@askmai.co.";
+      return `Something went wrong (${code}). Try again, or email hi@askmai.co.`;
   }
 }
