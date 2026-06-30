@@ -62,6 +62,28 @@ const manrope = Manrope({
 
 const DEFAULT_ACCENT = "#a26a5a";
 
+// Display-name mapping for source_network values stored in
+// creator_products. Lowercase is the canonical form (set by the
+// ingest parsers); the UI shows the brand-correct case. Unknown
+// networks fall through to a generic titlecase so a new source
+// always renders something readable. Admin sources (csv, manual)
+// are intentionally excluded -- they're not creator-shopped
+// affiliate networks and would dilute the attribution line.
+const SOURCE_DISPLAY: Record<string, string> = {
+  shopbop: "Shopbop",
+  revolve: "Revolve",
+  fwrd: "FWRD",
+  shopmy: "ShopMy",
+  ltk: "LTK",
+};
+const SOURCE_HIDDEN = new Set(["csv", "manual"]);
+
+function formatSourceName(raw: string): string | null {
+  const v = (raw ?? "").trim().toLowerCase();
+  if (!v || SOURCE_HIDDEN.has(v)) return null;
+  return SOURCE_DISPLAY[v] ?? v.charAt(0).toUpperCase() + v.slice(1);
+}
+
 const SUBTITLE_SHOP = "Search my closet and favorite finds";
 // Intentionally short and topic-free; the chat's greeting bubble
 // inside Ask mode carries the closet/routine/travel/finds topic
@@ -133,6 +155,35 @@ export default async function Page({
       ? SUBTITLE_ROOM
       : SUBTITLE_SHOP;
 
+  // Attribution line: "{First}'s picks from Revolve · FWRD · ..."
+  // pulled from the actual source_network distribution in this
+  // creator's creator_products rows. Dynamic per creator so a
+  // creator with only ShopMy reads accurately as "ShopMy" alone,
+  // and a creator added in the future picks up automatically.
+  // Pulled only on Shop mode -- the attribution is about catalog
+  // provenance, which is relevant to the Shop surface.
+  let shopSources: string[] = [];
+  if (mode === "shop") {
+    // Pull a sample (1k rows is plenty to surface every distinct
+    // source_network for any plausible catalog) then de-dup in JS.
+    // PostgREST doesn't expose DISTINCT directly without an RPC; a
+    // lightweight sample-and-dedup beats adding a function for one
+    // line of UI copy.
+    const { data: rows } = await admin
+      .from("creator_products")
+      .select("source_network")
+      .eq("creator_id", typedCreator.id)
+      .limit(1000);
+    const seen = new Set<string>();
+    for (const row of (rows ?? []) as { source_network: string | null }[]) {
+      const display = row.source_network
+        ? formatSourceName(row.source_network)
+        : null;
+      if (display) seen.add(display);
+    }
+    shopSources = Array.from(seen).sort((a, b) => a.localeCompare(b));
+  }
+
   return (
     <div className={`${fraunces.variable} ${manrope.variable} tryon-root`}>
       {/* Shared header. Same DOM in both modes so the eyebrow,
@@ -143,6 +194,11 @@ export default async function Page({
         </div>
         <h1 className="creator-page-title">{typedCreator.name}</h1>
         <ModeToggle current={mode} />
+        {mode === "shop" && shopSources.length > 0 ? (
+          <p className="creator-page-sources">
+            {creatorFirstName}&apos;s picks from {shopSources.join(" · ")}
+          </p>
+        ) : null}
       </header>
       {/* Body swaps based on mode. Both renders go into the same
           width-constrained container so neither feels like a

@@ -16,8 +16,10 @@
    * header so they don't slide under it. Single source of truth
    * here keeps the two values aligned across breakpoints. Measured
    * from the actual rendered header (eyebrow + name + toggle +
-   * paddings): ~124px on desktop, ~88px on mobile. */
-  --header-h: 124px;
+   * sources line + paddings): ~146px on desktop, ~104px on mobile.
+   * Sources line adds ~18-22px when present; pills only render on
+   * Shop, so the small slack on Ask/Try On is invisible. */
+  --header-h: 146px;
   --t-bg: #fafaf7;
   --t-surface: #ffffff;
   --t-ink: #18140e;
@@ -630,10 +632,11 @@
  * collapsed gaps. */
 @media (max-width: 480px) {
   /* Mobile shrinks the header so we reset --header-h to match the
-   * tighter padding + smaller name/eyebrow/toggle. Keeps the pills'
-   * sticky offset aligned with the actual rendered header height. */
+   * tighter padding + smaller name/eyebrow/toggle + sources line.
+   * Keeps the pills' sticky offset aligned with the actual rendered
+   * header height. */
   .tryon-root {
-    --header-h: 88px;
+    --header-h: 104px;
   }
   .creator-page-header {
     padding: 12px 16px 4px;
@@ -677,6 +680,26 @@
   .tryon-scope-toggle {
     font-size: 11px !important;
     padding: 4px 8px !important;
+  }
+}
+.creator-page-sources {
+  /* Source-attribution line under the Shop / Ask / Try On toggle.
+   * Intentionally quiet -- small, muted, single-line. Reads as the
+   * creator's own sourcing ("Jane's picks from Revolve · FWRD"),
+   * not as platform branding. Sits inside the sticky header so it
+   * stays visible while scrolling the catalog. */
+  margin: 4px 0 0;
+  font: 500 11px/1.3 var(--font-body), system-ui, sans-serif;
+  letter-spacing: 0.02em;
+  color: var(--t-muted, #7a6e63);
+  opacity: 0.75;
+  max-width: 480px;
+  text-align: center;
+}
+@media (max-width: 480px) {
+  .creator-page-sources {
+    font-size: 10.5px;
+    margin: 2px 0 0;
   }
 }
 .creator-page-eyebrow {
