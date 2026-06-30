@@ -151,6 +151,7 @@ export default async function Page({
         {mode === "shop" ? (
           <TryOnGrid
             creatorSlug={typedCreator.slug}
+            creatorFirstName={creatorFirstName}
             signedIn={Boolean(session)}
             editMode={editMode}
             initialCurated={curated}

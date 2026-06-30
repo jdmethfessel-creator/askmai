@@ -99,22 +99,39 @@ function isEligibleForTryOn(product: Product): boolean {
 
 const PAGE_SIZE = 40;
 
+// Possessive form for the scope banner + edit-mode tooltips. Single
+// shared helper so every callsite reads the same way. Modern usage:
+// just "{Name}'s" regardless of trailing-s (Strunk-style "Charles's"
+// over the older "Charles'"), so we don't branch on the last letter.
+// Falls back to a non-possessive "her" string when no name is passed
+// so a missing prop never blanks the UI.
+function creatorPossessive(name: string | undefined | null): string {
+  const n = (name ?? "").trim();
+  return n ? `${n}'s` : "her";
+}
+
 export default function TryOnGrid({
   creatorSlug,
+  creatorFirstName,
   signedIn,
   editMode = false,
   initialCurated = false,
 }: {
   creatorSlug: string;
+  /** First name only, used for the scope banner ("Showing Jane's
+   *  picks") + edit-mode star tooltips ("Add to Jane's picks"). The
+   *  page server-component derives it from creators.name. */
+  creatorFirstName?: string;
   signedIn: boolean;
   /** Phase-1 curation gate. When true, each card shows a star
    *  toggle that flips creator_products.featured. Activated via
    *  /api/admin/edit-mode?key=<ADMIN_EDIT_KEY>. */
   editMode?: boolean;
-  /** Whether the page mounted with ?curated=1 (her-picks URL).
+  /** Whether the page mounted with ?curated=1 (the curated URL).
    *  Default false = full catalog (the new default). */
   initialCurated?: boolean;
 }) {
+  const possessive = creatorPossessive(creatorFirstName);
   const [products, setProducts] = useState<Product[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(true);
@@ -501,7 +518,9 @@ export default function TryOnGrid({
       {!appliedQuery ? (
         <div className="tryon-scope-banner">
           <span className="tryon-scope-label">
-            {curated ? "Showing her picks" : "Showing her full catalog"}
+            {curated
+              ? `Showing ${possessive} picks`
+              : `Showing ${possessive} full catalog`}
             {editMode ? (
               <span className="tryon-scope-edit-tag"> · EDIT MODE</span>
             ) : null}
@@ -511,7 +530,7 @@ export default function TryOnGrid({
             className="tryon-scope-toggle"
             onClick={() => setCurated((v) => !v)}
           >
-            {curated ? "See everything" : "See her picks"} →
+            {curated ? "See everything" : `See ${possessive} picks`} →
           </button>
         </div>
       ) : null}
@@ -540,6 +559,7 @@ export default function TryOnGrid({
             editMode={editMode}
             featuredOverride={featuredOverride[p.id]}
             onToggleFeatured={toggleFeatured}
+            creatorPossessive={possessive}
           />
         ))}
         {products.length === 0 && !loadingPage ? (
@@ -595,6 +615,7 @@ function ProductCard({
   editMode,
   featuredOverride,
   onToggleFeatured,
+  creatorPossessive,
 }: {
   product: Product;
   onTryOn: (p: Product) => void;
@@ -609,6 +630,9 @@ function ProductCard({
    *  undefined means "use product.featured from the API response." */
   featuredOverride: boolean | undefined;
   onToggleFeatured: (p: Product) => void;
+  /** Pre-computed possessive form ("Jane's") for the edit-mode
+   *  star tooltip. Falls back to "her" upstream when unset. */
+  creatorPossessive: string;
 }) {
   // Client-side safety net for broken images. The primary fix is
   // server-side in /api/tryon-grid/.../products which rewrites
@@ -646,7 +670,7 @@ function ProductCard({
               e.stopPropagation();
               onToggleFeatured(product);
             }}
-            title={isFeatured ? "In her picks" : "Add to her picks"}
+            title={isFeatured ? `In ${creatorPossessive} picks` : `Add to ${creatorPossessive} picks`}
           >
             {isFeatured ? "★" : "☆"}
           </button>
