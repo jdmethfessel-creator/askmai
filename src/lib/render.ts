@@ -336,11 +336,14 @@ export type RunRenderError = {
  * they read as incomplete to the user.
  */
 // Subcategories the FASHN chain (Stage 1) will render onto the
-// person. Worn garments only.
+// person. Worn garments only. outerwear is included because it
+// occupies the same upper-body region FASHN's "tops" category
+// targets; we map it via fashnCategoryFor() below.
 const CHAINABLE_SUBCATEGORIES = new Set<string>([
   "tops",
   "bottoms",
   "dresses",
+  "outerwear",
 ]);
 
 // Subcategories handled by Stage 2 (compositing via FLUX Kontext
@@ -378,6 +381,12 @@ const RENDERABLE_SUBCATEGORIES = new Set<string>([
 function fashnCategoryFor(subcategory: string | null): VtonCategory {
   switch (subcategory) {
     case "tops":
+      return "tops";
+    case "outerwear":
+      // outerwear (jackets/coats/blazers) lives in the same upper-
+      // body region as tops, and FASHN has no separate enum value
+      // for it. Mapping to "tops" makes the swap target the same
+      // region the model is trained to handle.
       return "tops";
     case "bottoms":
       return "bottoms";

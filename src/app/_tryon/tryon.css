@@ -845,3 +845,82 @@
   0%   { left: 100%; opacity: 0.9; }
   100% { left: 0;    opacity: 0;   }
 }
+
+/* Scope banner above the grid: "Showing her picks" / "Showing her
+ * full catalog" + a one-tap toggle. Hidden during an active search
+ * (the search caption serves the same purpose). */
+.tryon-scope-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 4px 14px;
+  font-size: 12px;
+  color: var(--t-muted, #6a6256);
+  letter-spacing: 0.04em;
+}
+.tryon-scope-label {
+  text-transform: uppercase;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  font-size: 11px;
+}
+.tryon-scope-edit-tag {
+  color: var(--t-ink, #18140e);
+  background: var(--t-line, rgba(24,20,14,0.08));
+  border-radius: 4px;
+  padding: 1px 6px;
+  margin-left: 4px;
+}
+.tryon-scope-toggle {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--t-ink, #18140e);
+  font: 600 12px/1 var(--font-body), system-ui, sans-serif;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  padding: 6px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--t-line, rgba(24,20,14,0.08));
+  transition: background 120ms ease, border-color 120ms ease;
+}
+.tryon-scope-toggle:hover {
+  background: var(--t-line, rgba(24,20,14,0.08));
+}
+
+/* Phase-1 edit-mode star toggle on each card. Sits in the
+ * top-LEFT of the image wrap (the outfit + selector is top-right).
+ * Star color: filled = warm ink, hollow = muted. Featured cards
+ * also get a thin accent outline so the whole edit set is
+ * scannable at a glance. */
+.tryon-card.is-featured {
+  outline: 2px solid var(--t-ink, #18140e);
+  outline-offset: -2px;
+}
+.tryon-card-feature {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 2;
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  border: 0;
+  cursor: pointer;
+  font: 700 16px/1 system-ui, sans-serif;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255,255,255,0.92);
+  color: var(--t-muted, #6a6256);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+  transition: background 120ms ease, color 120ms ease, transform 120ms ease;
+}
+.tryon-card-feature:hover {
+  transform: scale(1.08);
+}
+.tryon-card-feature.is-on {
+  background: var(--t-ink, #18140e);
+  color: #fff;
+}

@@ -77,7 +77,30 @@ type PageOpts = {
   parsedSubcategory: string | null;
   maxPrice: number | null;
   descriptors: string[];
+  /** "Shop everything" flag: when true, ignore the featured-only
+   *  default and serve the full catalog. */
+  showAll: boolean;
 };
+
+// Subcategories that get sorted FIRST in the default view. Items
+// in these buckets show a Try-On button and should dominate the
+// fold. Mirrors TRYON_ELIGIBLE_CATEGORIES in
+// src/app/_tryon/TryOnGrid.tsx (keep these two in sync; a divergent
+// client list would still get sorted correctly on the server, but
+// a card would show up high without a Try-On affordance, which
+// reads as a UX bug). Non-tryable items (bags / shoes / jewelry /
+// accessories / beauty / home / swim / other) fall to the back of
+// the order.
+const TRYABLE_FIRST_BUCKETS = new Set<string>([
+  "tops",
+  "bottoms",
+  "dresses",
+  "outerwear",
+]);
+
+function tryableRank(subcategory: string | null): 0 | 1 {
+  return subcategory && TRYABLE_FIRST_BUCKETS.has(subcategory) ? 0 : 1;
+}
 
 export async function GET(
   request: Request,
@@ -94,6 +117,12 @@ export async function GET(
   const pillRaw = url.searchParams.get("subcategory");
   const pillSubcategory = pillRaw && pillRaw !== "all" ? pillRaw : null;
   const rawQ = (url.searchParams.get("q") || "").trim();
+  // `?all=1` (or any truthy value): "Shop everything" mode. Bypasses
+  // the featured-only default and serves the full catalog. When
+  // omitted, the grid filters to featured=true rows IF any exist;
+  // otherwise (creator has no curated edit yet) falls back to the
+  // full catalog so the page never goes blank.
+  const showAll = url.searchParams.get("all") === "1";
 
   const admin = supabaseAdmin();
 
@@ -116,6 +145,7 @@ export async function GET(
       parsedSubcategory: null,
       maxPrice: null,
       descriptors: [],
+      showAll,
     });
     return Response.json({
       products: rows,
@@ -154,11 +184,11 @@ export async function GET(
   const attempts: Array<{ key: "none" | "descriptors" | "subcategory" | "all"; opts: PageOpts }> = [
     {
       key: "none",
-      opts: makeOpts(creator.id, limit, cursor, pillSubcategory, parsed, true, true),
+      opts: makeOpts(creator.id, limit, cursor, pillSubcategory, parsed, true, true, showAll),
     },
     {
       key: "descriptors",
-      opts: makeOpts(creator.id, limit, cursor, pillSubcategory, parsed, false, true),
+      opts: makeOpts(creator.id, limit, cursor, pillSubcategory, parsed, false, true, showAll),
     },
   ];
   // Only add the "drop subcategory" rung when the parser inferred one
@@ -168,7 +198,7 @@ export async function GET(
     attempts.push({
       key: "subcategory",
       opts: {
-        ...makeOpts(creator.id, limit, cursor, null, parsed, false, true),
+        ...makeOpts(creator.id, limit, cursor, null, parsed, false, true, showAll),
         parsedSubcategory: null,
       },
     });
@@ -266,7 +296,8 @@ function makeOpts(
   pillSubcategory: string | null,
   parsed: ParsedQuery,
   withDescriptors: boolean,
-  withPrice: boolean
+  withPrice: boolean,
+  showAll: boolean
 ): PageOpts {
   return {
     creatorId,
@@ -276,6 +307,7 @@ function makeOpts(
     parsedSubcategory: pillSubcategory ? null : parsed.subcategory,
     maxPrice: withPrice ? parsed.maxPrice : null,
     descriptors: withDescriptors ? parsed.descriptors : [],
+    showAll,
   };
 }
 
@@ -290,6 +322,7 @@ type Product = {
   affiliate_url: string;
   product_category: string | null;
   product_subcategory: string | null;
+  featured: boolean | null;
 };
 
 // Networks the round-robin visits, in priority order. Picking from
@@ -303,7 +336,7 @@ type NetworkCursor = { ts: string; id: string };
 type InterleaveCursor = Partial<Record<Network, NetworkCursor>>;
 
 const SELECT_COLS =
-  "id, source_network, product_title, brand, price, price_display, image_url, affiliate_url, product_category, product_subcategory, created_at";
+  "id, source_network, product_title, brand, price, price_display, image_url, affiliate_url, product_category, product_subcategory, featured, created_at";
 
 // Server-side rewrite of the known-bad Shopbop CDN URL pattern.
 // Background: the parser was historically writing image_urls
@@ -425,6 +458,7 @@ async function fetchOneNetwork(args: {
   effectiveSubcategory: string | null;
   maxPrice: number | null;
   descriptors: string[];
+  featuredOnly: boolean;
 }): Promise<{ rows: Array<Product & { created_at: string }>; mayHaveMore: boolean }> {
   const admin = supabaseAdmin();
   let query = admin
@@ -435,6 +469,16 @@ async function fetchOneNetwork(args: {
     .order("created_at", { ascending: false })
     .order("id", { ascending: false })
     .limit(args.perLimit);
+
+  // Default Shop view: featured rows only. The route caller
+  // (fetchPage) computes featuredOnly as "user didn't pass ?all=1
+  // AND the creator has at least one featured row." If neither
+  // condition holds, featuredOnly is false and we serve the full
+  // catalog (preserves the legacy behavior for unfeatured creators
+  // and the explicit "Shop everything" toggle).
+  if (args.featuredOnly) {
+    query = query.eq("featured", true);
+  }
 
   if (args.cursor) {
     // Tuple cursor (created_at, id) < (cursor.ts, cursor.id). PostgREST
@@ -495,6 +539,23 @@ async function fetchPage(opts: PageOpts): Promise<{
   const effectiveSubcategory =
     opts.pillSubcategory ?? opts.parsedSubcategory ?? null;
 
+  // Compute featuredOnly: default Shop view filters to the
+  // curated edit IFF the creator has any featured rows. Fallback
+  // (zero featured) serves the full catalog so the page never
+  // goes blank for a creator without an edit. The "Shop
+  // everything" toggle (?all=1) always serves the full catalog
+  // regardless of featured state.
+  let featuredOnly = false;
+  if (!opts.showAll) {
+    const admin = supabaseAdmin();
+    const { count } = await admin
+      .from("creator_products")
+      .select("id", { count: "exact", head: true })
+      .eq("creator_id", opts.creatorId)
+      .eq("featured", true);
+    featuredOnly = (count ?? 0) > 0;
+  }
+
   // Per-network overfetch budget. The round-robin pulls one row from
   // each network in rotation, so each network contributes roughly
   // `limit / networks` rows per page. Multiply by 1.5 and add 1 so a
@@ -514,6 +575,7 @@ async function fetchPage(opts: PageOpts): Promise<{
         effectiveSubcategory,
         maxPrice: opts.maxPrice,
         descriptors: opts.descriptors,
+        featuredOnly,
       }).then((r) => ({ net, ...r }))
     )
   );
@@ -543,6 +605,29 @@ async function fetchPage(opts: PageOpts): Promise<{
     }
     if (!progress) break;
   }
+
+  // Tryable-first re-sort. Round-robin already mixes networks for
+  // visual variety; layered on top, sort the picked set so
+  // try-on-eligible items dominate the fold. Within each rank,
+  // preserve created_at DESC (recency tiebreak). The cursor logic
+  // is unchanged; the cursor records the per-network (ts, id)
+  // boundary regardless of our cosmetic re-sort here.
+  //
+  // Note: this is a re-sort of the page-sized window. If page 1
+  // returns 40 items with 30 tryable + 10 non-tryable, the user
+  // sees 30 tryable up front then 10 non-tryable. Page 2 pulls the
+  // next 40 with its own tryable-first re-sort. Across pages the
+  // pattern repeats — predictable from the user's POV.
+  picked.sort((a, b) => {
+    const ra = tryableRank(a.product_subcategory);
+    const rb = tryableRank(b.product_subcategory);
+    if (ra !== rb) return ra - rb;
+    // Same tryable_rank: keep recency DESC.
+    if (a.created_at !== b.created_at) {
+      return a.created_at < b.created_at ? 1 : -1;
+    }
+    return a.id < b.id ? 1 : -1;
+  });
 
   // Build next cursor: carry forward each network's input cursor,
   // overlaid with any advances from this page. A network that did not

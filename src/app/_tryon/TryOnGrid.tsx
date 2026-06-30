@@ -59,6 +59,7 @@ type Product = {
   affiliate_url: string;
   product_category: string | null;
   product_subcategory: string | null;
+  featured: boolean | null;
 };
 
 type Category = { key: string; label: string; count: number };
@@ -85,10 +86,14 @@ type RenderResult =
 // Per-card eligibility for the body-render Try-On button. Items in
 // these subcategory buckets reach the server's render path.
 // Everything else (shoes, bags, jewelry, accessories, beauty,
-// home, etc.) shows Shop only.
+// home, swim, etc.) shows Shop only.
 //
 // Routing on the server (see src/lib/render.ts):
-//   tops/bottoms/dresses -> Stage 1: FASHN tryon-v1.6 chained
+//   tops / bottoms / dresses / outerwear -> Stage 1: FASHN
+//     tryon-v1.6 chained. outerwear maps to FASHN's "tops"
+//     category internally (it's the same upper-body region; the
+//     model handles jackets/blazers/coats reasonably even though
+//     FASHN doesn't have an explicit outerwear enum).
 //
 // Notable parked categories (code paths intact, just unreachable):
 //   bags: FLUX Kontext multi-image-kontext-max placement was
@@ -101,6 +106,9 @@ type RenderResult =
 //     approach.
 //   shoes: FASHN has no shoe category and shoe placement needs
 //     different geometry (feet, ground plane).
+//   swim: kept out of the tryable set for now (different aspect/
+//     coverage, also has modesty edge cases the moderation
+//     classifier trips on).
 //
 // Edit this constant to expand or contract the renderable set.
 // The server's RENDERABLE_SUBCATEGORIES in src/lib/render.ts
@@ -109,18 +117,27 @@ const TRYON_ELIGIBLE_CATEGORIES = new Set<string>([
   "tops",
   "bottoms",
   "dresses",
+  "outerwear",
 ]);
 
 // Outfit slot the product fills. One slot per item; the outfit
 // builder enforces uniqueness per slot and the dress/separates
-// conflict (dress excludes top+bottom). The "bag" slot was here
-// when bags were renderable; parked along with the FLUX Kontext
-// bag placement (see TRYON_ELIGIBLE_CATEGORIES above).
-type OutfitSlot = "top" | "bottom" | "dress";
+// conflict (dress excludes top+bottom).
+//
+// outerwear is its own slot with NO conflicts: it layers on top
+// of a top, bottom, or dress and should be valid in any combo.
+// Chain order in the render pipeline places outerwear LAST so it's
+// the most-visible layer (region-swap VTON: each pass replaces
+// the region it targets, so the last "tops"-region pass wins).
+//
+// bag slot is parked along with bag placement (see
+// TRYON_ELIGIBLE_CATEGORIES above).
+type OutfitSlot = "top" | "bottom" | "dress" | "outerwear";
 const SUBCATEGORY_TO_SLOT: Record<string, OutfitSlot> = {
   tops: "top",
   bottoms: "bottom",
   dresses: "dress",
+  outerwear: "outerwear",
 };
 
 const MAX_OUTFIT_ITEMS = 3;
@@ -194,9 +211,17 @@ const PAGE_SIZE = 40;
 export default function TryOnGrid({
   creatorSlug,
   signedIn,
+  editMode = false,
+  initialShowAll = false,
 }: {
   creatorSlug: string;
   signedIn: boolean;
+  /** Phase-1 curation gate. When true, each card shows a star
+   *  toggle that flips creator_products.featured. Activated via
+   *  /api/admin/edit-mode?key=<ADMIN_EDIT_KEY>. */
+  editMode?: boolean;
+  /** Whether the page mounted with ?all=1 (Shop-everything URL). */
+  initialShowAll?: boolean;
 }) {
   const [products, setProducts] = useState<Product[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
@@ -226,6 +251,62 @@ export default function TryOnGrid({
   const fetchTokenRef = useRef(0);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
 
+  // "Shop everything" toggle. When false (default), the grid sees
+  // the creator's curated featured set; when true, it sees the
+  // full catalog. Mirrors the ?all=1 URL param state but lives
+  // client-side so toggling doesn't trigger a full page reload.
+  const [showAll, setShowAll] = useState<boolean>(initialShowAll);
+  // Local optimistic mirror of each card's featured flag so the
+  // star toggle reads in real-time without a full grid refetch.
+  // Keyed by product id.
+  const [featuredOverride, setFeaturedOverride] = useState<
+    Record<string, boolean>
+  >({});
+
+  // Session id for tryon_events. Generated once per page load,
+  // not persisted, no PII. Lets us reconstruct start->complete
+  // funnels in tryon_events.
+  const sessionIdRef = useRef<string>("");
+  if (!sessionIdRef.current && typeof crypto !== "undefined") {
+    sessionIdRef.current = crypto.randomUUID();
+  }
+
+  const trackEvent = useCallback(
+    (
+      event:
+        | "tryon_start"
+        | "tryon_complete_ok"
+        | "tryon_complete_fail",
+      extra: {
+        productExternalId?: string;
+        productSubcategory?: string | null;
+        outfitSize?: number;
+        durationMs?: number;
+        failureReason?: string;
+      } = {}
+    ) => {
+      // Fire-and-forget; never blocks the UX. Errors silently
+      // dropped (server logs them).
+      try {
+        fetch("/api/events/tryon", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          keepalive: true,
+          body: JSON.stringify({
+            event,
+            creatorSlug,
+            sessionId: sessionIdRef.current,
+            ...extra,
+            productSubcategory: extra.productSubcategory ?? undefined,
+          }),
+        }).catch(() => {});
+      } catch {
+        // crypto.randomUUID unavailable in very old engines, etc.
+      }
+    },
+    [creatorSlug]
+  );
+
   // ------------------------- category load ---------------------------
   useEffect(() => {
     let cancelled = false;
@@ -252,6 +333,7 @@ export default function TryOnGrid({
         if (!opts.reset && cursor) params.set("cursor", cursor);
         if (activeCategory !== "all") params.set("subcategory", activeCategory);
         if (appliedQuery) params.set("q", appliedQuery);
+        if (showAll) params.set("all", "1");
         const res = await fetch(
           `/api/tryon-grid/${creatorSlug}/products?${params.toString()}`
         );
@@ -274,10 +356,11 @@ export default function TryOnGrid({
         if (token === fetchTokenRef.current) setLoadingPage(false);
       }
     },
-    [activeCategory, appliedQuery, creatorSlug, cursor]
+    [activeCategory, appliedQuery, creatorSlug, cursor, showAll]
   );
 
-  // Reset + first page whenever the filter or applied search changes.
+  // Reset + first page whenever the filter, search, or "Shop
+  // everything" toggle changes.
   useEffect(() => {
     setProducts([]);
     setCursor(null);
@@ -286,7 +369,7 @@ export default function TryOnGrid({
     // intentionally exclude fetchPage from deps so it doesn't loop on
     // the page-cursor change cycle.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeCategory, appliedQuery, creatorSlug]);
+  }, [activeCategory, appliedQuery, creatorSlug, showAll]);
 
   // Infinite scroll sentinel: load the next page when the trailing
   // div enters the viewport. The 600px rootMargin pre-fetches before
@@ -310,6 +393,12 @@ export default function TryOnGrid({
   const onTryOn = useCallback(
     async (product: Product) => {
       setRender({ state: "loading", product });
+      const startedAt = Date.now();
+      trackEvent("tryon_start", {
+        productExternalId: product.id,
+        productSubcategory: product.product_subcategory,
+        outfitSize: 1,
+      });
       try {
         const res = await fetch("/api/render", {
           method: "POST",
@@ -329,6 +418,12 @@ export default function TryOnGrid({
         });
         const json = await res.json().catch(() => ({}));
         if (res.status === 200 && json.signed_url) {
+          trackEvent("tryon_complete_ok", {
+            productExternalId: product.id,
+            productSubcategory: product.product_subcategory,
+            outfitSize: 1,
+            durationMs: Date.now() - startedAt,
+          });
           setRender({
             state: "result",
             product,
@@ -347,6 +442,8 @@ export default function TryOnGrid({
         if (json.error === "not_signed_in") {
           setRender({ state: "idle" });
           setShowSignIn(true);
+          // Not tracked as a failure: it's a routing event, not a
+          // try-on outcome.
           return;
         }
         const reason: BlockReason =
@@ -356,12 +453,26 @@ export default function TryOnGrid({
           json.error === "moderation_blocked"
             ? (json.error as BlockReason)
             : "render_failed";
+        trackEvent("tryon_complete_fail", {
+          productExternalId: product.id,
+          productSubcategory: product.product_subcategory,
+          outfitSize: 1,
+          durationMs: Date.now() - startedAt,
+          failureReason: reason,
+        });
         setRender({ state: "blocked", product, reason });
       } catch {
+        trackEvent("tryon_complete_fail", {
+          productExternalId: product.id,
+          productSubcategory: product.product_subcategory,
+          outfitSize: 1,
+          durationMs: Date.now() - startedAt,
+          failureReason: "network_error",
+        });
         setRender({ state: "blocked", product, reason: "render_failed" });
       }
     },
-    [creatorSlug]
+    [creatorSlug, trackEvent]
   );
 
   // ------------------------- outfit builder --------------------------
@@ -404,8 +515,11 @@ export default function TryOnGrid({
   const clearOutfit = useCallback(() => setOutfit({}), []);
 
   const outfitItems = useMemo(() => {
-    // Stable display order in the tray: top, bottom, dress.
-    const order: OutfitSlot[] = ["top", "bottom", "dress"];
+    // Stable display order in the tray + chain order in the render
+    // pipeline: top, bottom, dress, then outerwear LAST so it's the
+    // most-visible layer (VTON region-swap means the last "tops"-
+    // region pass wins).
+    const order: OutfitSlot[] = ["top", "bottom", "dress", "outerwear"];
     return order
       .map((s) => outfit[s])
       .filter((p): p is Product => Boolean(p));
@@ -450,6 +564,8 @@ export default function TryOnGrid({
   const runOutfitRender = useCallback(async () => {
     if (outfitItems.length === 0) return;
     setOutfitRender({ state: "loading", products: outfitItems });
+    const startedAt = Date.now();
+    trackEvent("tryon_start", { outfitSize: outfitItems.length });
     try {
       const res = await fetch("/api/render", {
         method: "POST",
@@ -467,6 +583,10 @@ export default function TryOnGrid({
       });
       const json = await res.json().catch(() => ({}));
       if (res.status === 200 && json.signed_url) {
+        trackEvent("tryon_complete_ok", {
+          outfitSize: outfitItems.length,
+          durationMs: Date.now() - startedAt,
+        });
         setOutfitRender({
           state: "result",
           products: outfitItems,
@@ -490,15 +610,61 @@ export default function TryOnGrid({
         json.error === "moderation_blocked"
           ? (json.error as BlockReason)
           : "render_failed";
+      trackEvent("tryon_complete_fail", {
+        outfitSize: outfitItems.length,
+        durationMs: Date.now() - startedAt,
+        failureReason: reason,
+      });
       setOutfitRender({ state: "blocked", products: outfitItems, reason });
     } catch {
+      trackEvent("tryon_complete_fail", {
+        outfitSize: outfitItems.length,
+        durationMs: Date.now() - startedAt,
+        failureReason: "network_error",
+      });
       setOutfitRender({
         state: "blocked",
         products: outfitItems,
         reason: "render_failed",
       });
     }
-  }, [outfitItems, creatorSlug]);
+  }, [outfitItems, creatorSlug, trackEvent]);
+
+  // ------------------------- featured toggle (Phase 1 edit mode) ----
+  const toggleFeatured = useCallback(
+    async (product: Product) => {
+      if (!editMode) return;
+      const currentFeatured = featuredOverride[product.id];
+      const effective =
+        currentFeatured ?? Boolean(product.featured);
+      const nextFeatured = !effective;
+      // Optimistic update so the star reacts instantly.
+      setFeaturedOverride((prev) => ({ ...prev, [product.id]: nextFeatured }));
+      try {
+        const res = await fetch("/api/admin/feature-product", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            productId: product.id,
+            featured: nextFeatured,
+          }),
+        });
+        if (!res.ok) {
+          // Roll back optimistic update on failure.
+          setFeaturedOverride((prev) => ({
+            ...prev,
+            [product.id]: effective,
+          }));
+        }
+      } catch {
+        setFeaturedOverride((prev) => ({
+          ...prev,
+          [product.id]: effective,
+        }));
+      }
+    },
+    [editMode, featuredOverride]
+  );
 
   // ------------------------- bottom search ---------------------------
   const onSearchSubmit = useCallback(
@@ -541,6 +707,29 @@ export default function TryOnGrid({
         ))}
       </nav>
 
+      {/* Scope banner: "her picks" (default) vs "full catalog"
+          (after Shop everything). Hidden when an active search
+          query is showing its own interpreted caption, since the
+          search caption already explains the scope. Always shows
+          the toggle link to flip scope. */}
+      {!appliedQuery ? (
+        <div className="tryon-scope-banner">
+          <span className="tryon-scope-label">
+            {showAll ? "Showing her full catalog" : "Showing her picks"}
+            {editMode ? (
+              <span className="tryon-scope-edit-tag"> · EDIT MODE</span>
+            ) : null}
+          </span>
+          <button
+            type="button"
+            className="tryon-scope-toggle"
+            onClick={() => setShowAll((v) => !v)}
+          >
+            {showAll ? "Back to her picks" : "Shop everything"} →
+          </button>
+        </div>
+      ) : null}
+
       {interpreted && interpreted.caption ? (
         <div className="tryon-interpreted" role="status" aria-live="polite">
           <span className="tryon-interpreted-label">Showing</span>
@@ -563,6 +752,9 @@ export default function TryOnGrid({
             inOutfit={isInOutfit(p)}
             slotBlocked={isOutfitSlotBlocked(p)}
             onToggleOutfit={toggleOutfit}
+            editMode={editMode}
+            featuredOverride={featuredOverride[p.id]}
+            onToggleFeatured={toggleFeatured}
           />
         ))}
         {products.length === 0 && !loadingPage ? (
@@ -633,6 +825,9 @@ function ProductCard({
   inOutfit,
   slotBlocked,
   onToggleOutfit,
+  editMode,
+  featuredOverride,
+  onToggleFeatured,
 }: {
   product: Product;
   onTryOn: (p: Product) => void;
@@ -640,6 +835,11 @@ function ProductCard({
   inOutfit: boolean;
   slotBlocked: boolean;
   onToggleOutfit: (p: Product) => void;
+  editMode: boolean;
+  /** Optimistic featured state set by the local toggle handler;
+   *  undefined means "use product.featured from the API response." */
+  featuredOverride: boolean | undefined;
+  onToggleFeatured: (p: Product) => void;
 }) {
   // Client-side safety net for broken images. The primary fix is
   // server-side in /api/tryon-grid/.../products which rewrites
@@ -657,9 +857,31 @@ function ProductCard({
   }, [product.affiliate_url]);
   if (imageFailed) return null;
 
+  // Resolved featured state for star rendering: optimistic override
+  // first, otherwise whatever the API said when the row loaded.
+  const isFeatured =
+    typeof featuredOverride === "boolean"
+      ? featuredOverride
+      : Boolean(product.featured);
+
   return (
-    <article className={`tryon-card ${inOutfit ? "is-in-outfit" : ""}`}>
+    <article className={`tryon-card ${inOutfit ? "is-in-outfit" : ""} ${editMode && isFeatured ? "is-featured" : ""}`}>
       <div className="tryon-card-image-wrap">
+        {editMode ? (
+          <button
+            type="button"
+            className={`tryon-card-feature ${isFeatured ? "is-on" : ""}`}
+            aria-pressed={isFeatured}
+            aria-label={isFeatured ? "Unfeature this item" : "Feature this item"}
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleFeatured(product);
+            }}
+            title={isFeatured ? "In her picks" : "Add to her picks"}
+          >
+            {isFeatured ? "★" : "☆"}
+          </button>
+        ) : null}
         {tryOnEligible ? (
           <button
             type="button"

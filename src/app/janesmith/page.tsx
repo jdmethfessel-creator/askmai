@@ -36,6 +36,7 @@
 import type { Metadata } from "next";
 import { Fraunces, Manrope } from "next/font/google";
 import { redirect } from "next/navigation";
+import { cookies } from "next/headers";
 import { supabaseAdmin } from "@/lib/supabase";
 import { getServerSession } from "@/lib/session";
 import TryOnGrid from "../_tryon/TryOnGrid";
@@ -82,7 +83,7 @@ function parseMode(raw: unknown): Mode {
 export default async function Page({
   searchParams,
 }: {
-  searchParams: { mode?: string };
+  searchParams: { mode?: string; all?: string };
 }) {
   const admin = supabaseAdmin();
   const { data: creator } = await admin
@@ -96,6 +97,19 @@ export default async function Page({
 
   const session = await getServerSession();
   const mode = parseMode(searchParams?.mode);
+  // Edit-mode gate (Phase 1: JD-controlled shared key, NOT
+  // creator auth). The user activates edit-mode by visiting
+  // /api/admin/edit-mode?key=<value>, which sets the askmai_edit
+  // httpOnly cookie. We just read the cookie here to know whether
+  // to render the star toggles in TryOnGrid. The cookie value is
+  // checked against env.ADMIN_EDIT_KEY again on every POST to
+  // /api/admin/feature-product, so a stolen cookie alone doesn't
+  // grant access if the env key rotates.
+  const cookieStore = await cookies();
+  const editCookie = cookieStore.get("askmai_edit")?.value ?? null;
+  const editMode =
+    Boolean(editCookie) && editCookie === process.env.ADMIN_EDIT_KEY;
+  const showAll = searchParams?.all === "1";
   const typedCreator = creator as Pick<
     Creator,
     "id" | "slug" | "name" | "bio" | "theme"
@@ -129,6 +143,8 @@ export default async function Page({
           <TryOnGrid
             creatorSlug={typedCreator.slug}
             signedIn={Boolean(session)}
+            editMode={editMode}
+            initialShowAll={showAll}
           />
         ) : (
           <div className="creator-page-chat-wrap">
