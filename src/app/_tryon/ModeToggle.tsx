@@ -23,12 +23,12 @@ export type Mode = "shop" | "ask" | "room";
 
 // Display labels are decoupled from the URL `mode` value. The route
 // value stays "room" (shareable URLs in the wild already use it);
-// the visible label is "Dressing Room" because the user-facing
-// concept reads better than a one-word tab.
+// the visible label is "Try On" because the third tab is where
+// the user actually tries pieces on themselves.
 const TABS: { mode: Mode; label: string }[] = [
   { mode: "shop", label: "Shop" },
   { mode: "ask", label: "Ask" },
-  { mode: "room", label: "Dressing Room" },
+  { mode: "room", label: "Try On" },
 ];
 
 export default function ModeToggle({ current }: { current: Mode }) {

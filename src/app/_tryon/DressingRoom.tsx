@@ -228,7 +228,7 @@ export default function DressingRoom({
 
         {room.items.length === 0 ? (
           <div className="tryon-room-empty">
-            <p>Your room is empty.</p>
+            <p>Nothing saved yet.</p>
             <p className="tryon-room-empty-sub">
               Tap the <span className="tryon-room-empty-plus">+</span> on
               any item in Shop to save it here.
@@ -381,8 +381,8 @@ function RoomCard({
         <button
           type="button"
           className="tryon-card-feature tryon-room-card-remove"
-          aria-label="Remove from Dressing Room"
-          title="Remove from Dressing Room"
+          aria-label="Remove from Try On"
+          title="Remove from Try On"
           onClick={(e) => {
             e.stopPropagation();
             onRemove(item.id);

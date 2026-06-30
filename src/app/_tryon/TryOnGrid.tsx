@@ -661,8 +661,8 @@ function ProductCard({
             type="button"
             className={`tryon-card-select ${saved ? "is-selected" : ""}`}
             aria-pressed={saved}
-            aria-label={saved ? "Remove from Dressing Room" : "Add to Dressing Room"}
-            title={saved ? "Saved · tap to remove" : "Save to Dressing Room"}
+            aria-label={saved ? "Remove from Try On" : "Add to Try On"}
+            title={saved ? "Saved · tap to remove" : "Save to Try On"}
             onClick={(e) => {
               e.stopPropagation();
               onToggleSave(product);
