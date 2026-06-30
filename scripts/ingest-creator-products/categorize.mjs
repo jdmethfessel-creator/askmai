@@ -34,6 +34,14 @@ const KEYWORD_RULES = [
   // swim
   { sub: "swim", re: /\b(bikini|swim(suit|wear)?|one[-\s]?piece|monokini|cover[-\s]?up|tankini|trunks)\b/i },
 
+  // beauty (BEFORE outerwear so "Dream Coat Supernatural Spray" doesn't
+  // bucket as outerwear because of "coat" — the volume suffix or any
+  // beauty-specific noun (hairspray, shampoo, airwrap, etc.) signals
+  // beauty more strongly than an apparel-noun hit elsewhere in the
+  // title). The volume regex (200ml / 8.5 oz / 2 fl oz) catches every
+  // haircare/skincare without any known apparel false-positive.
+  { sub: "beauty", re: /\b\d+(\.\d+)?\s?(ml|oz|fl\s?oz)\b|\b(serum|cream|moisturizer|sunscreen|spf|lipstick|mascara|fragrance|perfume|lotion|cleanser|toner|mask|balm|polish|primer|foundation|concealer|shadow|liner|spray|hairspray|hair|shampoo|conditioner|airwrap|hairdryer|hairbrush|blowout|styler)\b/i },
+
   // outerwear (before tops so "blazer" doesn't fall to tops)
   { sub: "outerwear", re: /\b(blazer|coat|jacket|trench|parka|puffer|cardigan(?!\s+set)|cape|poncho|vest|moto|overcoat)\b/i },
 
@@ -45,9 +53,6 @@ const KEYWORD_RULES = [
 
   // jewelry (before accessories since "earring" should land in jewelry)
   { sub: "jewelry", re: /\b(earring|necklace|ring|bracelet|bangle|anklet|pendant|charm|cuff|stud|hoop|choker)\b/i },
-
-  // beauty
-  { sub: "beauty", re: /\b(serum|cream|moisturizer|sunscreen|spf|lipstick|mascara|fragrance|perfume|lotion|cleanser|toner|mask|balm|polish|primer|foundation|concealer|shadow|liner)\b/i },
 
   // home / lifestyle
   //

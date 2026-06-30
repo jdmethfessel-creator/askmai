@@ -412,15 +412,41 @@ const SUBCATEGORY_REWRITE_RULES: Array<{ sub: string; re: RegExp }> = [
   { sub: "tops", re: /\b(tops?|tees?|tanks?|shirts?|blouses?|sweaters?|knits?|polos?|camis?|bodysuits?|halters?|tunics?|pullovers?|hoodies?|sweatshirts?)\b/i },
 ];
 
+// Beauty / home override patterns. These fire FIRST in fixSubcategory,
+// regardless of the stored subcategory, because the ingest's keyword
+// rules sometimes hit an apparel noun inside a beauty title — most
+// famously "Color Wow Dream Coat Supernatural Spray 200ml" landed as
+// `outerwear` because the outerwear rule (\bcoat\b) ran before any
+// beauty check. The result was a hair spray with a Try-On button.
+//
+// Strong beauty signal: a volume suffix (200ml, 8.5 oz, 2 fl oz) — no
+// apparel product uses these — OR a beauty-specific noun (shampoo,
+// hairspray, airwrap, etc.). The volume pattern alone catches most
+// haircare/skincare without false-positives on apparel.
+//
+// `hair` is intentionally bare-word-bounded so "mohair" doesn't
+// trigger (no word boundary inside "mohair"). Same for "spray" — no
+// known apparel product has the word "spray" as a standalone token.
+const BEAUTY_STRONG_OVERRIDE =
+  /\b\d+(\.\d+)?\s?(ml|oz|fl\s?oz)\b|\b(spray|hairspray|hair|shampoo|conditioner|airwrap|hairdryer|hairbrush|blowout|styler|moisturizer|fragrance|perfume|lotion|cleanser|toner|mascara|lipstick|sunscreen|spf|serum)\b/i;
+const HOME_STRONG_OVERRIDE =
+  /\b(candle|vase|throw\s?pillow|pillow\s?case|towel\s?set|bed\s?sheet|coaster\s?set|napkin\s?set|decor)\b/i;
+
 function fixSubcategory(
   current: string | null,
   title: string | null,
   brand: string | null
 ): string | null {
-  // Only correct rows that are in the catch-alls. Properly-bucketed
-  // rows (tops/bottoms/dresses/shoes/bags/etc.) keep their value.
-  if (current !== "other" && current !== "accessories") return current;
   const hay = `${title ?? ""} ${brand ?? ""}`;
+  // Defensive overrides FIRST, regardless of stored value. Corrects
+  // historic miscategorizations already in the DB (no re-ingest
+  // needed) so try-on eligibility checks downstream stay honest.
+  if (BEAUTY_STRONG_OVERRIDE.test(hay)) return "beauty";
+  if (HOME_STRONG_OVERRIDE.test(hay)) return "home";
+  // Only re-derive rows that landed in the catch-alls. Properly-
+  // bucketed rows (tops/bottoms/dresses/shoes/bags/etc.) keep their
+  // value past this point.
+  if (current !== "other" && current !== "accessories") return current;
   for (const rule of SUBCATEGORY_REWRITE_RULES) {
     if (rule.re.test(hay)) return rule.sub;
   }

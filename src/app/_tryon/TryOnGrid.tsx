@@ -383,6 +383,11 @@ export default function TryOnGrid({
 
   const toggleSave = useCallback(
     (product: Product) => {
+      // Defense in depth: the + button is only rendered on tryable
+      // cards (see ProductCard), but guard here so a programmatic
+      // call from anywhere else can't slip a non-apparel item into
+      // the Room.
+      if (!isEligibleForTryOn(product)) return;
       const alreadySaved = savedIds.has(product.id);
       if (alreadySaved) {
         removeItemFromRoom(creatorSlug, product.id);
@@ -646,19 +651,26 @@ function ProductCard({
             {isFeatured ? "★" : "☆"}
           </button>
         ) : null}
-        <button
-          type="button"
-          className={`tryon-card-select ${saved ? "is-selected" : ""}`}
-          aria-pressed={saved}
-          aria-label={saved ? "Remove from Dressing Room" : "Add to Dressing Room"}
-          title={saved ? "Saved · tap to remove" : "Save to Dressing Room"}
-          onClick={(e) => {
-            e.stopPropagation();
-            onToggleSave(product);
-          }}
-        >
-          {saved ? "✓" : "+"}
-        </button>
+        {/* "+" save-to-Room is apparel-only: the Dressing Room is
+            for building outfits, so beauty / home / bags / shoes /
+            jewelry / accessories / swim never get the affordance
+            (same allow-list as the per-card Try-On button below).
+            Eligibility is the strict set in _tryon/outfit.ts. */}
+        {tryOnEligible ? (
+          <button
+            type="button"
+            className={`tryon-card-select ${saved ? "is-selected" : ""}`}
+            aria-pressed={saved}
+            aria-label={saved ? "Remove from Dressing Room" : "Add to Dressing Room"}
+            title={saved ? "Saved · tap to remove" : "Save to Dressing Room"}
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleSave(product);
+            }}
+          >
+            {saved ? "✓" : "+"}
+          </button>
+        ) : null}
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           className="tryon-card-image"
