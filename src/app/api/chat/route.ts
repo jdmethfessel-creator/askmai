@@ -155,7 +155,8 @@ export async function POST(request: Request) {
     creatorId,
     message,
     budgetCeilingPrefetch,
-    recentlyShown.ids
+    recentlyShown.ids,
+    creator.taste_profile
   );
   const knownProducts = buildKnownProducts(catalog, creator.taste_profile);
   const creatorRef = {
@@ -2055,16 +2056,34 @@ async function assembleFallbackOutfit(
   // selection to assemble a coherent outfit.
   void _catalogIgnored;
   const sb = supabaseAdmin();
+  // Same creator_products switch as loadCatalog. Field map:
+  // product_title -> name, product_category -> category. Without
+  // this the fallback would silently return [] for janesmith
+  // because the legacy `products` table is the small ShopMy-only
+  // collection and creator_products is the full catalog.
   const { data } = await sb
-    .from("products")
-    .select("id, name, brand, category, price")
+    .from("creator_products")
+    .select("id, product_title, brand, product_category, price")
     .eq("creator_id", creator.id)
-    .in("category", ["fashion", "accessories"])
+    .in("product_category", ["fashion", "accessories"])
     .not("price", "is", null)
     .lte("price", budgetCeiling)
     .order("price", { ascending: false, nullsFirst: false })
     .limit(60);
-  const eligible = (data ?? []) as CatalogRow[];
+  type CPRow = {
+    id: string;
+    product_title: string;
+    brand: string | null;
+    product_category: string | null;
+    price: number | null;
+  };
+  const eligible: CatalogRow[] = ((data ?? []) as CPRow[]).map((r) => ({
+    id: r.id,
+    name: r.product_title,
+    brand: r.brand,
+    category: r.product_category,
+    price: r.price,
+  }));
   if (eligible.length === 0) return [];
 
   type Bucket = { row: CatalogRow; kind: GarmentKind };
@@ -2219,11 +2238,58 @@ const CATALOG_PROMPT_CAP = 80;
  * options at that band appear first. Deterministic for now;
  * anti-repeat varying-shuffle is a separate concern (see Step 2 plan).
  */
+/**
+ * Pulls the creator's loved brands from taste_profile so the
+ * catalog selector can boost rows whose brand matches. Combines
+ * fashion.brands_loved (the creator's "I actually shop these"
+ * list) with identity.owned_brands (her own brands, treated as
+ * top-priority brand affinity). Lowercased + trimmed for
+ * case-insensitive comparison against the catalog's brand column.
+ *
+ * Boost, not strict filter — a creator with thin brands_loved
+ * coverage shouldn't get an empty Ask. The downstream sort moves
+ * preferred-brand rows to the front but never drops the rest.
+ */
+function collectPreferredBrands(
+  taste: Creator["taste_profile"]
+): Set<string> {
+  const out = new Set<string>();
+  if (!taste || typeof taste !== "object") return out;
+  const t = taste as Record<string, unknown>;
+  const fashion = t.fashion as Record<string, unknown> | undefined;
+  if (fashion && Array.isArray(fashion.brands_loved)) {
+    for (const b of fashion.brands_loved) {
+      if (typeof b === "string" && b.trim()) {
+        out.add(b.trim().toLowerCase());
+      }
+    }
+  }
+  const identity = t.identity as Record<string, unknown> | undefined;
+  if (identity && Array.isArray(identity.owned_brands)) {
+    for (const b of identity.owned_brands) {
+      if (!b || typeof b !== "object") continue;
+      const obj = b as Record<string, unknown>;
+      if (typeof obj.name === "string" && obj.name.trim()) {
+        out.add(obj.name.trim().toLowerCase());
+      }
+      if (Array.isArray(obj.aliases)) {
+        for (const a of obj.aliases) {
+          if (typeof a === "string" && a.trim()) {
+            out.add(a.trim().toLowerCase());
+          }
+        }
+      }
+    }
+  }
+  return out;
+}
+
 async function loadCatalog(
   creatorId: string,
   userMessage: string,
   budgetCeiling: number | null,
-  excludeIds: Set<string> = new Set()
+  excludeIds: Set<string> = new Set(),
+  taste: Creator["taste_profile"] = null
 ): Promise<CatalogRow[]> {
   const sb = supabaseAdmin();
   const matched = new Set<string>();
@@ -2232,17 +2298,49 @@ async function loadCatalog(
       for (const c of hint.categories) matched.add(c);
     }
   }
+  // Query creator_products (the full 2,634-row catalog populated by
+  // the same Shopbop / Revolve / FWRD / ShopMy ingestion pipeline
+  // that Shop runs against) instead of the legacy `products` table
+  // which only had the ~80-row ShopMy collection 3711656. Field-name
+  // map: product_title -> name, product_category -> category. The
+  // chat-level category vocab (fashion / beauty / accessories /
+  // lifestyle / travel / dining) matches what the ingest parsers
+  // write into product_category, so the existing CATEGORY_HINTS
+  // filter still works against the new column.
   let query = sb
-    .from("products")
-    .select("id, name, brand, category, price")
+    .from("creator_products")
+    .select(
+      "id, product_title, brand, product_category, product_subcategory, price"
+    )
     .eq("creator_id", creatorId)
     .order("price", { ascending: false, nullsFirst: false })
     .limit(500);
   if (matched.size > 0) {
-    query = query.in("category", Array.from(matched));
+    query = query.in("product_category", Array.from(matched));
   }
-  const { data } = await query;
-  let rows = (data ?? []) as CatalogRow[];
+  const { data, error } = await query;
+  if (error) {
+    console.error("[chat/loadCatalog] creator_products query failed:", error);
+    return [];
+  }
+  // Map creator_products schema to the CatalogRow shape the rest of
+  // the chat pipeline expects. Single shape downstream means no
+  // other function needs to know which table the rows came from.
+  type CPRow = {
+    id: string;
+    product_title: string;
+    brand: string | null;
+    product_category: string | null;
+    product_subcategory: string | null;
+    price: number | null;
+  };
+  let rows: CatalogRow[] = ((data ?? []) as CPRow[]).map((r) => ({
+    id: r.id,
+    name: r.product_title,
+    brand: r.brand,
+    category: r.product_category,
+    price: r.price,
+  }));
   // Drop rows the assistant has already shown earlier in this
   // conversation so the catalog selector can't keep handing the
   // same Alrose midi back to the model. Done before the
@@ -2250,6 +2348,21 @@ async function loadCatalog(
   // the slicer would otherwise pull a duplicate into tier1.
   if (excludeIds.size > 0) {
     rows = rows.filter((r) => !excludeIds.has(r.id));
+  }
+  // Brands-loved boost: stable-sort so rows whose brand matches the
+  // creator's brands_loved (or her owned-brands) land at the front
+  // of every tier the selector subsequently builds. Boost-only —
+  // off-taste rows still flow through, so a creator with thin or
+  // missing brands_loved coverage doesn't get an empty Ask. When
+  // brands_loved is empty (no taste profile, or no fashion section)
+  // this becomes a no-op and the existing price-DESC order stands.
+  const preferred = collectPreferredBrands(taste);
+  if (preferred.size > 0) {
+    rows.sort((a, b) => {
+      const ap = a.brand && preferred.has(a.brand.toLowerCase()) ? 0 : 1;
+      const bp = b.brand && preferred.has(b.brand.toLowerCase()) ? 0 : 1;
+      return ap - bp;
+    });
   }
   if (budgetCeiling != null) {
     return selectCatalogForBudget(rows, budgetCeiling, CATALOG_PROMPT_CAP);

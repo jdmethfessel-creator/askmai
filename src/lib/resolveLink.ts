@@ -385,24 +385,59 @@ async function findFeedById(
 } | null> {
   const trimmed = productId.trim();
   if (!trimmed) return null;
-  const { data } = await sb
+  // Try the legacy `products` table first (still used by some
+  // owned/shopify-tier records), then fall back to `creator_products`
+  // — the new chat catalog grounds itself in creator_products, so a
+  // product_id emitted by the model can come from either table. The
+  // schema differs (product_title vs name, source_network vs network)
+  // so the fallback path maps fields. Whichever lookup hits first
+  // wins; both return the same shape upward.
+  const legacy = await sb
     .from("products")
     .select("id, name, brand, price, affiliate_url, image_url, network")
     .eq("creator_id", creatorId)
     .eq("id", trimmed)
     .limit(1);
-  if (!data || data.length === 0) return null;
-  const row = data[0] as {
+  if (legacy.data && legacy.data.length > 0) {
+    const row = legacy.data[0] as {
+      id: string;
+      name: string;
+      brand: string | null;
+      price: number | null;
+      affiliate_url: string | null;
+      image_url: string | null;
+      network: string | null;
+    };
+    if (row.affiliate_url) return { ...row, affiliate_url: row.affiliate_url };
+  }
+  const cp = await sb
+    .from("creator_products")
+    .select(
+      "id, product_title, brand, price, affiliate_url, image_url, source_network"
+    )
+    .eq("creator_id", creatorId)
+    .eq("id", trimmed)
+    .limit(1);
+  if (!cp.data || cp.data.length === 0) return null;
+  const row = cp.data[0] as {
     id: string;
-    name: string;
+    product_title: string;
     brand: string | null;
     price: number | null;
     affiliate_url: string | null;
     image_url: string | null;
-    network: string | null;
+    source_network: string | null;
   };
   if (!row.affiliate_url) return null;
-  return { ...row, affiliate_url: row.affiliate_url };
+  return {
+    id: row.id,
+    name: row.product_title,
+    brand: row.brand,
+    price: row.price,
+    affiliate_url: row.affiliate_url,
+    image_url: row.image_url,
+    network: row.source_network,
+  };
 }
 
 async function logEvent(
