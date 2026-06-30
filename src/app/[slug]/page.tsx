@@ -121,38 +121,23 @@ export default async function CreatorPage({
   const sp = await searchParams;
 
   const admin = supabaseAdmin();
-  // `hidden` is column-tolerant: if the migration hasn't been applied
-  // yet (Postgres returns 42703 for unknown column) we retry without
-  // it. Once the column exists the primary query succeeds and
-  // hidden=true correctly 404s.
-  const cols = "id, slug, name, bio, theme, hidden";
-  const primary = await admin
+  // Direct-URL creator lookup. Intentionally does NOT gate on the
+  // `hidden` flag: per the existing chat-route comment and the
+  // prior static janesmith page's behavior, `hidden` is a
+  // /creators-discovery-page filter, not a direct-URL gate. A
+  // creator handed their askmai.co/<slug> URL to followers in DMs
+  // can stay off the public discovery list while their page
+  // still resolves for anyone with the link.
+  const { data, error } = await admin
     .from("creators")
-    .select(cols)
+    .select("id, slug, name, bio, theme")
     .eq("slug", slug)
     .maybeSingle();
-
-  let row: (Pick<Creator, "id" | "slug" | "name" | "bio" | "theme"> & {
-    hidden?: boolean | null;
-  }) | null = null;
-  if (primary.error?.code === "42703") {
-    const fb = await admin
-      .from("creators")
-      .select("id, slug, name, bio, theme")
-      .eq("slug", slug)
-      .maybeSingle();
-    if (fb.error || !fb.data) notFound();
-    row = {
-      ...(fb.data as Pick<Creator, "id" | "slug" | "name" | "bio" | "theme">),
-      hidden: false,
-    };
-  } else if (primary.error || !primary.data) {
-    notFound();
-  } else {
-    row = primary.data as unknown as typeof row;
-  }
-  if (!row || row.hidden) notFound();
-  const creator = row;
+  if (error || !data) notFound();
+  const creator = data as Pick<
+    Creator,
+    "id" | "slug" | "name" | "bio" | "theme"
+  >;
 
   const session = await getServerSession();
   const mode = parseMode(sp?.mode);
