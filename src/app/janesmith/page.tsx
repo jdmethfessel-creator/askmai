@@ -40,6 +40,7 @@ import { cookies } from "next/headers";
 import { supabaseAdmin } from "@/lib/supabase";
 import { getServerSession } from "@/lib/session";
 import TryOnGrid from "../_tryon/TryOnGrid";
+import DressingRoom from "../_tryon/DressingRoom";
 import ModeToggle, { type Mode } from "../_tryon/ModeToggle";
 import Chat from "../[slug]/Chat";
 import type { Creator } from "@/lib/types";
@@ -66,6 +67,7 @@ const SUBTITLE_SHOP = "Search my closet and favorite finds";
 // inside Ask mode carries the closet/routine/travel/finds topic
 // list so the eyebrow doesn't read as a duplicate of the greeting.
 const SUBTITLE_ASK = "Ask me anything";
+const SUBTITLE_ROOM = "Your saved pieces and looks";
 
 export const metadata: Metadata = {
   title: "Jane Smith · AskMai",
@@ -77,7 +79,9 @@ export const metadata: Metadata = {
 export const dynamic = "force-dynamic";
 
 function parseMode(raw: unknown): Mode {
-  return raw === "ask" ? "ask" : "shop";
+  if (raw === "ask") return "ask";
+  if (raw === "room") return "room";
+  return "shop";
 }
 
 export default async function Page({
@@ -122,7 +126,12 @@ export default async function Page({
       : null;
   const accent = themeAccent ?? DEFAULT_ACCENT;
   const creatorFirstName = typedCreator.name.trim().split(/\s+/)[0];
-  const subtitle = mode === "ask" ? SUBTITLE_ASK : SUBTITLE_SHOP;
+  const subtitle =
+    mode === "ask"
+      ? SUBTITLE_ASK
+      : mode === "room"
+      ? SUBTITLE_ROOM
+      : SUBTITLE_SHOP;
 
   return (
     <div className={`${fraunces.variable} ${manrope.variable} tryon-root`}>
@@ -146,6 +155,8 @@ export default async function Page({
             editMode={editMode}
             initialCurated={curated}
           />
+        ) : mode === "room" ? (
+          <DressingRoom creatorSlug={typedCreator.slug} />
         ) : (
           <div className="creator-page-chat-wrap">
             <Chat

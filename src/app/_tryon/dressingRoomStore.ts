@@ -1,23 +1,24 @@
 /**
- * Dressing Room persistence layer (Phase 1 = localStorage).
+ * Dressing Room persistence layer (v1 = localStorage).
  *
  * Keyed by creatorSlug: a visitor can have a separate Dressing
  * Room per creator they browse. No backend storage in this
- * version (per JD: concept test, ship in one push, no new
- * tables). Trade-off: doesn't survive browser-data clear,
- * device switch, or incognito session end. If the concept
- * sticks the next iteration migrates to a `dressing_rooms`
- * table keyed by an anonymous session cookie.
+ * version (concept test, ship in one push, no new tables).
+ * Trade-off: doesn't survive browser-data clear, device switch,
+ * or incognito session end. If the concept sticks the next
+ * iteration migrates to a `dressing_rooms` table keyed by an
+ * anonymous session cookie.
  *
  * Schema versioning: every write includes a `version` so a
  * future migration can detect and reshape old payloads. v1
  * is the only version today.
  *
- * Saved looks store the STORAGE PATH (e.g.
- * "<userId>/<uuid>.png" in the private renders bucket), NOT
- * the signed URL. Signed URLs have a 7-day TTL and would rot;
- * we re-sign on access via /api/render/refresh-url so saved
- * looks remain viewable indefinitely.
+ * Saved looks store the SIGNED URL directly. The render route's
+ * signed URL has a 7-day TTL, so a saved look will 404 after a
+ * week. Acceptable for a concept test; the look-card surfaces an
+ * "expired" state and re-render is one tap away. v2 will migrate
+ * to storage-path + re-sign endpoint when the surface graduates
+ * to server-backed persistence.
  *
  * SSR safety: every function checks for `window` and no-ops on
  * the server. Components consuming this store should run inside
@@ -46,21 +47,34 @@ export type SavedLook = {
   /** crypto.randomUUID at save time; stable forever */
   id: string;
   creatorSlug: string;
-  /** Storage path in the private `renders` bucket. Re-sign on view
-   *  via /api/render/refresh-url. We do NOT store signed URLs
-   *  here to avoid the 7-day TTL bit-rot. */
-  renderPath: string;
+  /**
+   * Signed URL of the rendered "after" image. 7-day TTL inherited
+   * from /api/render. After expiry the look-card shows an expired
+   * state and offers a re-render of the same item set.
+   */
+  renderUrl: string;
+  /**
+   * Signed URL of the user's "before" photo (also 7-day TTL).
+   * Optional because the render route best-efforts this field;
+   * absence is non-fatal.
+   */
+  beforeUrl: string | null;
   /** Product ids that made up this outfit (for the "shop the
    *  pieces" affordance back to the source products). */
   itemIds: string[];
   /** Tiny denormalized cache so we can render the look-card
    *  meta line (item names/brands) without re-querying. Items
    *  in the source catalog may change or get removed; this
-   *  snapshot preserves what the look actually was when saved. */
+   *  snapshot preserves what the look actually was when saved.
+   *  Also carries affiliateUrl + imageUrl so the per-piece Shop
+   *  strip still works on a look saved against an item that has
+   *  since been removed from the room. */
   itemSnapshots: Array<{
     id: string;
     name: string;
     brand: string | null;
+    imageUrl: string;
+    affiliateUrl: string;
   }>;
   savedAt: string;
 };
@@ -85,8 +99,6 @@ export function loadDressingRoom(creatorSlug: string): DressingRoom {
     const raw = window.localStorage.getItem(key(creatorSlug));
     if (!raw) return emptyRoom();
     const parsed = JSON.parse(raw) as DressingRoom;
-    // Schema guard: anything not v1 gets wiped to empty. Cheap and
-    // safe; we only have one schema version today.
     if (!parsed || parsed.version !== STORAGE_VERSION) return emptyRoom();
     if (!Array.isArray(parsed.items)) parsed.items = [];
     if (!Array.isArray(parsed.looks)) parsed.looks = [];
@@ -102,7 +114,6 @@ function save(creatorSlug: string, room: DressingRoom): void {
     window.localStorage.setItem(key(creatorSlug), JSON.stringify(room));
   } catch {
     // QuotaExceededError or private-mode write-block; silently drop.
-    // The user just won't see their addition persist; not blocking.
   }
 }
 
@@ -120,9 +131,10 @@ export function addItem(
   const stamped: SavedItem = { ...item, savedAt: new Date().toISOString() };
   const next: DressingRoom = {
     ...room,
-    items: existing >= 0
-      ? [stamped, ...room.items.filter((i) => i.id !== item.id)]
-      : [stamped, ...room.items],
+    items:
+      existing >= 0
+        ? [stamped, ...room.items.filter((i) => i.id !== item.id)]
+        : [stamped, ...room.items],
   };
   save(creatorSlug, next);
   return next;
@@ -146,10 +158,6 @@ export function hasItem(creatorSlug: string, productId: string): boolean {
   return room.items.some((i) => i.id === productId);
 }
 
-/**
- * Save a rendered look. ID is generated here; caller passes the
- * storage path + the item ids that made up the outfit.
- */
 export function addLook(
   creatorSlug: string,
   look: Omit<SavedLook, "id" | "savedAt">
