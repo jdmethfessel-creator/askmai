@@ -1071,6 +1071,31 @@
   background: var(--t-line, rgba(24,20,14,0.08));
 }
 
+/* ---------- Ask chat product grid ----------
+ * Wraps ProductCard children emitted by the Ask response so each
+ * message's product board reads as a 2-col mobile grid matching
+ * Shop. Same fluid track config as the Shop grid (auto-fill with
+ * a clamp lower-bound) so a wider chat column (desktop) gets 3-4
+ * cards across without re-tuning. Sits inside the chat scroll
+ * column which is already width-capped, so the cards never spread
+ * to the full viewport edge. */
+.chat-product-grid {
+  display: grid !important;
+  grid-template-columns: repeat(auto-fill, minmax(clamp(140px, 22vw, 220px), 1fr));
+  gap: 12px;
+  width: 100%;
+}
+@media (max-width: 480px) {
+  .chat-product-grid {
+    /* Match Shop mobile: two-up grid. Smaller minmax floor so two
+     * cards fit comfortably inside the chat scroll column at
+     * 390px viewport (column is constrained by .creator-page-chat-
+     * wrap padding so cards land ~165px wide each). */
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+}
+
 /* ---------- Dressing Room (3rd tab) ----------
  * Two sections: My items (saved products) and My looks (rendered
  * outfits). Sections share .tryon-page width pinning with the

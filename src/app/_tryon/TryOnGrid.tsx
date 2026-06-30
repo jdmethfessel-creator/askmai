@@ -51,21 +51,10 @@ import {
   removeItem as removeItemFromRoom,
 } from "./dressingRoomStore";
 import { REASON_COPY, ResultActions, type BlockReason } from "./renderShared";
+import { ProductCard, type Product } from "./ProductCard";
 
-type Product = {
-  id: string;
-  source_network: string;
-  product_title: string;
-  brand: string | null;
-  price: number | null;
-  price_display: string | null;
-  image_url: string;
-  affiliate_url: string;
-  product_category: string | null;
-  product_subcategory: string | null;
-  featured: boolean | null;
-};
-
+// `Product` type lives in ./ProductCard so the Ask chat can adapt
+// its model-emitted `Rec` shape into the same shared interface.
 type Category = { key: string; label: string; count: number };
 
 type Interpreted = {
@@ -609,134 +598,6 @@ export default function TryOnGrid({
         />
       ) : null}
     </div>
-  );
-}
-
-function ProductCard({
-  product,
-  onTryOn,
-  tryOnEligible,
-  saved,
-  onToggleSave,
-  editMode,
-  featuredOverride,
-  onToggleFeatured,
-  creatorPossessive,
-}: {
-  product: Product;
-  onTryOn: (p: Product) => void;
-  tryOnEligible: boolean;
-  /** Whether this card is in the user's Dressing Room. The "+"
-   *  flips to "✓" when true; tap again removes. Independent of
-   *  try-on eligibility — non-tryable items can still be saved. */
-  saved: boolean;
-  onToggleSave: (p: Product) => void;
-  editMode: boolean;
-  /** Optimistic featured state set by the local toggle handler;
-   *  undefined means "use product.featured from the API response." */
-  featuredOverride: boolean | undefined;
-  onToggleFeatured: (p: Product) => void;
-  /** Pre-computed possessive form ("Jane's") for the edit-mode
-   *  star tooltip. Falls back to "her" upstream when unset. */
-  creatorPossessive: string;
-}) {
-  // Client-side safety net for broken images. The primary fix is
-  // server-side in /api/tryon-grid/.../products which rewrites
-  // known-bad URL patterns before sending. This onError handler
-  // catches anything that slipped through (truly dead URLs, CORS
-  // failures, network errors at fetch time). On error we unmount
-  // the card entirely so the grid reflows and the browser's
-  // broken-image glyph never paints. Early-return goes AFTER the
-  // hooks so the hook call order is stable across renders.
-  const [imageFailed, setImageFailed] = useState(false);
-  const onShop = useCallback(() => {
-    // Open the byte-for-byte stored affiliate URL. NEVER massage it;
-    // every tracking param is the creator's attribution.
-    window.open(product.affiliate_url, "_blank", "noopener,noreferrer");
-  }, [product.affiliate_url]);
-  if (imageFailed) return null;
-
-  // Resolved featured state for star rendering: optimistic override
-  // first, otherwise whatever the API said when the row loaded.
-  const isFeatured =
-    typeof featuredOverride === "boolean"
-      ? featuredOverride
-      : Boolean(product.featured);
-
-  return (
-    <article className={`tryon-card ${saved ? "is-in-outfit" : ""} ${editMode && isFeatured ? "is-featured" : ""}`}>
-      <div className="tryon-card-image-wrap">
-        {editMode ? (
-          <button
-            type="button"
-            className={`tryon-card-feature ${isFeatured ? "is-on" : ""}`}
-            aria-pressed={isFeatured}
-            aria-label={isFeatured ? "Unfeature this item" : "Feature this item"}
-            onClick={(e) => {
-              e.stopPropagation();
-              onToggleFeatured(product);
-            }}
-            title={isFeatured ? `In ${creatorPossessive} picks` : `Add to ${creatorPossessive} picks`}
-          >
-            {isFeatured ? "★" : "☆"}
-          </button>
-        ) : null}
-        {/* "+" save-to-Room is apparel-only: the Dressing Room is
-            for building outfits, so beauty / home / bags / shoes /
-            jewelry / accessories / swim never get the affordance
-            (same allow-list as the per-card Try-On button below).
-            Eligibility is the strict set in _tryon/outfit.ts. */}
-        {tryOnEligible ? (
-          <button
-            type="button"
-            className={`tryon-card-select ${saved ? "is-selected" : ""}`}
-            aria-pressed={saved}
-            aria-label={saved ? "Remove from Try On" : "Add to Try On"}
-            title={saved ? "Saved · tap to remove" : "Save to Try On"}
-            onClick={(e) => {
-              e.stopPropagation();
-              onToggleSave(product);
-            }}
-          >
-            {saved ? "✓" : "+"}
-          </button>
-        ) : null}
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          className="tryon-card-image"
-          src={product.image_url}
-          alt={product.product_title}
-          loading="lazy"
-          decoding="async"
-          onError={() => setImageFailed(true)}
-        />
-      </div>
-      <div className="tryon-card-meta">
-        {product.brand ? <div className="tryon-card-brand">{product.brand}</div> : null}
-        <div className="tryon-card-title">{product.product_title}</div>
-        {product.price_display ? (
-          <div className="tryon-card-price">{product.price_display}</div>
-        ) : null}
-      </div>
-      <div className="tryon-card-actions">
-        {tryOnEligible ? (
-          <button
-            type="button"
-            className="tryon-btn tryon-btn-primary"
-            onClick={() => onTryOn(product)}
-          >
-            Try This On
-          </button>
-        ) : null}
-        <button
-          type="button"
-          className={`tryon-btn ${tryOnEligible ? "tryon-btn-secondary" : "tryon-btn-primary"}`}
-          onClick={onShop}
-        >
-          Shop
-        </button>
-      </div>
-    </article>
   );
 }
 

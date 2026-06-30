@@ -1,14 +1,93 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ChatMessage, Rec } from "@/lib/types";
-import {
-  classifyOutfitSlot,
-  dedupeOutfitRecs,
-  hasValidOutfitComposition,
-} from "@/lib/outfitSlots";
+import { classifyOutfitSlot } from "@/lib/outfitSlots";
 import RenderLoadingState from "../_tryon/RenderLoadingState";
 import SignInModal from "@/app/_components/SignInModal";
+import { ProductCard, type Product } from "../_tryon/ProductCard";
+import { isTryOnEligibleSubcategory } from "../_tryon/outfit";
+import {
+  addItem as addItemToRoom,
+  loadDressingRoom,
+  removeItem as removeItemFromRoom,
+} from "../_tryon/dressingRoomStore";
+
+// Outfit-slot → Shop subcategory map. Chat's `Rec.category` is the
+// loose category enum (fashion / accessories / beauty / dining /
+// travel / lifestyle); to get the strict Shop subcategory
+// (tops / bottoms / dresses / outerwear / shoes / bags / jewelry /
+// accessories / swim / beauty / home) we run the rec through
+// classifyOutfitSlot (which knows about "midi", "blazer", "boot",
+// etc.) and then map the resulting slot back to a subcategory the
+// ProductCard's tryOnEligible check can read. Slots without a
+// matching subcategory (e.g. "other") fall through to null and the
+// card renders Shop-only — same as the Shop side for any item
+// outside the apparel allow-list in _tryon/outfit.ts.
+function subcategoryForRec(rec: Rec): string | null {
+  const slot = classifyOutfitSlot(rec);
+  switch (slot) {
+    case "top":
+      return "tops";
+    case "bottom":
+      return "bottoms";
+    case "dress":
+      return "dresses";
+    case "outerwear":
+      return "outerwear";
+    case "shoes":
+      return "shoes";
+    case "bag":
+      return "bags";
+    case "jewelry":
+      return "jewelry";
+    case "sunglasses":
+    case "accessory":
+      return "accessories";
+    default:
+      // beauty / lifestyle / unknown -> let the ProductCard logic
+      // decide via product_category. tryOnEligible only cares about
+      // the apparel subcategories so null is safe (no Try-On / +).
+      return null;
+  }
+}
+
+function parsePriceNumber(s: string | undefined): number | null {
+  if (!s) return null;
+  const m = String(s).match(/(\d{1,5}(?:,\d{3})*(?:\.\d+)?)/);
+  if (!m) return null;
+  const n = Number(m[1].replace(/,/g, ""));
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Adapter: turn a chat Rec into the Product shape the shared
+ * ProductCard expects. Ask now renders the exact same card as Shop,
+ * with the same "+" / "Try This On" / "Shop" affordances and the
+ * same apparel-only gating. Non-product recs (dining / travel /
+ * hotels / places) skip this adapter and stay on RecCard.
+ */
+function recToProduct(rec: Rec, idx: number, creatorSlug: string): Product {
+  return {
+    id:
+      rec.product_id ??
+      `chat-${creatorSlug}-${idx}-${(rec.name ?? "")
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .slice(0, 48)}`,
+    source_network: "chat",
+    product_title: rec.name,
+    brand: rec.brand ?? null,
+    price: parsePriceNumber(rec.price),
+    price_display: rec.price ?? null,
+    image_url: rec.image_url ?? "",
+    affiliate_url: rec.affiliate_url ?? "",
+    product_category: rec.category ?? null,
+    product_subcategory: subcategoryForRec(rec),
+    featured: null,
+  };
+}
+
 
 const SUGGESTIONS = [
   "summer dinner outfit, easy but elevated",
@@ -164,15 +243,24 @@ export default function Chat({
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
-  // Per-message kill-switch for the editorial-board renderer: when a hero
-  // image fails to load on a visual-mode message, we flip its index in this
-  // set and the next render demotes that message back to the card layout.
-  // A failed hero image must NEVER stay on screen.
-  const [demotedMessages, setDemotedMessages] = useState<Set<number>>(
-    () => new Set()
-  );
   const [paywallOpen, setPaywallOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  // Try On (Dressing Room) save state, hydrated from the same
+  // localStorage-backed store the Shop "+" writes into. The "+" on
+  // a chat ProductCard adds the item to the user's room for this
+  // creator; cross-tab `storage` event mirrors saves made in Shop
+  // so the "✓" reflects there too. Same wiring as TryOnGrid.
+  const [savedIds, setSavedIds] = useState<Set<string>>(() => new Set());
+  useEffect(() => {
+    setSavedIds(new Set(loadDressingRoom(slug).items.map((i) => i.id)));
+    if (typeof window === "undefined") return;
+    function onStorage(e: StorageEvent) {
+      if (!e.key || !e.key.startsWith("askmai:dressing-room:")) return;
+      setSavedIds(new Set(loadDressingRoom(slug).items.map((i) => i.id)));
+    }
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, [slug]);
 
   // ----- Render quota + modal state ---------------------------------
   // Quota is read once on mount when signed in. The label-flip rule
@@ -387,6 +475,47 @@ export default function Chat({
     startOutfit,
   };
 
+  // Save / unsave to the Dressing Room (Try On tab). Gated by
+  // tryOnEligible at the ProductCard layer so non-apparel cards
+  // never reach this handler; the explicit recheck here is
+  // defense-in-depth, same as TryOnGrid.toggleSave.
+  const toggleSave = useCallback(
+    (product: Product) => {
+      if (!isTryOnEligibleSubcategory(product.product_subcategory)) return;
+      const alreadySaved = savedIds.has(product.id);
+      if (alreadySaved) {
+        removeItemFromRoom(slug, product.id);
+        setSavedIds((prev) => {
+          const next = new Set(prev);
+          next.delete(product.id);
+          return next;
+        });
+      } else {
+        addItemToRoom(slug, {
+          id: product.id,
+          creatorSlug: slug,
+          name: product.product_title,
+          brand: product.brand ?? null,
+          imageUrl: product.image_url,
+          affiliateUrl: product.affiliate_url,
+          subcategory: product.product_subcategory ?? null,
+          priceDisplay: product.price_display ?? null,
+        });
+        setSavedIds((prev) => {
+          const next = new Set(prev);
+          next.add(product.id);
+          return next;
+        });
+      }
+    },
+    [slug, savedIds]
+  );
+
+  const creatorPossessive = useMemo(
+    () => (creatorFirstName ? `${creatorFirstName}'s` : "her"),
+    [creatorFirstName]
+  );
+
   useEffect(() => {
     scrollRef.current?.scrollTo({
       top: scrollRef.current.scrollHeight,
@@ -538,11 +667,6 @@ export default function Chat({
               const showCaret =
                 isAssistant && streaming && isLast && !m.recs;
               const partitioned = m.recs ? partitionRecs(m.recs) : null;
-              const visualEligible = !!(
-                partitioned &&
-                !demotedMessages.has(i) &&
-                isVisualEligible(partitioned.products)
-              );
               return (
                 <li key={i} className="space-y-3">
                   {m.content && (
@@ -571,41 +695,49 @@ export default function Chat({
                             : "whitespace-pre-wrap"
                         }
                       >
-                        {visualEligible
-                          ? extractLeadCaption(m.content)
-                          : m.content}
+                        {m.content}
                       </span>
                     </div>
                   )}
 
                   {partitioned && m.recs && m.recs.length > 0 && (
-                    <div className="space-y-3 mr-auto max-w-[92%]">
-                      {visualEligible ? (
-                        <EditorialBoard
-                          products={partitioned.products}
-                          accent={accent}
-                          onHeroFail={() =>
-                            setDemotedMessages((prev) => {
-                              if (prev.has(i)) return prev;
-                              const next = new Set(prev);
-                              next.add(i);
-                              return next;
-                            })
-                          }
-                          onRefine={send}
-                          streaming={streaming}
-                          renderHooks={renderHooks}
-                        />
-                      ) : (
-                        partitioned.products.map((rec, j) => (
-                          <RecCard
-                            key={recKey(rec, j)}
-                            rec={rec}
-                            accent={accent}
-                            renderHooks={renderHooks}
-                          />
-                        ))
-                      )}
+                    <div className="space-y-3 w-full">
+                      {/* Products use the shared Shop ProductCard so
+                          Ask and Shop have one card and one set of
+                          affordances. Two-col grid mirrors Shop
+                          mobile. apparel-only "+" and "Try This On"
+                          gates ride on the strict allow-list in
+                          _tryon/outfit.ts; beauty / bag / shoe /
+                          jewelry / accessory cards show Shop only.
+                          The "+" writes through the same
+                          dressingRoomStore the Shop "+" uses, so
+                          items added from Ask appear in the Try On
+                          tab automatically. */}
+                      {partitioned.products.length > 0 ? (
+                        <div className="chat-product-grid">
+                          {partitioned.products.map((rec, j) => {
+                            const product = recToProduct(rec, j, slug);
+                            const eligible = isTryOnEligibleSubcategory(
+                              product.product_subcategory
+                            );
+                            return (
+                              <ProductCard
+                                key={recKey(rec, j)}
+                                product={product}
+                                tryOnEligible={eligible}
+                                saved={savedIds.has(product.id)}
+                                onToggleSave={toggleSave}
+                                onTryOn={() => startSingle(rec)}
+                                creatorPossessive={creatorPossessive}
+                              />
+                            );
+                          })}
+                        </div>
+                      ) : null}
+                      {/* Places (restaurants / hotels) stay on the
+                          existing RecCard — different action set
+                          (Reserve / Directions / Menu) than the
+                          shop-style product card. */}
                       {partitioned.places.map((rec, j) => (
                         <RecCard
                           key={recKey(rec, partitioned.products.length + j)}
@@ -614,11 +746,6 @@ export default function Chat({
                           renderHooks={renderHooks}
                         />
                       ))}
-                      <OutfitRenderPill
-                        recs={partitioned.products}
-                        hooks={renderHooks}
-                        streaming={streaming && isLast}
-                      />
                     </div>
                   )}
                 </li>
@@ -1977,60 +2104,12 @@ function SingleRenderPill({
   );
 }
 
-function OutfitRenderPill({
-  recs,
-  hooks,
-  streaming,
-}: {
-  recs: Rec[];
-  hooks: RenderHooks;
-  streaming: boolean;
-}) {
-  // Per-response gate: only mount when at least two qualifying items
-  // exist so a 1-item response never gets the outfit button. Single
-  // items keep just their per-card pill.
-  //
-  // Slot dedup runs CLIENT-side as well as server-side. The render
-  // endpoint should never receive two heels (or two bags, two
-  // dresses) because that's not a coherent outfit — gpt-image-1
-  // would try to interpret the duplicate and the result is
-  // unpredictable. dedupeOutfitRecs is the same lib the chat assembler
-  // uses, so server + client agree on what a "complete look" is.
-  const qualifying = dedupeOutfitRecs(
-    recs.filter(
-      (r) => qualifiesForRender(r) && typeof r.image_url === "string" && r.image_url.length > 0
-    )
-  );
-  if (qualifying.length < 2) return null;
-  // Composition gate: a coherent outfit needs a top-level garment
-  // (a dress, OR top + bottom). A pile of accessories (sunglasses +
-  // jewelry + bag) is not an outfit, so we hide the "Try This Outfit
-  // on Me" pill. Each accessory still has its per-card render pill,
-  // which is the right granularity for those items.
-  if (!hasValidOutfitComposition(qualifying)) return null;
-  // Suppress while the message is mid-stream — the outfit pill would
-  // appear before the final card render and look like a flicker.
-  if (streaming) return null;
-  const outOfQuota = hooks.quota !== null && hooks.quota.total <= 0;
-  const label = outOfQuota ? "Buy Image Package" : "Try This Outfit on Me";
-  return (
-    <button
-      type="button"
-      onClick={() => {
-        if (hooks.busy) return;
-        hooks.startOutfit(qualifying);
-      }}
-      disabled={hooks.busy}
-      className="mt-1 w-full rounded-2xl px-4 py-3 text-[13px] font-semibold text-white disabled:opacity-50 transition-all hover:translate-y-[-1px]"
-      style={{
-        background: hooks.accent,
-        boxShadow: "0 4px 12px -4px rgba(0,0,0,0.25)",
-      }}
-    >
-      {label}
-    </button>
-  );
-}
+// OutfitRenderPill (formerly "Try This Outfit on Me") was removed
+// with the Ask card refactor. Multi-item try-on now happens from
+// the Try On tab: a user adds pieces from Ask via the ProductCard
+// "+", switches to Try On, multi-selects there, and renders.
+// startOutfit + dedupeOutfitRecs + hasValidOutfitComposition stay
+// on the render route for the Try On tab's render path.
 
 // -------------------- Render result + gate modal ------------------
 //
