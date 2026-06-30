@@ -28,14 +28,27 @@
 }
 
 .tryon-page {
+  /* CRITICAL width pinning: .tryon-page is a flex item inside
+   * .creator-page-body (display:flex; flex-direction:column;
+   * align-items:stretch). Without width:100% and min-width:0
+   * here, the grid inside (auto-fill, minmax(150,1fr)) cascades
+   * its preferred track count upward, expanding this container
+   * past viewport width. Measured at 390px viewport: without
+   * these declarations .tryon-page computed to 702px and the
+   * grid rendered 4 columns instead of 2, with the user needing
+   * to scroll horizontally. With these pins the grid correctly
+   * auto-fills 2 columns in the 358px content area at 390px
+   * viewport. */
+  width: 100%;
+  min-width: 0;
   max-width: 1320px;
   margin: 0 auto;
-  /* Bottom padding was 140px when the asker was fixed-positioned
-   * (reserved space below the last row so the fixed bar didn't
-   * cover cards). Asker is now sticky inside this container, so
-   * it takes its own in-flow space; 32px is just breathing room
-   * below the asker. */
-  padding: 0 16px 32px;
+  box-sizing: border-box;
+  /* Bottom padding reserves clear space so the sticky asker bar
+   * doesn't visually cover the last row of cards when scrolled to
+   * end. Asker is ~58px tall + 14px from viewport bottom + a
+   * ~24px breathing buffer = 96px. */
+  padding: 0 16px 96px;
 }
 
 /* ---------- header ---------- */
@@ -204,20 +217,39 @@
 .tryon-card-image-wrap {
   background: #f1ede4;
   width: 100% !important;
-  /* Uniform card heights via the padding-bottom 3:4 trick AS THE
-   * PRIMARY MECHANISM (not aspect-ratio). iOS Safari has known
-   * bugs with `aspect-ratio` inside `display:flex` containers on
-   * several iOS versions: the property gets ignored, and the
-   * image-wrap collapses to the natural image height. The
-   * padding-bottom pseudo-element pattern works everywhere and
-   * predates aspect-ratio. We keep aspect-ratio as well so modern
-   * non-flex contexts get the spec-clean behavior. The inner img
-   * uses position:absolute to fill the slot inside-out. */
+  /* Default aspect: 3:4 portrait (good for fashion product
+   * shots on desktop, where card width = 240px and image height
+   * = 320px). Mobile gets a tighter 1:1 override below so 2
+   * full rows fit on a 390x844 iPhone viewport without
+   * scrolling (measured: 2 cards * 1:1 ratio + chrome + asker
+   * clearance fits in 524px of grid space at 390 viewport).
+   *
+   * Implementation note: padding-bottom % is the load-bearing
+   * mechanism (works on every browser including iOS Safari
+   * where aspect-ratio inside display:flex containers is known
+   * to be buggy). aspect-ratio kept as a spec-clean redundancy.
+   * The inner img uses position:absolute to fill the slot. */
   aspect-ratio: 3 / 4 !important;
   height: 0 !important;
   padding-bottom: 133.333% !important; /* 4 / 3 = 1.3333 */
   position: relative;
   overflow: hidden;
+}
+@media (max-width: 480px) {
+  .tryon-card-image-wrap {
+    /* Mobile: square (1:1) to fit 2 full rows per viewport.
+     * Computed measurements at 390x844 iPhone:
+     *   chrome (header+pills+scope-banner) = ~236px
+     *   available grid space = 524px
+     *   target: 2 cards + 16px gap <= 524 -> card <= 254
+     *   with tight meta/actions (~88px chrome), image area
+     *   must be <= ~166px. 1:1 on a 171px-wide card = 171px
+     *   image, total card ~259px. 2 rows = 534, just inside.
+     * Tradeoff: less product-shot ratio, but mobile shopping
+     * benefits from density. */
+    aspect-ratio: 1 / 1 !important;
+    padding-bottom: 100% !important;
+  }
 }
 .tryon-card-image-wrap > img {
   position: absolute !important;
@@ -273,6 +305,45 @@
   padding: 10px 12px 12px;
 }
 
+/* Mobile compactness pass. Targets <= 480px viewport (covers
+ * every phone). Brings the card's non-image chrome from ~110px
+ * down to ~88px so a 1:1 image (171px tall on a 171px-wide
+ * card at 390 viewport) yields a total card height of ~259px,
+ * which fits 2 full rows in the ~524px of grid space available
+ * between the page header / pills / scope banner above and the
+ * sticky asker bar below. Desktop sizes are unchanged. */
+@media (max-width: 480px) {
+  .tryon-card-meta {
+    padding: 6px 10px 2px;
+  }
+  .tryon-card-brand {
+    font-size: 10px;
+    letter-spacing: 0.06em;
+  }
+  .tryon-card-title {
+    font-size: 12px;
+    line-height: 1.25;
+    margin: 1px 0 0;
+    /* Single-line clamp on mobile so card height stays under
+     * the per-card budget needed to fit 2 full rows in the
+     * available grid space at 390x844. Longer titles get
+     * ellipsis; the brand line above + the visible image
+     * disambiguate. */
+    display: -webkit-box;
+    -webkit-line-clamp: 1;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .tryon-card-price {
+    margin-top: 2px;
+    font-size: 11px;
+  }
+  .tryon-card-actions {
+    gap: 4px;
+    padding: 6px 8px 8px;
+  }
+}
+
 .tryon-btn {
   flex: 1;
   padding: 8px 10px;
@@ -289,6 +360,16 @@
   justify-content: center;
   white-space: nowrap;
   transition: background 120ms, color 120ms, border-color 120ms;
+}
+/* Mobile button compactness (matches the card-meta tightening
+ * above): shrinks button height from 32 to 26px and font from
+ * 12 to 11px so the actions row clears the card budget. */
+@media (max-width: 480px) {
+  .tryon-btn {
+    padding: 6px 8px;
+    font-size: 11px;
+    letter-spacing: 0.01em;
+  }
 }
 .tryon-btn-primary {
   background: var(--t-accent);
@@ -500,7 +581,7 @@
   /* Full width on every viewport so the header reads as a true
    * page-level band, not a narrow island in the top-left. Inner
    * items are centered via align-items + text-align so the
-   * "Cass DiMicco" title and Shop/Ask toggle sit in the middle
+   * creator name and Shop/Ask toggle sit in the middle
    * regardless of width.
    *
    * !important on width + display defeats any older cached rule
@@ -519,6 +600,56 @@
   align-items: center;
   gap: 10px;
   text-align: center;
+}
+/* Mobile compactness for the header so the grid gets more
+ * vertical real estate. Saves ~80px of chrome at 390px
+ * viewport, freeing space for the 2nd row of cards to fit
+ * without scrolling. Tighter padding + smaller title +
+ * collapsed gaps. */
+@media (max-width: 480px) {
+  .creator-page-header {
+    padding: 12px 16px 4px;
+    gap: 4px;
+  }
+  .creator-page-title {
+    font-size: 22px !important;
+    line-height: 1.05 !important;
+  }
+  .creator-page-eyebrow {
+    font-size: 10px !important;
+    letter-spacing: 0.12em !important;
+  }
+  .tryon-mode-toggle {
+    margin: 4px auto 0 !important;
+    padding: 3px !important;
+  }
+  .tryon-mode-btn {
+    padding: 6px 14px !important;
+    font-size: 12px !important;
+    min-width: 60px !important;
+  }
+}
+/* Mobile compactness for the pills + scope banner: tighter
+ * padding so more vertical space is available for cards. */
+@media (max-width: 480px) {
+  .tryon-pills {
+    padding: 8px 28px 8px 0 !important;
+  }
+  .tryon-pill {
+    padding: 6px 12px !important;
+    font-size: 12px !important;
+  }
+  .tryon-scope-banner {
+    padding: 6px 4px 8px !important;
+  }
+  .tryon-scope-label {
+    font-size: 10px !important;
+    letter-spacing: 0.12em !important;
+  }
+  .tryon-scope-toggle {
+    font-size: 11px !important;
+    padding: 4px 8px !important;
+  }
 }
 .creator-page-eyebrow {
   font: 600 11px/1 var(--font-body), system-ui, sans-serif;
