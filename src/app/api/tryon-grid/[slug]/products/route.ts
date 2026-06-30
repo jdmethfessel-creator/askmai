@@ -345,6 +345,16 @@ type InterleaveCursor = Partial<Record<Network, NetworkCursor>>;
 
 const SELECT_COLS =
   "id, source_network, product_title, brand, price, price_display, image_url, affiliate_url, product_category, product_subcategory, featured, created_at";
+// Fallback select used when the `featured` column hasn't been migrated
+// onto the deployed DB yet. Same pattern as the column-tolerant
+// `hidden` handling in src/app/[slug]/page.tsx: try the primary SELECT
+// first, and on Postgres error code 42703 ("column does not exist")
+// retry with this no-featured variant. Rows come back with
+// featured=null so downstream consumers (the ProductCard star toggle,
+// the curated filter) treat them as unfeatured — graceful degradation
+// instead of a blank Shop page.
+const SELECT_COLS_NO_FEATURED =
+  "id, source_network, product_title, brand, price, price_display, image_url, affiliate_url, product_category, product_subcategory, created_at";
 
 // Server-side rewrite of the known-bad Shopbop CDN URL pattern.
 // Background: the parser was historically writing image_urls
@@ -468,62 +478,84 @@ async function fetchOneNetwork(args: {
   descriptors: string[];
   featuredOnly: boolean;
 }): Promise<{ rows: Array<Product & { created_at: string }>; mayHaveMore: boolean }> {
-  const admin = supabaseAdmin();
-  let query = admin
-    .from("creator_products")
-    .select(SELECT_COLS)
-    .eq("creator_id", args.creatorId)
-    .eq("source_network", args.network)
-    .order("created_at", { ascending: false })
-    .order("id", { ascending: false })
-    .limit(args.perLimit);
+  // Column-tolerant fetch: try with SELECT_COLS (includes
+  // `featured`) and, on the Postgres 42703 "column does not exist"
+  // error, retry with the no-featured variant. The featured column
+  // ships in migration 009; an undeployed DB returned 42703 to every
+  // fetch and the whole grid went blank silently. Falling back means
+  // the catalog still renders, edit-mode just sees null featured
+  // flags (which read as "off") until the column is added.
+  const buildQuery = (cols: string) => {
+    const admin = supabaseAdmin();
+    let q = admin
+      .from("creator_products")
+      .select(cols)
+      .eq("creator_id", args.creatorId)
+      .eq("source_network", args.network)
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
+      .limit(args.perLimit);
 
-  // Curated-view filter. fetchPage computes featuredOnly as "the
-  // caller passed ?curated=1 AND the creator has at least one
-  // featured row." Default view is the full catalog, so this is
-  // off unless the user opted in.
-  if (args.featuredOnly) {
-    query = query.eq("featured", true);
-  }
+    // Curated-view filter. fetchPage computes featuredOnly as "the
+    // caller passed ?curated=1 AND the creator has at least one
+    // featured row." Default view is the full catalog, so this is
+    // off unless the user opted in. If `featured` is missing on the
+    // DB, fetchPage's count probe returns 0 so featuredOnly is also
+    // false here, meaning we never reach the .eq("featured", true)
+    // line with a missing column.
+    if (args.featuredOnly) {
+      q = q.eq("featured", true);
+    }
 
-  if (args.cursor) {
-    // Tuple cursor (created_at, id) < (cursor.ts, cursor.id). PostgREST
-    // doesn't expose row-value comparison; we expand it as
-    //   created_at < cursor.ts  OR  (created_at = cursor.ts AND id < cursor.id)
-    // The .or() string treats commas as separators, so the AND clause
-    // is wrapped in and(...) per PostgREST syntax.
-    query = query.or(
-      `created_at.lt.${args.cursor.ts},and(created_at.eq.${args.cursor.ts},id.lt.${args.cursor.id})`
-    );
-  }
-
-  if (args.effectiveSubcategory) {
-    query = query.eq("product_subcategory", args.effectiveSubcategory);
-  }
-
-  if (args.maxPrice != null) {
-    // Hard ceiling. Typed into the search bar, a price cap is exact
-    // ("under $250" means <= 250, not <= 275). The chat layer can
-    // still apply its own budget-target padding; this is a filter
-    // box, not a conversation. Note: the relaxation ladder also
-    // never drops this filter (see attempts[] above), so the user
-    // never sees a price > their stated cap.
-    query = query.lte("price", args.maxPrice);
-  }
-
-  // Descriptors match each against title OR brand OR affiliate_url
-  // with word/path boundaries (POSIX imatch). See top-level docs.
-  if (args.descriptors.length) {
-    for (const d of args.descriptors) {
-      const safe = d.replace(/[^a-z0-9]/gi, "").slice(0, 40);
-      if (!safe) continue;
-      query = query.or(
-        `product_title.imatch.\\m${safe}\\M,brand.imatch.\\m${safe}\\M,affiliate_url.imatch.[-/]${safe}[-/?]`
+    if (args.cursor) {
+      // Tuple cursor (created_at, id) < (cursor.ts, cursor.id). PostgREST
+      // doesn't expose row-value comparison; we expand it as
+      //   created_at < cursor.ts  OR  (created_at = cursor.ts AND id < cursor.id)
+      // The .or() string treats commas as separators, so the AND clause
+      // is wrapped in and(...) per PostgREST syntax.
+      q = q.or(
+        `created_at.lt.${args.cursor.ts},and(created_at.eq.${args.cursor.ts},id.lt.${args.cursor.id})`
       );
     }
-  }
 
-  const { data, error } = await query;
+    if (args.effectiveSubcategory) {
+      q = q.eq("product_subcategory", args.effectiveSubcategory);
+    }
+
+    if (args.maxPrice != null) {
+      // Hard ceiling. Typed into the search bar, a price cap is exact
+      // ("under $250" means <= 250, not <= 275). The chat layer can
+      // still apply its own budget-target padding; this is a filter
+      // box, not a conversation. Note: the relaxation ladder also
+      // never drops this filter (see attempts[] above), so the user
+      // never sees a price > their stated cap.
+      q = q.lte("price", args.maxPrice);
+    }
+
+    // Descriptors match each against title OR brand OR affiliate_url
+    // with word/path boundaries (POSIX imatch). See top-level docs.
+    if (args.descriptors.length) {
+      for (const d of args.descriptors) {
+        const safe = d.replace(/[^a-z0-9]/gi, "").slice(0, 40);
+        if (!safe) continue;
+        q = q.or(
+          `product_title.imatch.\\m${safe}\\M,brand.imatch.\\m${safe}\\M,affiliate_url.imatch.[-/]${safe}[-/?]`
+        );
+      }
+    }
+    return q;
+  };
+
+  let { data, error } = await buildQuery(SELECT_COLS);
+  // 42703 = "column does not exist". The only optional column in
+  // SELECT_COLS is `featured` (added in migration 009); if it hasn't
+  // been deployed yet, retry without it.
+  if (error?.code === "42703") {
+    console.warn(
+      `[tryon-grid/products] ${args.network} retrying without featured column (run migration 009)`
+    );
+    ({ data, error } = await buildQuery(SELECT_COLS_NO_FEATURED));
+  }
   if (error) {
     console.error(
       `[tryon-grid/products] ${args.network} fetch error:`,
@@ -531,7 +563,18 @@ async function fetchOneNetwork(args: {
     );
     return { rows: [], mayHaveMore: false };
   }
-  const rows = (data ?? []) as Array<Product & { created_at: string }>;
+  // Back-fill featured=null on the no-featured fallback path so the
+  // Product shape stays uniform for downstream consumers. supabase-js
+  // narrows `data` to GenericStringError[] when the select-string
+  // generic isn't resolvable at compile-time (our SELECT_COLS is a
+  // runtime string), so we cast via unknown.
+  const raw = (data ?? []) as unknown as Array<
+    Omit<Product, "featured"> & { featured?: boolean | null; created_at: string }
+  >;
+  const rows: Array<Product & { created_at: string }> = raw.map((r) => ({
+    ...r,
+    featured: r.featured ?? null,
+  }));
   // If the fetch hit the per-network limit, DB may still have more
   // rows of this network past the last one fetched.
   return { rows, mayHaveMore: rows.length === args.perLimit };
@@ -553,11 +596,21 @@ async function fetchPage(opts: PageOpts): Promise<{
   let featuredOnly = false;
   if (opts.curated) {
     const admin = supabaseAdmin();
-    const { count } = await admin
+    const { count, error } = await admin
       .from("creator_products")
       .select("id", { count: "exact", head: true })
       .eq("creator_id", opts.creatorId)
       .eq("featured", true);
+    // 42703 = column not yet migrated. Treat as "no featured rows"
+    // so the curated opt-in falls through to the full catalog,
+    // matching the documented fallback. Any other error stays
+    // featuredOnly=false too (safer than blanking the page).
+    if (error && error.code !== "42703") {
+      console.error(
+        "[tryon-grid/products] featured-count error:",
+        error
+      );
+    }
     featuredOnly = (count ?? 0) > 0;
   }
 
