@@ -10,6 +10,14 @@
   display: block;
   width: 100%;
   min-height: 100dvh;
+  /* Sticky-header height tokens. The creator-page-header pins to
+   * viewport top via position:sticky; the category pills inside
+   * .tryon-page also stick to the top and need to offset below the
+   * header so they don't slide under it. Single source of truth
+   * here keeps the two values aligned across breakpoints. Measured
+   * from the actual rendered header (eyebrow + name + toggle +
+   * paddings): ~124px on desktop, ~88px on mobile. */
+  --header-h: 124px;
   --t-bg: #fafaf7;
   --t-surface: #ffffff;
   --t-ink: #18140e;
@@ -84,7 +92,10 @@
  * Firefox respect mask-image. */
 .tryon-pills {
   position: sticky;
-  top: 0;
+  /* Pin below the sticky creator-page-header. --header-h is set on
+   * .tryon-root and adjusted per breakpoint so the pills always
+   * land flush against the header's bottom edge. */
+  top: var(--header-h, 124px);
   z-index: 30;
   display: flex;
   gap: 8px;
@@ -600,6 +611,17 @@
   align-items: center;
   gap: 10px;
   text-align: center;
+  /* Sticky to viewport top so the creator name and Shop / Ask /
+   * Dressing Room tabs stay reachable as the catalog scrolls
+   * beneath. z-index sits above the pills (30) and below modals
+   * (50+). Solid background is required because cards will scroll
+   * underneath; the bg token matches the page so the header reads
+   * as a flush extension of the surface, not a separate bar. */
+  position: -webkit-sticky;
+  position: sticky;
+  top: 0;
+  z-index: 45;
+  background: var(--t-bg, #fafaf7);
 }
 /* Mobile compactness for the header so the grid gets more
  * vertical real estate. Saves ~80px of chrome at 390px
@@ -607,6 +629,12 @@
  * without scrolling. Tighter padding + smaller title +
  * collapsed gaps. */
 @media (max-width: 480px) {
+  /* Mobile shrinks the header so we reset --header-h to match the
+   * tighter padding + smaller name/eyebrow/toggle. Keeps the pills'
+   * sticky offset aligned with the actual rendered header height. */
+  .tryon-root {
+    --header-h: 88px;
+  }
   .creator-page-header {
     padding: 12px 16px 4px;
     gap: 4px;

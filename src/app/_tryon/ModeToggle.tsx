@@ -21,10 +21,14 @@ import { useTransition } from "react";
 
 export type Mode = "shop" | "ask" | "room";
 
+// Display labels are decoupled from the URL `mode` value. The route
+// value stays "room" (shareable URLs in the wild already use it);
+// the visible label is "Dressing Room" because the user-facing
+// concept reads better than a one-word tab.
 const TABS: { mode: Mode; label: string }[] = [
   { mode: "shop", label: "Shop" },
   { mode: "ask", label: "Ask" },
-  { mode: "room", label: "Room" },
+  { mode: "room", label: "Dressing Room" },
 ];
 
 export default function ModeToggle({ current }: { current: Mode }) {
