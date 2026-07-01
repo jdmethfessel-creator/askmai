@@ -637,8 +637,9 @@ export default function Chat({
               className="mr-auto max-w-[88%] rounded-3xl rounded-bl-lg px-4 py-3 text-[13.5px] leading-relaxed mb-5"
               style={{ background: "rgba(0,0,0,0.035)" }}
             >
-              hey, it&apos;s {creatorFirstName}. ask me about my closet,
-              routine, travel, or any of my favorite finds.
+              hey, i&apos;m Mai — {creatorFirstName}&apos;s styling
+              assistant. ask me about her closet, her go-to spots, or
+              anything else she recommends.
             </div>
             <p className="font-serif text-[13px] italic opacity-55 mb-2 pl-1">
               try asking

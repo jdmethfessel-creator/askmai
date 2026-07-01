@@ -20,6 +20,11 @@ import {
 } from "@/lib/outfitSlots";
 import type { ChatMessage, Creator, Rec } from "@/lib/types";
 import { extractGarmentTypes, parseQuery } from "@/lib/tryonGridSearch";
+import { buildMaiPrompt } from "@/lib/mai/systemPrompt";
+import {
+  derivePreferredBrands,
+  loadContentChunks,
+} from "@/lib/mai/context";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -70,17 +75,18 @@ export async function POST(request: Request) {
   // creator by slug. /creators public discovery still filters hidden
   // rows (see src/app/creators/page.tsx); discovery and direct-link
   // access are separate concerns.
-  const sel = "id, slug, name, bio, voice_prompt, taste_profile";
+  // Mai-flow: we don't read voice_prompt / taste_profile any more.
+  // Those columns are kept in the DB for rollback safety but Mai's
+  // system prompt is one universal identity, and preferred brands
+  // are derived from creator_products directly.
+  const sel = "id, slug, name";
   const lookup = await sb
     .from("creators")
     .select(sel)
     .eq("slug", slug)
     .maybeSingle();
 
-  type CreatorRow = Pick<
-    Creator,
-    "id" | "slug" | "name" | "bio" | "voice_prompt" | "taste_profile"
-  >;
+  type CreatorRow = Pick<Creator, "id" | "slug" | "name">;
   if (lookup.error || !lookup.data) {
     return Response.json({ error: "Creator not found" }, { status: 404 });
   }
@@ -156,27 +162,44 @@ export async function POST(request: Request) {
     creatorId,
     message,
     budgetCeilingPrefetch,
-    recentlyShown.ids,
-    creator.taste_profile
+    recentlyShown.ids
   );
   const catalog = catalogSelection.rows;
-  const knownProducts = buildKnownProducts(catalog, creator.taste_profile);
+  // Content chunks from the creator's blog / travel / dining
+  // posts. Mai reads these for non-fashion answers. Table-tolerant
+  // when migration 013 hasn't run yet -- returns [].
+  const contentChunks = await loadContentChunks(creatorId, message);
+  // buildKnownProducts historically also pulled beauty product
+  // names from taste_profile so the prose-augmenter could match
+  // them. Mai doesn't have taste_profile any more; catalog is the
+  // sole source of known products. Pass null explicitly so the
+  // legacy signature stays intact.
+  const knownProducts = buildKnownProducts(catalog, null);
   const creatorRef = {
     id: creatorId,
     slug: creator.slug,
-    taste_profile: creator.taste_profile,
+    // Legacy sites (enrichRecsBlock, assembleFallbackOutfit) read
+    // taste_profile for the own-brand-no-catalog guardrail. Mai
+    // doesn't generate that data, so pass undefined and the
+    // guardrail becomes a no-op (safe -- worst case we don't drop
+    // a fabricated own-brand card, but Mai's prompt doesn't
+    // fabricate them in the first place).
+    taste_profile: undefined,
   };
   const budgetCeiling = budgetCeilingPrefetch;
   const productRequest = isProductRequest(message);
-  const systemPrompt = buildSystemPrompt(
-    creator,
+  const creatorFirstName = creator.name.trim().split(/\s+/)[0];
+  const systemPrompt = buildMaiPrompt({
+    creatorFirstName,
+    creatorFullName: creator.name,
     catalog,
+    contentChunks,
     budgetCeiling,
     productRequest,
     recentlyShownText,
-    catalogSelection.relaxLevel,
-    catalogSelection.requestedTypes
-  );
+    catalogRelaxLevel: catalogSelection.relaxLevel,
+    requestedTypes: catalogSelection.requestedTypes,
+  });
   const history = sanitizeHistory(rawHistory);
 
   const client = new Anthropic();
@@ -2309,8 +2332,7 @@ async function loadCatalog(
   creatorId: string,
   userMessage: string,
   budgetCeiling: number | null,
-  excludeIds: Set<string> = new Set(),
-  taste: Creator["taste_profile"] = null
+  excludeIds: Set<string> = new Set()
 ): Promise<CatalogSelection> {
   const sb = supabaseAdmin();
   // Coarse category from CATEGORY_HINTS (fashion / accessories /
@@ -2469,12 +2491,13 @@ async function loadCatalog(
     return { rows: [], relaxLevel: "broad", requestedTypes: types.keys };
   }
 
-  // Brands-loved boost runs WITHIN the chosen relaxation level --
-  // never overrides garment type. By the time we sort, every row
-  // in `chosen.rows` already satisfies the type filter (or the
-  // type filter was relaxed away because no item matched, in which
-  // case brand-love sorting is appropriate again).
-  const preferred = collectPreferredBrands(taste);
+  // Preferred-brand boost runs WITHIN the chosen relaxation level --
+  // never overrides garment type. Under the Mai flow the preferred
+  // brand set is derived deterministically from the creator's
+  // catalog counts (top-N brands they actually shop) instead of
+  // the old taste_profile.fashion.brands_loved which was LLM-
+  // generated voice-gen output.
+  const preferred = derivePreferredBrands(chosen.rows);
   if (preferred.size > 0) {
     chosen.rows.sort((a, b) => {
       const ap = a.brand && preferred.has(a.brand.toLowerCase()) ? 0 : 1;
