@@ -35,8 +35,8 @@ type FormState =
         preview_url: string;
         edit_url: string | null;
         ingested: { total: number; by_network: Record<string, number> };
+        content_chunks: number;
         skipped: Array<{ url: string; reason: string }>;
-        voice_source: "llm" | "fallback";
       };
     }
   | { kind: "error"; message: string };
@@ -44,9 +44,8 @@ type FormState =
 const PROGRESS_MESSAGES = [
   "Pulling your affiliate catalogs…",
   "Counting your products…",
-  "Reading your interview + blog text…",
-  "Generating your AI voice (this is the slow part)…",
-  "Drafting your taste profile…",
+  "Reading your blog content…",
+  "Chunking passages for Mai…",
   "Going live…",
 ];
 
@@ -56,7 +55,6 @@ export function SignupForm() {
   const [slugHint, setSlugHint] = useState("");
   const [autoSlug, setAutoSlug] = useState(true);
 
-  const [interviewText, setInterviewText] = useState("");
   const [blogUrls, setBlogUrls] = useState("");
 
   const [shopmyUrl, setShopmyUrl] = useState("");
@@ -66,7 +64,6 @@ export function SignupForm() {
 
   const [igHandle, setIgHandle] = useState("");
   const [tiktokHandle, setTiktokHandle] = useState("");
-  const [bioHint, setBioHint] = useState("");
 
   const [state, setState] = useState<FormState>({ kind: "idle" });
   const [progressIdx, setProgressIdx] = useState(0);
@@ -100,8 +97,6 @@ export function SignupForm() {
     .map((u) => u.trim())
     .filter(Boolean);
 
-  const hasVoiceInput =
-    interviewText.trim().length >= 200 || blogUrlList.length > 0;
   const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
 
   const canSubmit =
@@ -124,12 +119,10 @@ export function SignupForm() {
           name: name.trim(),
           email: email.trim(),
           slug_hint: slugHint.trim() || undefined,
-          bio_hint: bioHint.trim() || undefined,
           ig_handle: igHandle.trim() || undefined,
           tiktok_handle: tiktokHandle.trim() || undefined,
           affiliate_urls: affiliateUrls,
           blog_urls: blogUrlList,
-          interview_text: interviewText.trim() || undefined,
         }),
       });
       if (!r.ok) {
@@ -207,52 +200,14 @@ export function SignupForm() {
 
       <section className="signup-section signup-section-highlight">
         <h2 className="signup-h2">
-          Voice <span className="signup-required">*</span>
+          Drop your affiliate links{" "}
+          <span className="signup-required">*</span>
         </h2>
         <p className="signup-section-sub">
-          This is the most important part. Your AI twin will sound
-          generic without your real words to learn from. Paste an
-          interview, a long-form caption, a personal essay — anything
-          that captures how you actually talk. Or drop a blog URL we
-          can read.
-        </p>
-        <FieldTextarea
-          id="interview_text"
-          label="Interview text, personal essay, or your own writing"
-          help={`Paste raw text. Longer is better. 500+ words = a believable voice. The text never leaves AskMai.`}
-          value={interviewText}
-          onChange={setInterviewText}
-          rows={10}
-          maxLength={50_000}
-          placeholder={`Example: an interview transcript, a Substack post, a Notes app entry where you talk about your closet, your routine, your travel taste…`}
-        />
-        <Field
-          id="blog_urls"
-          label="Blog / Substack / portfolio URLs (one or more)"
-          help="Comma- or newline-separated. We fetch and read these to learn your phrasing."
-          value={blogUrls}
-          onChange={setBlogUrls}
-          placeholder="https://yourblog.com/about, https://yourblog.com/2024/best-of"
-          maxLength={2000}
-        />
-        {!hasVoiceInput && interviewText.length + blogUrls.length > 0 ? (
-          <p className="signup-warn">
-            Heads up: your AI twin will sound generic without 200+
-            words of interview text OR at least one blog URL we can
-            read. You can still submit, but plan to edit your voice
-            right after.
-          </p>
-        ) : null}
-      </section>
-
-      <section className="signup-section">
-        <h2 className="signup-h2">
-          Where your products live <span className="signup-required">*</span>
-        </h2>
-        <p className="signup-section-sub">
-          Paste your public affiliate URLs. We pull every product
-          we can find. LTK isn&apos;t supported yet — anything we
-          can&apos;t read gets skipped and reported back to you.
+          Your fashion &amp; beauty shopping recs. Mai recommends
+          from these and followers try them on. LTK isn&apos;t
+          supported yet — anything we can&apos;t read gets skipped
+          and reported back.
         </p>
         <div className="signup-grid">
           <Field
@@ -290,6 +245,24 @@ export function SignupForm() {
         </div>
       </section>
 
+      <section className="signup-section signup-section-highlight">
+        <h2 className="signup-h2">Drop your blog links</h2>
+        <p className="signup-section-sub">
+          Travel, restaurants &amp; more. Mai reads these so she can
+          answer non-fashion questions from your actual guides — the
+          hotel from that Tulum trip, the pasta place you keep
+          re-linking. Comma- or newline-separated.
+        </p>
+        <Field
+          id="blog_urls"
+          label="Blog / Substack / travel guide URLs"
+          value={blogUrls}
+          onChange={setBlogUrls}
+          placeholder="https://yourblog.com/tulum-guide, https://yourblog.com/nyc-favorites"
+          maxLength={2000}
+        />
+      </section>
+
       <section className="signup-section">
         <h2 className="signup-h2">Optional context</h2>
         <div className="signup-grid">
@@ -310,15 +283,6 @@ export function SignupForm() {
             maxLength={120}
           />
         </div>
-        <FieldTextarea
-          id="bio_hint"
-          label="Short bio (optional)"
-          help="One or two sentences that capture who you are. Shows up on your page."
-          value={bioHint}
-          onChange={setBioHint}
-          rows={3}
-          maxLength={600}
-        />
       </section>
 
       <button
@@ -326,7 +290,7 @@ export function SignupForm() {
         className="lp-btn lp-btn-primary lp-btn-large signup-submit"
         disabled={!canSubmit}
       >
-        {state.kind === "submitting" ? "Building…" : "Launch my AskMai twin"}
+        {state.kind === "submitting" ? "Building…" : "Launch my page"}
       </button>
 
       {state.kind === "submitting" ? (
@@ -378,12 +342,12 @@ function SuccessCard({
   return (
     <div className="signup-success">
       <h2 className="signup-success-h2">
-        Your AskMai twin is{" "}
+        Your AskMai page is{" "}
         <span className="lp-accent-ink">live.</span>
       </h2>
       <p className="signup-success-sub">
-        Open your page in a new tab to share it. Use the edit link to
-        tune your voice and taste at any time.
+        Open it in a new tab to share. Use the manage link to add or
+        edit your blog and affiliate sources any time.
       </p>
 
       <div className="signup-success-actions">
@@ -402,7 +366,7 @@ function SuccessCard({
             rel="noopener noreferrer"
             className="lp-btn lp-btn-secondary lp-btn-large"
           >
-            Edit my voice
+            Manage my page
           </a>
         ) : null}
       </div>
@@ -432,11 +396,11 @@ function SuccessCard({
           </dd>
         </div>
         <div className="signup-meta-row">
-          <dt>AI voice</dt>
+          <dt>Content for Mai</dt>
           <dd>
-            {result.voice_source === "llm"
-              ? "Generated from your inputs."
-              : "Templated fallback — definitely tune it via the edit link."}
+            {result.content_chunks > 0
+              ? `${result.content_chunks} passages from your blog content, ready for travel/dining questions.`
+              : "No blog content added. Mai will answer fashion questions only until you add blog URLs from the manage link."}
           </dd>
         </div>
         {result.skipped.length > 0 ? (
@@ -571,8 +535,8 @@ function messageFor(code: string): string {
       return "Please add your name.";
     case "invalid_email":
       return "That email doesn't look right.";
-    case "insufficient_input":
-      return "Add at least one affiliate URL, OR 200+ words of interview text, OR a blog URL we can read.";
+    case "missing_affiliate_urls":
+      return "Add at least one affiliate URL (ShopMy, Shopbop, Revolve, or FWRD).";
     case "slug_underivable":
       return "We couldn't make a URL from your name. Try filling in the URL field manually.";
     case "application_store_failed":

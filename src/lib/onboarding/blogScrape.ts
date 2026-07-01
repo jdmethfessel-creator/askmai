@@ -27,6 +27,82 @@ export type BlogFetchResult = {
   error?: string;
 };
 
+// Chunk sizing for creator_content storage. 1500-char chunks with a
+// 200-char overlap keeps each row inside a comfortable prompt-budget
+// slice while ensuring paragraph boundaries never straddle two rows.
+// Both values live here so the ingest chunker + the retrieval side
+// share a single source of truth if we tune later.
+export const CONTENT_CHUNK_SIZE = 1500;
+export const CONTENT_CHUNK_OVERLAP = 200;
+
+export type ContentChunk = {
+  sourceUrl: string;
+  kind: string;
+  text: string;
+  chunkIndex: number;
+};
+
+/**
+ * Split a fetched blog into overlapping chunks. Prefers to cut at
+ * paragraph or sentence boundaries within a window near the target
+ * chunk size, so a chunk rarely ends mid-word. Falls back to a hard
+ * cut only when no boundary lands inside the window.
+ *
+ * kind stays "blog" for v1 -- classification (travel/dining/hotel)
+ * is deferred; the retrieval side reads all chunks for a creator
+ * regardless of kind.
+ */
+export function chunkBlogText(
+  sourceUrl: string,
+  text: string,
+  kind = "blog"
+): ContentChunk[] {
+  const trimmed = (text ?? "").trim();
+  if (!trimmed) return [];
+  const out: ContentChunk[] = [];
+  let idx = 0;
+  let cursor = 0;
+  while (cursor < trimmed.length) {
+    const remaining = trimmed.length - cursor;
+    if (remaining <= CONTENT_CHUNK_SIZE) {
+      out.push({
+        sourceUrl,
+        kind,
+        text: trimmed.slice(cursor).trim(),
+        chunkIndex: idx,
+      });
+      break;
+    }
+    // Aim for a boundary at ~CONTENT_CHUNK_SIZE but let it slide up
+    // to +200 or down to -200 to land on a paragraph/sentence break.
+    const softEndMin = cursor + CONTENT_CHUNK_SIZE - 200;
+    const softEndMax = Math.min(
+      trimmed.length,
+      cursor + CONTENT_CHUNK_SIZE + 200
+    );
+    const window = trimmed.slice(softEndMin, softEndMax);
+    const paragraphBreak = window.lastIndexOf("\n\n");
+    const sentenceBreak = window.lastIndexOf(". ");
+    let cutAt: number;
+    if (paragraphBreak >= 0) {
+      cutAt = softEndMin + paragraphBreak + 2;
+    } else if (sentenceBreak >= 0) {
+      cutAt = softEndMin + sentenceBreak + 2;
+    } else {
+      cutAt = cursor + CONTENT_CHUNK_SIZE;
+    }
+    out.push({
+      sourceUrl,
+      kind,
+      text: trimmed.slice(cursor, cutAt).trim(),
+      chunkIndex: idx,
+    });
+    idx++;
+    cursor = Math.max(cursor + 1, cutAt - CONTENT_CHUNK_OVERLAP);
+  }
+  return out;
+}
+
 export async function fetchBlogText(url: string): Promise<BlogFetchResult> {
   try {
     new URL(url); // throws if not a URL

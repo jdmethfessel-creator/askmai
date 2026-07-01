@@ -49,15 +49,14 @@ export default function CreatorSignupPage() {
           <div className="signup-inner">
             <p className="lp-eyebrow">Launch</p>
             <h1 className="signup-h1">
-              Your AI twin,{" "}
+              Your page,{" "}
               <span className="lp-accent-ink">live in a minute.</span>
             </h1>
             <p className="signup-sub">
-              Drop your affiliate links and a few hundred words in
-              your own voice. We pull your catalog, generate your AI
-              twin, and publish your page automatically. You&apos;ll
-              get a live URL and an edit link in the response — no
-              waiting on us.
+              Drop your affiliate links (fashion &amp; beauty) and your
+              blog links (travel &amp; more). We pull your catalog,
+              feed Mai — your AskMai styling assistant — your content
+              as grounding, and publish your page automatically.
             </p>
 
             <SignupForm />

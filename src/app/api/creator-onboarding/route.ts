@@ -7,8 +7,15 @@
  * link in the response (no async wait, no human in the loop). The
  * UX wrapper (SignupForm) shows a progress state while this runs.
  *
- * Pipeline steps (each guarded by an explicit safeguard from the
- * onboarding spec):
+ * Post-Mai simplification: voice generation is gone entirely. Mai
+ * (the AskMai styling assistant, src/lib/mai/systemPrompt.ts) has
+ * ONE universal prompt and grounds herself per-page by the creator's
+ * catalog + content chunks. The onboarding pipeline now only needs
+ * to (1) ingest products into creator_products for Mai's shopping
+ * answers and (2) chunk blog content into creator_content for Mai's
+ * travel/dining/lifestyle answers.
+ *
+ * Pipeline steps:
  *
  *   1. Validate input + derive slug
  *   2. Slug collision check  -- safeguard (b): early fail with a
@@ -17,13 +24,11 @@
  *   4. Ingest products from every submitted source URL in parallel
  *      -- safeguard (a): each URL try/catch; zero-product or
  *      unsupported-network URLs are skipped + logged, not fatal
- *   5. Best-effort blog scrape (5s per URL)
- *   6. Voice/taste generation via Claude with tool_use schema +
- *      retry on validation fail + templated fallback -- safeguard
- *      (c): malformed JSON cannot break the live Ask chat because
- *      the validator runs before we write
- *   7. Upsert creators row (hidden=false; goes live immediately)
- *   8. Upsert creator_products rows
+ *   5. Best-effort blog scrape (5s per URL) -- chunked and stored
+ *      in creator_content for Mai's content grounding
+ *   6. Upsert creators row (hidden=false; goes live immediately)
+ *   7. Upsert creator_products rows
+ *   8. Insert creator_content rows (one per chunk per blog URL)
  *   9. Update application status=live
  *  10. Fire-and-forget completion email with live URL + edit URL
  *      -- safeguard (d): preview URL returned in the response too,
@@ -38,23 +43,21 @@
 import { Resend } from "resend";
 import { supabaseAdmin } from "@/lib/supabase";
 import { isValidSlugHint, nextFreeSlug, slugify } from "@/lib/onboarding/slug";
-import { fetchManyBlogTexts } from "@/lib/onboarding/blogScrape";
+import { chunkBlogText, fetchManyBlogTexts } from "@/lib/onboarding/blogScrape";
 import {
   ingestManySources,
   type IngestResult,
   type IngestRow,
 } from "@/lib/onboarding/ingestRunner";
-import { generateVoice } from "@/lib/onboarding/voiceGen";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-// LLM generation + product ingestion + DB writes can run 30-90s on
-// a typical creator (4 affiliate URLs + ~500 products + one Claude
-// Sonnet call). 300s is the Pro-plan ceiling and gives plenty of
-// headroom for outliers (huge ShopMy shop, slow Anthropic queue).
+// Product ingestion + blog scrapes + DB writes typically run 15-60s.
+// Voice generation used to add 30s+; without it the pipeline lands
+// closer to 20-40s for a typical creator. 300s ceiling stays for
+// outliers (huge ShopMy shop, slow retailer response).
 export const maxDuration = 300;
 
-const TOP_PRODUCTS_FOR_VOICE = 30;
 const MAX_BLOG_URLS = 5;
 const MAX_AFFILIATE_URLS = 8;
 
@@ -62,12 +65,10 @@ type Payload = {
   name?: string;
   email?: string;
   slug_hint?: string;
-  bio_hint?: string;
   ig_handle?: string;
   tiktok_handle?: string;
   affiliate_urls?: string[];
   blog_urls?: string[];
-  interview_text?: string;
 };
 
 export async function POST(request: Request) {
@@ -99,21 +100,17 @@ export async function POST(request: Request) {
     MAX_AFFILIATE_URLS
   );
   const blogUrls = sanitizeUrlList(body.blog_urls, MAX_BLOG_URLS);
-  const interviewText = clean(body.interview_text, 50_000) ?? "";
-  const bioHint = clean(body.bio_hint, 600) ?? "";
   const igHandle = clean(body.ig_handle, 120) ?? "";
   const tiktokHandle = clean(body.tiktok_handle, 120) ?? "";
 
-  // Require AT LEAST one source URL OR meaningful voice input.
-  // Without any of these the LLM produces a generic stub and the
-  // page goes live empty. Fail loudly instead.
-  if (
-    affiliateUrls.length === 0 &&
-    interviewText.length < 200 &&
-    blogUrls.length === 0
-  ) {
+  // Post-Mai: require at least one AFFILIATE URL. Blog URLs are
+  // strongly encouraged (they power travel/dining answers) but not
+  // strictly required. A creator with zero affiliate URLs has no
+  // catalog to power the Shop tab or Mai's fashion answers, so we
+  // fail loudly.
+  if (affiliateUrls.length === 0) {
     return Response.json(
-      { error: "insufficient_input" },
+      { error: "missing_affiliate_urls" },
       { status: 400 }
     );
   }
@@ -141,7 +138,10 @@ export async function POST(request: Request) {
   }
 
   // 3. Application audit row (status=processing). Keeps a trail of
-  // what was submitted even if the rest fails.
+  // what was submitted even if the rest fails. interview_text and
+  // bio_hint columns from migration 012 stay in the schema for
+  // rollback safety but the Mai flow writes null; nothing reads
+  // those columns any more.
   const appInsert = await sb
     .from("creator_applications")
     .insert({
@@ -151,11 +151,11 @@ export async function POST(request: Request) {
       ltk_url: affiliateUrls.find((u) => /shopltk|liketk|rstyle/i.test(u)) ?? null,
       ig_handle: igHandle || null,
       tiktok_handle: tiktokHandle || null,
-      note: interviewText || null,
+      note: null,
       blog_urls: blogUrls,
-      interview_text: interviewText || null,
+      interview_text: null,
       affiliate_urls: affiliateUrls,
-      bio_hint: bioHint || null,
+      bio_hint: null,
       slug_hint: rawHint || null,
       status: "processing",
     })
@@ -185,40 +185,25 @@ export async function POST(request: Request) {
       (ingestedByNetwork[row.source_network] ?? 0) + 1;
   }
 
-  // 5. Blog text fetch (parallel, 5s timeout each).
+  // 5. Blog text fetch (parallel, 5s timeout each). Under the Mai
+  // flow blog text is stored chunked in creator_content so Mai can
+  // retrieve it at chat time (see chunkBlogText + loadContentChunks).
   const blogTexts = await fetchManyBlogTexts(blogUrls);
 
-  // 6. (c) Voice + taste generation. Validator runs before we
-  // write; fallback produces valid shape when LLM fails.
-  const topProducts = ingestedRows
-    .slice(0, TOP_PRODUCTS_FOR_VOICE)
-    .map((r) => ({
-      name: r.product_title,
-      brand: r.brand,
-      category: r.product_category,
-    }));
-  const voiceResult = await generateVoice({
-    name,
-    bioHint,
-    igHandle,
-    tiktokHandle,
-    blogTexts: blogTexts.map((b) => ({ url: b.url, text: b.text })),
-    interviewText,
-    productSamples: topProducts,
-  });
-
-  // 7. Upsert creators row. This is the load-bearing write: if it
-  // fails the page can't go live and the pipeline aborts.
+  // 6. Upsert creators row. This is the load-bearing write: if it
+  // fails the page can't go live and the pipeline aborts. voice_prompt
+  // and taste_profile columns stay in the schema for rollback safety;
+  // Mai's system prompt is universal so we write nulls.
   const upsert = await sb
     .from("creators")
     .upsert(
       {
         slug,
         name,
-        bio: bioHint || null,
+        bio: null,
         avatar_url: null,
-        voice_prompt: voiceResult.voice.voice_prompt,
-        taste_profile: voiceResult.voice.taste_profile,
+        voice_prompt: null,
+        taste_profile: null,
         hidden: false,
       },
       { onConflict: "slug" }
@@ -274,6 +259,55 @@ export async function POST(request: Request) {
     }
   }
 
+  // 8. Chunk each blog into creator_content rows so Mai can
+  // retrieve passages at chat time for travel / dining / lifestyle
+  // answers. Fetch failures produced by blogScrape.fetchManyBlogTexts
+  // carry `text: ""` and are dropped by chunkBlogText's empty-check;
+  // the pipeline continues either way. Table-tolerant: if migration
+  // 013 hasn't been applied yet we log once and move on.
+  let contentChunkCount = 0;
+  const chunkRows: Array<{
+    creator_id: string;
+    source_url: string;
+    kind: string;
+    text_chunk: string;
+    chunk_index: number;
+  }> = [];
+  for (const b of blogTexts) {
+    if (!b.text) continue;
+    const chunks = chunkBlogText(b.url, b.text);
+    for (const c of chunks) {
+      chunkRows.push({
+        creator_id: creatorId,
+        source_url: c.sourceUrl,
+        kind: c.kind,
+        text_chunk: c.text,
+        chunk_index: c.chunkIndex,
+      });
+    }
+  }
+  if (chunkRows.length > 0) {
+    const CHUNK_INSERT = 100;
+    for (let i = 0; i < chunkRows.length; i += CHUNK_INSERT) {
+      const slice = chunkRows.slice(i, i + CHUNK_INSERT);
+      const ins = await sb.from("creator_content").insert(slice);
+      if (ins.error) {
+        if (ins.error.code === "42P01") {
+          console.warn(
+            "[onboarding] creator_content not migrated yet (013); skipping content-chunk writes"
+          );
+          break;
+        }
+        console.error(
+          `[onboarding] creator_content insert failed at offset ${i}:`,
+          ins.error.message
+        );
+        break;
+      }
+      contentChunkCount += slice.length;
+    }
+  }
+
   // 9. Mark application live.
   await sb
     .from("creator_applications")
@@ -289,15 +323,15 @@ export async function POST(request: Request) {
     ? `https://askmai.co/creator-edit/${editToken}`
     : null;
 
-  // 10. (d) Completion email -- fire-and-forget so a Resend hiccup
+  // 10. Completion email -- fire-and-forget so a Resend hiccup
   // doesn't fail the request. Response already carries the URLs.
   void sendCompletionEmail({
     to: email,
     name,
     liveUrl,
     editUrl,
-    voiceSource: voiceResult.source,
     ingestedByNetwork,
+    contentChunkCount,
     skipped,
   }).catch((err) => {
     console.warn(
@@ -315,9 +349,8 @@ export async function POST(request: Request) {
       total: totalIngested,
       by_network: ingestedByNetwork,
     },
+    content_chunks: contentChunkCount,
     skipped,
-    voice_source: voiceResult.source,
-    voice_attempts: voiceResult.attempts,
   });
 }
 
@@ -367,8 +400,8 @@ async function sendCompletionEmail(args: {
   name: string;
   liveUrl: string;
   editUrl: string | null;
-  voiceSource: "llm" | "fallback";
   ingestedByNetwork: Record<string, number>;
+  contentChunkCount: number;
   skipped: Array<{ url: string; reason: string }>;
 }) {
   const apiKey = process.env.RESEND_API_KEY;
@@ -388,10 +421,10 @@ async function sendCompletionEmail(args: {
           .map((s) => `  - ${s.url} (${s.reason})`)
           .join("\n")
       : "(none)";
-  const voiceNote =
-    args.voiceSource === "llm"
-      ? "Your AI voice was generated from your inputs. Review it on your edit page and tune anything that doesn't sound like you."
-      : "Heads up: the AI voice generator fell back to a templated voice (likely because your inputs were thin). Definitely tune it on your edit page before sharing the link.";
+  const contentNote =
+    args.contentChunkCount > 0
+      ? `Mai has ${args.contentChunkCount} passages from your blog content she can pull from when someone asks about travel, restaurants, or hotels.`
+      : "You didn't add blog links, so Mai will only answer fashion questions for now. Add a blog URL from the edit page to give her travel/dining grounding.";
 
   const text = [
     `Hi ${args.name},`,
@@ -399,13 +432,15 @@ async function sendCompletionEmail(args: {
     `Your AskMai twin is live.`,
     ``,
     `Your page: ${args.liveUrl}`,
-    args.editUrl ? `Edit your voice: ${args.editUrl}` : null,
+    args.editUrl ? `Manage your recommendations: ${args.editUrl}` : null,
     ``,
     `Catalog imported: ${ingestedSummary}`,
     `Skipped sources: ${skippedSummary === "(none)" ? "(none)" : ""}`,
     skippedSummary !== "(none)" ? skippedSummary : null,
     ``,
-    voiceNote,
+    contentNote,
+    ``,
+    `Mai (your AskMai styling assistant) is now live on your page. Followers can chat with her about your fashion, travel, and dining recs.`,
     ``,
     `-- AskMai`,
   ]
@@ -415,7 +450,7 @@ async function sendCompletionEmail(args: {
   await resend.emails.send({
     from,
     to: args.to,
-    subject: `Your AskMai twin is live: ${args.liveUrl}`,
+    subject: `Your AskMai page is live: ${args.liveUrl}`,
     text,
   });
 }
