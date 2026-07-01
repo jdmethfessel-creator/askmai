@@ -1,36 +1,26 @@
 /**
- * /forcreators — private pitch page.
+ * /forcreators - private pitch page.
  *
- * Unlisted (not linked from the public homepage, robots noindex). Sent
- * to creators directly. Built to feel like a premium product, not a
- * marketing template: the demo is the centerpiece (Mexico City travel
- * question rendering both restaurant picks and a shoppable packing
- * board — the gap-category demo that's the whole pitch).
+ * Unlisted (not linked from the public homepage, robots noindex).
+ * Handed directly to creators. Post-Mai-repositioning: pitch leads
+ * with the try-on hero visual (the make-or-break feature nobody
+ * else has), then the aggregation value (all your affiliate links
+ * in one page), then Mai (assistant, not a bot pretending to be
+ * you), then commissions.
  *
- * The displayed creator name on this page is the generic demo persona
- * "Hailey" (no real handle), so the pitch reads as a representative
- * example rather than a specific named creator. The underlying card
- * content and prose still come verbatim from real chat captures off
- * Madison's catalog — that's how we keep "no fabricated cards"
- * honest. Only the displayed creator name is anonymized for the
- * pitch context.
+ * DemoCarousel replaced with static styled preview panels so the
+ * page shows the actual product surfaces rather than scripted
+ * exchanges.
  */
 
 import Link from "next/link";
 import type { Metadata } from "next";
-import DemoCarousel from "./DemoCarousel";
 import "../_marketing/landing.css";
 import "./forcreators.css";
 
-// OG / Twitter card metadata: when a creator pastes this URL into
-// iMessage, Slack, DMs, etc., the link unfurls with the branded share
-// card at /og/forcreators.png. metadataBase is set in layout.tsx so
-// the image URL renders absolute. robots stays noindex/nofollow —
-// the page is still unlisted; the share preview is for human-to-human
-// sharing only.
-const OG_TITLE = "AskMai";
+const OG_TITLE = "AskMai for Creators";
 const OG_DESC =
-  "Better engagement with your followers. More revenue from your affiliate links.";
+  "Your affiliate wardrobe, on your followers. Every link, one page. Every commission, yours.";
 const OG_URL = "https://www.askmai.co/forcreators";
 const OG_IMAGE = "/og/forcreators.png";
 
@@ -48,7 +38,7 @@ export const metadata: Metadata = {
         url: OG_IMAGE,
         width: 1200,
         height: 630,
-        alt: "AskMai for Creators",
+        alt: OG_TITLE,
       },
     ],
   },
@@ -70,135 +60,127 @@ export default function ForCreatorsPage() {
       <section className="fc-hero">
         <p className="fc-eyebrow">For creators</p>
         <h1 className="fc-hero-h1">
-          Your taste, <em>working while you sleep.</em>
+          Your affiliate wardrobe,{" "}
+          <em>on your followers.</em>
         </h1>
         <p className="fc-hero-body">
-          You&apos;ve spent years building taste your followers trust. Right
-          now it&apos;s scattered across expired story links and blog posts
-          nobody can find. Your twin turns all of it into a single place your
-          followers can ask anything, and shop everything, in your voice,
-          instantly, forever.
+          Every recommendation you&apos;ve ever posted, live and
+          shoppable on one page. Your followers try on your looks on
+          themselves before they buy. Mai answers everything you
+          haven&apos;t linked. You keep every commission.
         </p>
         <div className="fc-hero-cta-row">
-          <a href="#demo" className="fc-hero-cta">
-            See your twin <ArrowRight />
-          </a>
-          {/* Secondary CTA — same href + same class as the bottom
-              "Get early access" so both buttons share style and
-              destination. Adding a top entry-point because creators
-              who get the link via DM often want to apply
-              immediately, not scroll the full pitch first. */}
-          <Link href="/creator-signup" className="fc-close-cta">
+          <Link href="/creator-signup" className="fc-hero-cta">
             Get early access <ArrowRight />
           </Link>
         </div>
       </section>
 
-      {/* ----------- DEMO (centerpiece) ----------- */}
-      <section id="demo" className="fc-demo">
-        <p className="fc-demo-label">real exchanges on Hailey&apos;s twin</p>
-        <h2 className="fc-demo-h2">
-          One link. <em>Travel, packing, beauty, fashion — all of it.</em>
+      {/* ----------- (b) TRY-ON HERO ----------- */}
+      <section className="fc-tryon" id="tryon">
+        <p className="fc-section-eyebrow">The move</p>
+        <h2 className="fc-section-h2">
+          They see themselves in it. <em>Then they buy it.</em>
         </h2>
+        <p className="fc-section-body">
+          A follower screenshots your fit. Uploads a photo of
+          themselves. Sees themselves wearing every piece. Taps Shop.
+          You get paid.
+        </p>
 
-        <DemoCarousel />
+        <div className="fc-tryon-visual">
+          <TryOnMockup />
+        </div>
 
-        <p className="fc-demo-caption">
-          Try asking yours anything. Your Tulum hotel. Your go-to airport
-          outfit. <em>The dress from that one post eight months ago.</em> It
-          remembers everything you&apos;ve ever loved, and every answer is
-          shoppable.
+        <p className="fc-section-caption">
+          Nobody else does this. It&apos;s the reason someone taps
+          buy instead of screenshotting and forgetting.
         </p>
       </section>
 
-      {/* ----------- SHIFT (three contrasts) ----------- */}
-      <section className="fc-shift">
-        <p className="fc-shift-eyebrow">The shift</p>
-        <h2 className="fc-shift-h2">
-          What you couldn&apos;t do <em>before.</em>
+      {/* ----------- (a) AGGREGATE ----------- */}
+      <section className="fc-aggregate">
+        <p className="fc-section-eyebrow">One place</p>
+        <h2 className="fc-section-h2">
+          Every link, <em>one page.</em>
         </h2>
-
-        <div className="fc-contrasts">
-          <div className="fc-contrast">
-            <h3 className="fc-contrast-h3">
-              Your best recommendations are buried.{" "}
-              <em>Your twin surfaces them.</em>
-            </h3>
-            <p className="fc-contrast-body">
-              That Mexico City guide you wrote? It&apos;s lost in a post from
-              last spring. Your twin delivers it the second someone asks, no
-              scrolling, no searching.
-            </p>
-          </div>
-
-          <div className="fc-contrast">
-            <h3 className="fc-contrast-h3">
-              You recommend it once. <em>It sells forever.</em>
-            </h3>
-            <p className="fc-contrast-body">
-              No more re-linking the same pieces in every story. Your twin
-              keeps your whole catalog live and shoppable, around the clock.
-            </p>
-          </div>
-
-          <div className="fc-contrast">
-            <h3 className="fc-contrast-h3">
-              You can&apos;t reply to 50,000 followers. <em>Your twin can.</em>
-            </h3>
-            <p className="fc-contrast-body">
-              In your voice, while you sleep, with a real answer and a real
-              product for every single one.
-            </p>
-          </div>
+        <p className="fc-section-body">
+          ShopMy, Shopbop, Revolve, FWRD — we pull them all into
+          your askmai.co/handle. Your followers never scroll your
+          bio for the right link again. LTK support coming; every
+          other network works today.
+        </p>
+        <div className="fc-networks-row">
+          <span className="fc-network-chip">ShopMy</span>
+          <span className="fc-network-chip">Shopbop</span>
+          <span className="fc-network-chip">Revolve</span>
+          <span className="fc-network-chip">FWRD</span>
+          <span className="fc-network-chip fc-network-chip-soon">
+            LTK · soon
+          </span>
+        </div>
+        <div className="fc-shop-visual">
+          <ShopMockup />
         </div>
       </section>
 
-      {/* ----------- REACH (formerly MONEY) -----------
-           Headline reframed from earnings to creator surface area —
-           money appears once as a calm fact in the closing line, not
-           as the pitch. */}
-      <section className="fc-money">
-        <p className="fc-money-eyebrow">Reach</p>
-        <h2 className="fc-money-h2">
-          Every recommendation, <em>shoppable.</em>
+      {/* ----------- (c) MAI ----------- */}
+      <section className="fc-mai">
+        <p className="fc-section-eyebrow">Meet Mai</p>
+        <h2 className="fc-section-h2">
+          Mai answers everything you haven&apos;t linked.{" "}
+          <em>In your voice — without pretending to be you.</em>
         </h2>
-        <p className="fc-money-body">
-          Keep your LTK and ShopMy links exactly as they are. Your twin
-          surfaces them the second a follower asks — no expired stories,
-          no scrolling your blog from eight months ago.
+        <p className="fc-section-body">
+          Mai is your styling assistant. She reads your affiliate
+          catalog and your blog. When someone asks &quot;what&apos;s
+          your Tulum hotel?&quot; Mai answers — because you wrote it
+          once, and now it&apos;s discoverable forever. She&apos;s a
+          consistent assistant, not a bot impersonating you.
         </p>
-        <p className="fc-money-body">
-          And the questions those platforms can&apos;t carry — the hotel
-          you stayed at, the restaurants you booked, the experiences they
-          ask about constantly — your twin handles those too. In your
-          voice, with real picks, on demand.
+        <div className="fc-chat-visual">
+          <ChatMockup />
+        </div>
+        <p className="fc-section-caption">
+          Fashion, travel, dining. Every rec you&apos;ve ever posted,
+          answerable on demand.
         </p>
-        <p className="fc-money-body">
-          Every one of those recommendations earns the same way your
-          product links already do. Same mechanic, broader surface.
+      </section>
+
+      {/* ----------- (d) COMMISSIONS ----------- */}
+      <section className="fc-money">
+        <p className="fc-section-eyebrow">Your money</p>
+        <h2 className="fc-section-h2">
+          You keep <em>100%.</em>
+        </h2>
+        <p className="fc-section-body">
+          Every affiliate URL is stored byte-for-byte, exactly as
+          you wrote it. Every commission is yours. We take zero. Not
+          a percentage, not a spread, nothing.
         </p>
       </section>
 
       {/* ----------- HOW IT WORKS ----------- */}
       <section className="fc-how">
-        <p className="fc-how-eyebrow">How it works</p>
-        <h2 className="fc-how-h2">Effortless on your end.</h2>
+        <p className="fc-section-eyebrow">How it works</p>
+        <h2 className="fc-section-h2">Effortless on your end.</h2>
         <ol className="fc-steps">
           <li className="fc-step">
             <p className="fc-step-body">
-              <strong>Connect your existing affiliate accounts.</strong> Five
-              minutes.
+              <strong>Paste your affiliate links.</strong> ShopMy,
+              Shopbop, Revolve, FWRD. Five minutes.
             </p>
           </li>
           <li className="fc-step">
             <p className="fc-step-body">
-              <strong>We build your twin,</strong> trained on your taste and
-              your voice.
+              <strong>Paste your blog links.</strong> Mai reads them
+              for travel, dining, and lifestyle answers.
             </p>
           </li>
           <li className="fc-step">
             <p className="fc-step-body">
-              <strong>You share one link.</strong> Your followers do the rest.
+              <strong>Share your askmai.co/handle.</strong>{" "}
+              Followers do the rest.
             </p>
           </li>
         </ol>
@@ -207,18 +189,167 @@ export default function ForCreatorsPage() {
       {/* ----------- CLOSE ----------- */}
       <section className="fc-close">
         <h2 className="fc-close-h2">
-          Your twin is <em>already possible.</em> Let&apos;s build yours.
+          Ready when you are.
         </h2>
         <Link href="/creator-signup" className="fc-close-cta">
           Get early access <ArrowRight />
         </Link>
         <p className="fc-close-sub">
-          We&apos;re onboarding a small group of creators now.
+          Small group of creators onboarding now.
         </p>
       </section>
 
       <footer className="fc-footer">AskMai · For Creators</footer>
     </main>
+  );
+}
+
+/* ---------- Product mockups (static styled panels) ---------- */
+
+/**
+ * TryOnMockup - shows a "before / after" phone frame. Before: the
+ * creator's outfit card. After: the same outfit rendered on the
+ * follower. Cream product palette so the mockup matches the actual
+ * try-on surface at askmai.co/[slug]?mode=shop.
+ */
+function TryOnMockup() {
+  return (
+    <div className="fc-mockup-row">
+      <div className="fc-phone fc-phone-before">
+        <div className="fc-phone-notch" aria-hidden />
+        <div className="fc-phone-screen fc-phone-screen-cream">
+          <div className="fc-mock-header">
+            <p className="fc-mock-eyebrow">SEARCH MY CLOSET AND FAVORITE FINDS</p>
+            <p className="fc-mock-title">Cass</p>
+            <div className="fc-mock-toggle">
+              <span className="fc-mock-toggle-btn fc-mock-toggle-btn-active">Shop</span>
+              <span className="fc-mock-toggle-btn">Ask</span>
+              <span className="fc-mock-toggle-btn">Try On</span>
+            </div>
+          </div>
+          <div className="fc-mock-card fc-mock-card-product">
+            <div className="fc-mock-card-image">
+              <span className="fc-mock-card-image-tag" aria-hidden>👗</span>
+            </div>
+            <div className="fc-mock-card-meta">
+              <p className="fc-mock-card-brand">THE FRANKIE SHOP</p>
+              <p className="fc-mock-card-title">Alrose Midi Skirt</p>
+              <p className="fc-mock-card-price">$285</p>
+            </div>
+            <div className="fc-mock-card-actions">
+              <span className="fc-mock-btn fc-mock-btn-primary">Try This On</span>
+              <span className="fc-mock-btn fc-mock-btn-secondary">Shop</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="fc-tryon-arrow" aria-hidden>
+        →
+      </div>
+
+      <div className="fc-phone fc-phone-after">
+        <div className="fc-phone-notch" aria-hidden />
+        <div className="fc-phone-screen fc-phone-screen-cream">
+          <div className="fc-mock-tryon-result">
+            <div className="fc-mock-tryon-figure" aria-hidden>
+              <span className="fc-mock-tryon-tag">Rendered on you</span>
+            </div>
+            <div className="fc-mock-tryon-actions">
+              <p className="fc-mock-tryon-caption">
+                Here&apos;s the Alrose on you.
+              </p>
+              <span className="fc-mock-btn fc-mock-btn-primary fc-mock-btn-full">
+                Shop the piece →
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * ShopMockup - a small strip of product cards showing that all
+ * networks land in one grid. Cream palette to match Shop tab.
+ */
+function ShopMockup() {
+  const items: Array<{ brand: string; title: string; price: string; emoji: string }> = [
+    { brand: "TOTEME", title: "Curved Seam Tee", price: "$220", emoji: "👚" },
+    { brand: "KHAITE", title: "Cambie Pant", price: "$1,380", emoji: "👖" },
+    { brand: "BOTTEGA VENETA", title: "Alfie Flat Sandal", price: "$1,250", emoji: "👡" },
+    { brand: "AUREUM", title: "Nova Ring", price: "$185", emoji: "💍" },
+  ];
+  return (
+    <div className="fc-shop-grid">
+      {items.map((it) => (
+        <div className="fc-mock-card fc-mock-card-shop" key={it.title}>
+          <div className="fc-mock-card-image">
+            <span className="fc-mock-card-image-tag" aria-hidden>
+              {it.emoji}
+            </span>
+            <span className="fc-mock-card-plus" aria-hidden>+</span>
+          </div>
+          <div className="fc-mock-card-meta">
+            <p className="fc-mock-card-brand">{it.brand}</p>
+            <p className="fc-mock-card-title">{it.title}</p>
+            <p className="fc-mock-card-price">{it.price}</p>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * ChatMockup - Mai answering a travel + a fashion question in the
+ * cream chat palette. Shows the assistant framing (Mai as a
+ * distinct name) and product/place cards under her prose.
+ */
+function ChatMockup() {
+  return (
+    <div className="fc-phone fc-phone-chat">
+      <div className="fc-phone-notch" aria-hidden />
+      <div className="fc-phone-screen fc-phone-screen-cream">
+        <div className="fc-mock-header">
+          <p className="fc-mock-eyebrow">ASK ME ANYTHING</p>
+          <p className="fc-mock-title">Cass</p>
+          <div className="fc-mock-toggle">
+            <span className="fc-mock-toggle-btn">Shop</span>
+            <span className="fc-mock-toggle-btn fc-mock-toggle-btn-active">Ask</span>
+            <span className="fc-mock-toggle-btn">Try On</span>
+          </div>
+        </div>
+        <div className="fc-mock-chat">
+          <div className="fc-mock-bubble fc-mock-bubble-user">
+            what&apos;s her tulum hotel?
+          </div>
+          <div className="fc-mock-bubble fc-mock-bubble-mai">
+            her tulum piece is on her blog — she stayed at Hotel
+            Esencia. quiet beach, food&apos;s the reason to go. here&apos;s
+            what she wrote:
+          </div>
+          <div className="fc-mock-card fc-mock-card-place">
+            <div className="fc-mock-card-place-icon" aria-hidden>🏝</div>
+            <div className="fc-mock-card-meta">
+              <p className="fc-mock-card-brand">HOTEL</p>
+              <p className="fc-mock-card-title">Hotel Esencia</p>
+              <p className="fc-mock-card-place-note">Tulum, Mexico</p>
+            </div>
+          </div>
+          <div className="fc-mock-bubble fc-mock-bubble-user">
+            gold hoop earrings?
+          </div>
+          <div className="fc-mock-bubble fc-mock-bubble-mai">
+            cass doesn&apos;t actually have gold hoops in her closet
+            right now — closest thing she has is a pair of aureum
+            studs. not hoops but the same warm gold, same size range.
+            want me to look off-catalog for real hoops?
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -275,4 +406,3 @@ function ArrowRight() {
     </svg>
   );
 }
-
