@@ -1,117 +1,101 @@
 "use client";
 
 /**
- * Tokenized self-serve voice + taste editor for a single creator.
- * Two textareas (one for the prose voice_prompt, one for the JSON
- * taste_profile) backed by PUT /api/creator-edit/[token].
+ * Tokenized self-serve manage view for a creator's AskMai page.
+ * Post-Mai: no voice_prompt / taste_profile textareas -- Mai has one
+ * universal voice. What the creator can actually change here is the
+ * SET of blog URLs Mai reads as grounding for travel / dining /
+ * lifestyle answers.
  *
- * Validation mirrors the API route's: voice_prompt non-empty,
- * taste_profile is a JSON object with identity.name. The UI
- * pre-validates the JSON before sending so the operator gets the
- * line-number error immediately rather than a generic 400.
+ * Save flow: PUT /api/creator-edit/[token] with { blog_urls: [] }.
+ * The route wipes creator_content for this creator, re-fetches each
+ * URL, chunks the text, and inserts fresh rows. Synchronous so the
+ * creator sees the new chunk count back in the response.
  *
- * "Preview" button opens the live page in a new tab so the user
- * can read their AI's responses with the edits applied. There's
- * no live render preview here -- the chat needs the user to
- * actually ask a question, and the response stream + product
- * cards are heavy enough that an inline iframe wouldn't add much
- * over the new-tab open.
+ * Catalog is read-only here. If a creator wants to add / remove
+ * affiliate sources they'll need a follow-up feature (or a re-
+ * onboard through /creator-signup for the same slug, which the
+ * pipeline's upsert already supports).
  */
 
 import { useCallback, useState } from "react";
 
+type CatalogEntry = { source: string; count: number };
+
 type Props = {
   token: string;
-  initialVoicePrompt: string;
-  initialTasteProfile: unknown;
   slug: string;
+  catalogSummary: CatalogEntry[];
+  initialBlogUrls: string[];
+  contentChunkCount: number;
 };
 
 type SaveState =
   | { kind: "idle" }
   | { kind: "saving" }
-  | { kind: "saved" }
+  | {
+      kind: "saved";
+      chunks: number;
+      skipped: Array<{ url: string; reason: string }>;
+    }
   | { kind: "error"; message: string };
 
 export default function EditForm({
   token,
-  initialVoicePrompt,
-  initialTasteProfile,
   slug,
+  catalogSummary,
+  initialBlogUrls,
+  contentChunkCount,
 }: Props) {
-  const [voicePrompt, setVoicePrompt] = useState(initialVoicePrompt);
-  const [tasteJson, setTasteJson] = useState(() =>
-    JSON.stringify(initialTasteProfile, null, 2)
+  const [blogUrls, setBlogUrls] = useState<string>(
+    initialBlogUrls.join("\n")
   );
-  const [save, setSave] = useState<SaveState>({ kind: "idle" });
+  const [state, setState] = useState<SaveState>({ kind: "idle" });
 
   const onSave = useCallback(async () => {
-    setSave({ kind: "saving" });
-    // Pre-parse JSON locally so the operator gets a line-number
-    // error before the network round trip.
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(tasteJson);
-    } catch (e) {
-      setSave({
-        kind: "error",
-        message: `Taste profile is not valid JSON: ${e instanceof Error ? e.message : "parse failed"}`,
-      });
-      return;
-    }
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      setSave({
-        kind: "error",
-        message: "Taste profile must be a JSON object.",
-      });
-      return;
-    }
-    const taste = parsed as Record<string, unknown>;
-    if (
-      !taste.identity ||
-      typeof taste.identity !== "object" ||
-      typeof (taste.identity as Record<string, unknown>).name !== "string"
-    ) {
-      setSave({
-        kind: "error",
-        message:
-          'Taste profile must include identity.name (the creator\'s display name).',
-      });
-      return;
-    }
-    if (voicePrompt.trim().length < 50) {
-      setSave({
-        kind: "error",
-        message:
-          "Voice prompt is too short — at least a few sentences are required.",
-      });
-      return;
-    }
+    setState({ kind: "saving" });
+    const urls = blogUrls
+      .split(/\s*[\n,]\s*/)
+      .map((s) => s.trim())
+      .filter(Boolean);
     try {
       const r = await fetch(`/api/creator-edit/${token}`, {
         method: "PUT",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          voice_prompt: voicePrompt,
-          taste_profile: parsed,
-        }),
+        body: JSON.stringify({ blog_urls: urls }),
       });
-      if (!r.ok) {
-        const data = await r.json().catch(() => null);
-        setSave({
+      const data = (await r.json().catch(() => null)) as {
+        ok?: boolean;
+        chunks?: number;
+        skipped?: Array<{ url: string; reason: string }>;
+        error?: string;
+      } | null;
+      if (!r.ok || !data?.ok) {
+        setState({
           kind: "error",
-          message: `Save failed: ${data?.error ?? `http_${r.status}`}`,
+          message:
+            data?.error === "invalid_token"
+              ? "This edit link isn't valid."
+              : data?.error === "too_many_urls"
+              ? "That's more URLs than we can process at once. Cap is 5."
+              : `Save failed: ${data?.error ?? `http_${r.status}`}`,
         });
         return;
       }
-      setSave({ kind: "saved" });
+      setState({
+        kind: "saved",
+        chunks: data.chunks ?? 0,
+        skipped: data.skipped ?? [],
+      });
     } catch (err) {
-      setSave({
+      setState({
         kind: "error",
         message: `Network error: ${err instanceof Error ? err.message : "unknown"}`,
       });
     }
-  }, [token, voicePrompt, tasteJson]);
+  }, [token, blogUrls]);
+
+  const totalCatalog = catalogSummary.reduce((acc, e) => acc + e.count, 0);
 
   return (
     <form
@@ -122,59 +106,69 @@ export default function EditForm({
       }}
     >
       <section className="edit-section">
-        <label className="edit-label" htmlFor="voice_prompt">
-          Voice prompt
-        </label>
+        <label className="edit-label">Your affiliate catalog</label>
         <p className="edit-help">
-          The style guide your AI twin uses when answering. Be
-          specific about phrasing tics, banned filler words, opinions
-          you actually hold. Multi-paragraph is good. Sections like
-          HOW SHE TALKS / THINGS THAT KILL THE VIBE / ANSWER SHAPE
-          render well.
+          Read-only summary of what we&apos;ve imported. This is what
+          the Shop tab shows your followers and what Mai recommends
+          from when they ask about shopping.
         </p>
-        <textarea
-          id="voice_prompt"
-          className="edit-textarea edit-textarea-voice"
-          value={voicePrompt}
-          onChange={(e) => {
-            setVoicePrompt(e.target.value);
-            if (save.kind !== "idle") setSave({ kind: "idle" });
-          }}
-          rows={18}
-        />
-        <p className="edit-meta">{voicePrompt.length} characters</p>
+        {totalCatalog > 0 ? (
+          <div className="edit-catalog-summary">
+            <p className="edit-catalog-total">{totalCatalog} products total</p>
+            <ul className="edit-catalog-list">
+              {catalogSummary.map((entry) => (
+                <li key={entry.source}>
+                  <span className="edit-catalog-source">{entry.source}</span>
+                  <span className="edit-catalog-count">{entry.count}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : (
+          <p className="edit-catalog-empty">
+            No catalog rows yet. Re-onboard through /creator-signup with
+            the same URL ({slug}) to import your affiliate links.
+          </p>
+        )}
       </section>
 
       <section className="edit-section">
-        <label className="edit-label" htmlFor="taste_profile">
-          Taste profile (JSON)
+        <label className="edit-label" htmlFor="blog_urls">
+          Blog URLs Mai reads
         </label>
         <p className="edit-help">
-          Structured data your AI pulls from for recommendations. Must
-          stay valid JSON with at least an identity.name field. Add
-          / remove sections to taste; the chat reads identity,
-          fashion, beauty, dining, lifestyle, travel.
+          Travel, restaurants, hotels, guides — whatever you&apos;ve
+          published. Mai pulls passages from these to answer non-
+          fashion questions. One URL per line (or comma-separated). Up
+          to 5 URLs per save.
         </p>
         <textarea
-          id="taste_profile"
-          className="edit-textarea edit-textarea-json"
-          value={tasteJson}
-          spellCheck={false}
+          id="blog_urls"
+          className="edit-textarea edit-textarea-voice"
+          value={blogUrls}
           onChange={(e) => {
-            setTasteJson(e.target.value);
-            if (save.kind !== "idle") setSave({ kind: "idle" });
+            setBlogUrls(e.target.value);
+            if (state.kind !== "idle") setState({ kind: "idle" });
           }}
-          rows={26}
+          rows={8}
+          placeholder="https://yourblog.com/tulum-guide&#10;https://yourblog.com/nyc-restaurants"
         />
+        <p className="edit-meta">
+          Currently: {contentChunkCount} passage
+          {contentChunkCount === 1 ? "" : "s"} in Mai&apos;s content
+          store
+        </p>
       </section>
 
       <div className="edit-actions">
         <button
           type="submit"
           className="edit-btn edit-btn-primary"
-          disabled={save.kind === "saving"}
+          disabled={state.kind === "saving"}
         >
-          {save.kind === "saving" ? "Saving…" : "Save changes"}
+          {state.kind === "saving"
+            ? "Fetching + chunking…"
+            : "Save blog URLs"}
         </button>
         <a
           href={`/${slug}?mode=ask`}
@@ -185,13 +179,29 @@ export default function EditForm({
           Open my page →
         </a>
       </div>
-      {save.kind === "saved" ? (
-        <p className="edit-toast edit-toast-ok">
-          Saved. Refresh your page to see the new voice.
-        </p>
+
+      {state.kind === "saved" ? (
+        <div className="edit-toast edit-toast-ok">
+          <p>
+            Saved. Mai now has {state.chunks} passage
+            {state.chunks === 1 ? "" : "s"} from your blog content.
+          </p>
+          {state.skipped.length > 0 ? (
+            <>
+              <p className="edit-meta">Skipped:</p>
+              <ul className="edit-skipped-list">
+                {state.skipped.map((s) => (
+                  <li key={s.url}>
+                    <code>{s.url}</code> — {s.reason}
+                  </li>
+                ))}
+              </ul>
+            </>
+          ) : null}
+        </div>
       ) : null}
-      {save.kind === "error" ? (
-        <p className="edit-toast edit-toast-err">{save.message}</p>
+      {state.kind === "error" ? (
+        <p className="edit-toast edit-toast-err">{state.message}</p>
       ) : null}
     </form>
   );
