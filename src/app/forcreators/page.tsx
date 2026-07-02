@@ -19,6 +19,7 @@
 
 import Link from "next/link";
 import type { Metadata } from "next";
+import HeroImage from "../_marketing/HeroImage";
 import "../_marketing/landing.css";
 import "./forcreators.css";
 
@@ -87,14 +88,9 @@ export default function ForCreatorsPage() {
         <div className="lp-hero-visual">
           <div className="lp-hero-render">
             <div className="lp-hero-render-plate" aria-hidden />
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
+            <HeroImage
               src="/marketing/forcreators-hero.png"
-              alt=""
               className="lp-hero-render-img"
-              onError={(e) => {
-                (e.currentTarget as HTMLImageElement).style.opacity = "0";
-              }}
             />
           </div>
         </div>
@@ -112,14 +108,9 @@ export default function ForCreatorsPage() {
           Add to Cart.
         </p>
         <div className="fc-tryon-frame">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
+          <HeroImage
             src="/marketing/forcreators-conversion.png"
-            alt=""
             className="fc-tryon-frame-img"
-            onError={(e) => {
-              (e.currentTarget as HTMLImageElement).style.opacity = "0";
-            }}
           />
           <div className="fc-tryon-frame-plate" aria-hidden />
         </div>

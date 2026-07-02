@@ -18,6 +18,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.99.0",
+    "@napi-rs/canvas": "^1.0.1",
     "@supabase/ssr": "^0.5.2",
     "@supabase/supabase-js": "^2.45.0",
     "fashn": "^0.15.0",
@@ -32,7 +33,6 @@
   "devDependencies": {
     "@fontsource/dm-sans": "^5.2.8",
     "@fontsource/fraunces": "^5.2.9",
-    "@napi-rs/canvas": "^1.0.1",
     "@types/node": "^20.14.0",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
