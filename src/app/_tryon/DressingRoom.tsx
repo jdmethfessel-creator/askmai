@@ -579,7 +579,6 @@ function RenderModal({
             />
             <div className="tryon-modal-caption">{titleList}</div>
             <ResultActions
-              beforeUrl={state.beforeSignedUrl}
               afterUrl={state.signedUrl}
               shareTitle={`${titleList} · askmai.co`}
               shopUrl={null}

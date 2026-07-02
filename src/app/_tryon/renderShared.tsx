@@ -2,28 +2,16 @@
 
 /**
  * Shared chrome for try-on render flows. Used by both the Shop tab
- * (TryOnGrid) and the Room tab (DressingRoom) so blocked-state
- * copy + save/share/shop button cluster stay in sync across both
- * surfaces.
+ * (TryOnGrid) and the Room tab (DressingRoom) so blocked-state copy
+ * and the Save/Share button cluster stay in sync across surfaces.
  *
- * Two pieces:
- *   - REASON_COPY / BlockReason: the canonical user-facing copy
- *     for each render-route error. 401 is intentionally NOT here
- *     (we open SignInModal in place; 401 is a routing event, not
- *     a try-on outcome).
- *   - ResultActions: Save (side-by-side PNG) + Share (animated
- *     reveal video, when MediaRecorder is supported) + optional
- *     Shop button. Pure client-side via canvas + MediaRecorder
- *     (see beforeAfter.ts). Falls back gracefully when before-image
- *     or MediaRecorder is unavailable.
+ * Save and Share hand the follower the exact same server-generated
+ * 1080x1920 share card: no client-side composition, no chooser.
+ * Save downloads the PNG; Share hands the same PNG to the OS share
+ * sheet (or falls back to a download when Web Share is unavailable).
  */
 
 import { useCallback, useState } from "react";
-import {
-  composeRevealVideo,
-  composeSideBySide,
-  recorderMimeAvailable,
-} from "./beforeAfter";
 
 export type BlockReason =
   | "age_not_verified"
@@ -61,28 +49,32 @@ export const REASON_COPY: Record<
   },
 };
 
+async function fetchShareCardBlob(afterUrl: string): Promise<Blob> {
+  const res = await fetch(afterUrl, { credentials: "omit" });
+  if (!res.ok) {
+    throw new Error(`share card fetch ${res.status}`);
+  }
+  return res.blob();
+}
+
 export function ResultActions({
-  beforeUrl,
   afterUrl,
   shareTitle,
   shopUrl,
   shopLabel,
 }: {
-  beforeUrl: string | null;
   afterUrl: string;
   shareTitle: string;
   shopUrl: string | null;
   shopLabel: string | null;
 }) {
   const [working, setWorking] = useState<"" | "save" | "share">("");
-  const canRecord =
-    typeof window !== "undefined" && recorderMimeAvailable();
 
   const onSave = useCallback(async () => {
-    if (!beforeUrl || working) return;
+    if (working) return;
     setWorking("save");
     try {
-      const blob = await composeSideBySide(beforeUrl, afterUrl);
+      const blob = await fetchShareCardBlob(afterUrl);
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -92,7 +84,7 @@ export function ResultActions({
       a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 5_000);
     } catch (e) {
-      console.warn("[tryon] side-by-side save failed", e);
+      console.warn("[tryon] share card save failed, falling back", e);
       const a = document.createElement("a");
       a.href = afterUrl;
       a.download = "askmai-tryon.png";
@@ -100,17 +92,14 @@ export function ResultActions({
     } finally {
       setWorking("");
     }
-  }, [beforeUrl, afterUrl, working]);
+  }, [afterUrl, working]);
 
   const onShare = useCallback(async () => {
-    if (!beforeUrl || working) return;
+    if (working) return;
     setWorking("share");
     try {
-      const blob = await composeRevealVideo(beforeUrl, afterUrl);
-      const ext = blob.type.includes("mp4") ? "mp4" : "webm";
-      const file = new File([blob], `askmai-tryon.${ext}`, {
-        type: blob.type,
-      });
+      const blob = await fetchShareCardBlob(afterUrl);
+      const file = new File([blob], "askmai-tryon.png", { type: "image/png" });
       if (
         typeof navigator !== "undefined" &&
         typeof navigator.share === "function" &&
@@ -135,43 +124,31 @@ export function ResultActions({
     } catch (e) {
       const name = (e as { name?: string })?.name;
       if (name !== "AbortError") {
-        console.warn("[tryon] share failed, retrying as download", e);
+        console.warn("[tryon] share failed", e);
       }
     } finally {
       setWorking("");
     }
-  }, [beforeUrl, afterUrl, shareTitle, working]);
+  }, [afterUrl, shareTitle, working]);
 
   return (
     <div className="tryon-modal-actions">
-      {beforeUrl ? (
-        <button
-          type="button"
-          className="tryon-btn tryon-btn-secondary"
-          onClick={onSave}
-          disabled={working !== ""}
-        >
-          {working === "save" ? "Saving…" : "Save image"}
-        </button>
-      ) : (
-        <a
-          className="tryon-btn tryon-btn-secondary"
-          href={afterUrl}
-          download="askmai-tryon.png"
-        >
-          Save image
-        </a>
-      )}
-      {beforeUrl && canRecord ? (
-        <button
-          type="button"
-          className="tryon-btn tryon-btn-secondary"
-          onClick={onShare}
-          disabled={working !== ""}
-        >
-          {working === "share" ? "Recording…" : "Share"}
-        </button>
-      ) : null}
+      <button
+        type="button"
+        className="tryon-btn tryon-btn-secondary"
+        onClick={onSave}
+        disabled={working !== ""}
+      >
+        {working === "save" ? "Saving…" : "Save"}
+      </button>
+      <button
+        type="button"
+        className="tryon-btn tryon-btn-secondary"
+        onClick={onShare}
+        disabled={working !== ""}
+      >
+        {working === "share" ? "Sharing…" : "Share"}
+      </button>
       {shopUrl && shopLabel ? (
         <button
           type="button"

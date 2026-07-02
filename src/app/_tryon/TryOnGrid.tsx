@@ -647,7 +647,6 @@ function TryOnModal({
               {state.product.product_title}
             </div>
             <ResultActions
-              beforeUrl={state.beforeSignedUrl}
               afterUrl={state.signedUrl}
               shareTitle={`${state.product.brand ? state.product.brand + " " : ""}${state.product.product_title} · askmai.co`}
               shopUrl={state.product.affiliate_url}

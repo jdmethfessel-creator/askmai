@@ -39,3 +39,7 @@ next-env.d.ts
 # vercel
 .vercel
 .env*
+
+# claude code / skills
+/.claude
+/skills-lock.json

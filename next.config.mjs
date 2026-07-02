@@ -1,14 +1,16 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-  // Force the pre-rendered share-card overlay PNG into the
-  // /api/render serverless bundle. Vercel's file tracer can't
-  // follow runtime `fs.readFile(path.join(process.cwd(), …))`
-  // calls statically; without this the PNG would be missing in
-  // production and applyBranding's readFile would throw ENOENT.
+  // Force the share-card font files into the /api/render serverless
+  // bundle. Vercel's file tracer can't follow @napi-rs/canvas's
+  // GlobalFonts.registerFromPath calls statically; without this the
+  // .woff2 files would be missing in production and composeShareCard
+  // would fall back to a default typeface.
   outputFileTracingIncludes: {
     "/api/render": [
-      "./src/lib/render-assets/askmai-share-overlay-1024x1536.png",
+      "./src/lib/render-assets/fraunces-500-normal.woff2",
+      "./src/lib/render-assets/fraunces-500-italic.woff2",
+      "./src/lib/render-assets/dm-sans-500-normal.woff2",
     ],
   },
   // Permanent 301 from the legacy /cassdimicconew path to the new

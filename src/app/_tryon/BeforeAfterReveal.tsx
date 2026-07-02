@@ -11,7 +11,7 @@
  * Falls back gracefully when beforeUrl is missing (legacy uploads):
  * just shows the after as a fade-in, no wipe.
  *
- * Sequence (must match beforeAfter.ts's video):
+ * Sequence:
  *   0.0-0.5s  hold on before
  *   0.5-2.0s  wipe
  *   2.0+      hold on after
