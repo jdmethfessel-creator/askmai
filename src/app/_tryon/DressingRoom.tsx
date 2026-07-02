@@ -33,6 +33,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import SignInModal from "../_components/SignInModal";
 import RenderLoadingState from "./RenderLoadingState";
 import BeforeAfterReveal from "./BeforeAfterReveal";
+import FitProfileDialog from "./FitProfileDialog";
 import {
   addLook,
   loadDressingRoom,
@@ -83,6 +84,10 @@ export default function DressingRoom({
   const [render, setRender] = useState<RenderState>({ state: "idle" });
   const [showSignIn, setShowSignIn] = useState(false);
   const [hydrated, setHydrated] = useState(false);
+  const [showFitDialog, setShowFitDialog] = useState(false);
+  const [fitInitial, setFitInitial] = useState<
+    Parameters<typeof FitProfileDialog>[0]["initial"] | null
+  >(null);
 
   // Hydrate from localStorage on mount + listen for cross-tab edits
   // (the Shop tab's + button writes through the same store).
@@ -160,6 +165,31 @@ export default function DressingRoom({
           signedUrl: json.signed_url,
           beforeSignedUrl,
         });
+        // Prompt for fit inputs the first time we hand back a render.
+        // The prompt is a one-time nudge; the profile endpoint stamps
+        // fit_profile_prompted_at when the dialog is closed or saved,
+        // so we don't badger the user across sessions. Best-effort:
+        // failures here silently skip the prompt.
+        fetch("/api/profile/fit", { credentials: "same-origin" })
+          .then((r) => (r.ok ? r.json() : null))
+          .then((j) => {
+            const p = j?.profile;
+            if (p && !p.prompted_at) {
+              setFitInitial({
+                height_cm: p.height_cm ?? null,
+                weight_kg: p.weight_kg ?? null,
+                usual_top: p.usual_top ?? null,
+                usual_bottom: p.usual_bottom ?? null,
+                usual_dress: p.usual_dress ?? null,
+                anchor_brand: p.anchor_brand ?? null,
+                preference: p.preference ?? null,
+              });
+              setShowFitDialog(true);
+            }
+          })
+          .catch(() => {
+            /* silent */
+          });
         // Persist as a saved look. Stores the signed URL for
         // immediate display AND the storage path so a later Shared
         // Fitting Rooms submit can carry the path (server re-signs
@@ -355,6 +385,13 @@ export default function DressingRoom({
           onClose={() => setShowSignIn(false)}
           title="Sign in to try it on"
           subtitle="One-tap email link. We'll bring you right back here."
+        />
+      ) : null}
+
+      {showFitDialog ? (
+        <FitProfileDialog
+          initial={fitInitial}
+          onClose={() => setShowFitDialog(false)}
         />
       ) : null}
     </div>

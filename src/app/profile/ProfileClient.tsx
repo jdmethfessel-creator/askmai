@@ -16,7 +16,10 @@
  */
 
 import Link from "next/link";
-import { useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
+import FitProfileDialog, {
+  type FitProfileInitial,
+} from "../_tryon/FitProfileDialog";
 
 type Props = {
   email: string;
@@ -41,6 +44,35 @@ export function ProfileClient({
   const [savedName, setSavedName] = useState(initialDisplayName);
   const [nameState, setNameState] = useState<NameState>("idle");
   const [nameError, setNameError] = useState<string | null>(null);
+
+  const [fitDialogOpen, setFitDialogOpen] = useState(false);
+  const [fitInitial, setFitInitial] = useState<FitProfileInitial | null>(null);
+
+  const openFitDialog = useCallback(async () => {
+    try {
+      const res = await fetch("/api/profile/fit", {
+        credentials: "same-origin",
+      });
+      if (res.ok) {
+        const json = await res.json();
+        const p = json?.profile;
+        if (p) {
+          setFitInitial({
+            height_cm: p.height_cm ?? null,
+            weight_kg: p.weight_kg ?? null,
+            usual_top: p.usual_top ?? null,
+            usual_bottom: p.usual_bottom ?? null,
+            usual_dress: p.usual_dress ?? null,
+            anchor_brand: p.anchor_brand ?? null,
+            preference: p.preference ?? null,
+          });
+        }
+      }
+    } catch {
+      /* open with empty defaults */
+    }
+    setFitDialogOpen(true);
+  }, []);
 
   const [verified, setVerified] = useState(ageVerified);
   const [gatePhase, setGatePhase] = useState<GatePhase>("closed");
@@ -369,7 +401,29 @@ export function ProfileClient({
             aria-hidden
           />
         </section>
+
+        <section className="profile-section">
+          <h2 className="profile-h2">Fit inputs</h2>
+          <p className="profile-tryon-tip">
+            Optional. Used for size recommendations only. Never shown
+            publicly, on share cards, or in fitting rooms.
+          </p>
+          <button
+            type="button"
+            className="profile-btn profile-btn-ghost"
+            onClick={openFitDialog}
+          >
+            Edit fit inputs
+          </button>
+        </section>
       </div>
+
+      {fitDialogOpen ? (
+        <FitProfileDialog
+          initial={fitInitial}
+          onClose={() => setFitDialogOpen(false)}
+        />
+      ) : null}
 
       {gatePhase === "asking" && (
         <div className="profile-modal-backdrop" onClick={closeGate}>
