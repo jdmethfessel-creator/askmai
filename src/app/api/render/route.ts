@@ -167,6 +167,19 @@ export async function POST(request: Request) {
 
   const admin = supabaseAdmin();
 
+  // Creator display name for the share-card bottom strip. Best-effort:
+  // an unknown slug just falls back to "ASKMAI.CO" without the name.
+  let creatorLabel: string | null = null;
+  if (creatorSlug) {
+    const creatorLookup = await admin
+      .from("creators")
+      .select("name")
+      .eq("slug", creatorSlug)
+      .maybeSingle();
+    const nm = (creatorLookup.data?.name as string | null | undefined) ?? null;
+    creatorLabel = nm && nm.trim() ? nm.trim() : null;
+  }
+
   const userRow = await admin
     .from("users")
     .select("age_verified_at, tryon_photo_path, tryon_original_path")
@@ -225,6 +238,7 @@ export async function POST(request: Request) {
     personBuffer: person.buffer,
     personMime: person.mime,
     items: validated,
+    creatorLabel,
   });
 
   if (!result.ok) {
