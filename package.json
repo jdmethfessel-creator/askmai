@@ -13,7 +13,8 @@
     "seed:emily": "node --env-file=.env.local scripts/seed-emily.mjs",
     "seed:avatars": "node --env-file=.env.local scripts/ingest-creator-avatars.mjs",
     "ingest": "node --env-file=.env.local scripts/ingest.mjs",
-    "reingest:images": "node --env-file=.env.local scripts/reingest-images.mjs"
+    "reingest:images": "node --env-file=.env.local scripts/reingest-images.mjs",
+    "ingest:fit": "node --env-file=.env.local scripts/ingest-fit.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.99.0",
