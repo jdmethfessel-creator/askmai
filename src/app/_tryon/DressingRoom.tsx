@@ -160,13 +160,20 @@ export default function DressingRoom({
           signedUrl: json.signed_url,
           beforeSignedUrl,
         });
-        // Persist as a saved look. Stores the signed URL directly
-        // (see store comments for the 7-day TTL trade-off).
+        // Persist as a saved look. Stores the signed URL for
+        // immediate display AND the storage path so a later Shared
+        // Fitting Rooms submit can carry the path (server re-signs
+        // per-request). Older looks saved before this plumb lack
+        // renderPath and get a re-render prompt at submit time.
         setRoom(
           addLook(creatorSlug, {
             creatorSlug,
             renderUrl: json.signed_url,
+            renderPath:
+              typeof json.image_path === "string" ? json.image_path : undefined,
             beforeUrl: beforeSignedUrl,
+            beforePath:
+              typeof json.before_path === "string" ? json.before_path : null,
             itemIds: items.map((i) => i.id),
             itemSnapshots: items.map((i) => ({
               id: i.id,

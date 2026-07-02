@@ -54,11 +54,26 @@ export type SavedLook = {
    */
   renderUrl: string;
   /**
+   * Storage path in the private `renders` bucket. Present on looks
+   * saved after the fitting-rooms plumbing landed. Used by the
+   * Shared Fitting Rooms submit flow: server re-signs the path per
+   * member request so a shared look survives past its 7-day URL
+   * TTL. Older SavedLooks lack this field and can't be submitted
+   * to a room without a re-render.
+   */
+  renderPath?: string;
+  /**
    * Signed URL of the user's "before" photo (also 7-day TTL).
    * Optional because the render route best-efforts this field;
    * absence is non-fatal.
    */
   beforeUrl: string | null;
+  /**
+   * Storage path in the private `tryon-photos` bucket for the
+   * before photo. Same rationale as renderPath: room submits carry
+   * paths, not signed URLs.
+   */
+  beforePath?: string | null;
   /** Product ids that made up this outfit (for the "shop the
    *  pieces" affordance back to the source products). */
   itemIds: string[];

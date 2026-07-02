@@ -324,7 +324,18 @@ export async function POST(request: Request) {
   return Response.json({
     ok: true,
     signed_url: stored.signedUrl,
+    // Storage path in the private renders bucket. Persisted client-
+    // side (see dressingRoomStore SavedLook.renderPath) so a later
+    // Shared Fitting Rooms submit can send the path -- API resigns
+    // per-request -- instead of relying on a soon-to-expire signed
+    // URL. Older SavedLooks without this field prompt a re-render
+    // when the user tries to submit them.
+    image_path: stored.path,
     before_signed_url: beforeSignedUrl,
+    // originalPath is the "before" photo used by the client-side
+    // BeforeAfter reveal. Same rationale: keep the path so a room
+    // submit can carry the pre-render context if the user opts in.
+    before_path: (userRow.data.tryon_original_path as string | null) ?? photoPath,
     kind,
     source,
     included_remaining: consume.includedRemaining,
