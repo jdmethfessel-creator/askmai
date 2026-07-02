@@ -284,6 +284,7 @@ export default function DressingRoom({
             {room.looks.length}
           </span>
         </header>
+        <StartRoomBar creatorSlug={creatorSlug} />
 
         {room.looks.length === 0 ? (
           <div className="tryon-room-empty tryon-room-empty-quiet">
@@ -357,6 +358,103 @@ export default function DressingRoom({
         />
       ) : null}
     </div>
+  );
+}
+
+function StartRoomBar({ creatorSlug }: { creatorSlug: string }) {
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [signInPrompt, setSignInPrompt] = useState(false);
+
+  const createRoom = useCallback(async () => {
+    const clean = name.trim() || "Fit check";
+    setCreating(true);
+    const res = await fetch("/api/rooms", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: clean, creatorSlug }),
+    });
+    setCreating(false);
+    if (res.status === 401) {
+      setSignInPrompt(true);
+      return;
+    }
+    if (!res.ok) {
+      alert("Couldn't start a room. Try again in a moment.");
+      return;
+    }
+    const json = await res.json();
+    if (json?.invite_slug) {
+      window.location.href = `/room/${json.invite_slug}`;
+    }
+  }, [creatorSlug, name]);
+
+  return (
+    <>
+      <div className="tryon-room-startbar">
+        <button
+          type="button"
+          className="tryon-btn tryon-btn-secondary"
+          onClick={() => setOpen(true)}
+        >
+          Start a fitting room
+        </button>
+        <p className="tryon-room-startbar-sub">
+          Invite a friend group to react + comment on your looks.
+        </p>
+      </div>
+      {open ? (
+        <div
+          className="tryon-modal-scrim"
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setOpen(false)}
+        >
+          <div className="tryon-modal" onClick={(e) => e.stopPropagation()}>
+            <button
+              type="button"
+              className="tryon-modal-close"
+              onClick={() => setOpen(false)}
+              aria-label="Close"
+            >
+              ✕
+            </button>
+            <div className="tryon-modal-body">
+              <h2 className="tryon-startroom-title">Start a fitting room</h2>
+              <p className="tryon-startroom-sub">
+                Name it something your friends will recognize (Bea&apos;s bday
+                fits, spring break, etc.).
+              </p>
+              <input
+                className="tryon-startroom-input"
+                placeholder="Fit check"
+                maxLength={80}
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                autoFocus
+              />
+              <button
+                type="button"
+                className="tryon-btn tryon-btn-primary tryon-startroom-cta"
+                onClick={createRoom}
+                disabled={creating}
+              >
+                {creating ? "Creating…" : "Create room"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {signInPrompt ? (
+        <SignInModal
+          onClose={() => setSignInPrompt(false)}
+          title="Sign in to start a room"
+          subtitle="One-tap email link. We'll bring you right back here."
+        />
+      ) : null}
+    </>
   );
 }
 

@@ -1310,3 +1310,50 @@
   background: var(--t-ink, #18140e);
   color: #fff;
 }
+
+/* Start-a-fitting-room entry point on the Try On tab. Rendered
+ * below the My looks header so the invitation to loop friends in
+ * lives adjacent to the looks the host would submit. */
+.tryon-room-startbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 4px 12px;
+  flex-wrap: wrap;
+}
+.tryon-room-startbar-sub {
+  font-size: 12px;
+  color: var(--t-muted, #6a6256);
+  margin: 0;
+  flex: 1 1 180px;
+  line-height: 1.4;
+}
+.tryon-startroom-title {
+  font: 600 20px/1.15 var(--font-display), Georgia, serif;
+  margin: 0 0 6px;
+  color: var(--t-ink, #18140e);
+}
+.tryon-startroom-sub {
+  font-size: 14px;
+  color: var(--t-muted, #6a6256);
+  margin: 0 0 16px;
+  line-height: 1.45;
+}
+.tryon-startroom-input {
+  width: 100%;
+  border: 1px solid var(--t-line, rgba(24,20,14,0.16));
+  border-radius: 14px;
+  padding: 12px 14px;
+  font-size: 15px;
+  font-family: inherit;
+  color: var(--t-ink, #18140e);
+  background: var(--t-bg, #fafaf7);
+  margin-bottom: 14px;
+}
+.tryon-startroom-input:focus {
+  outline: none;
+  border-color: var(--t-ink, #18140e);
+}
+.tryon-startroom-cta {
+  width: 100%;
+}
