@@ -1,1410 +1,169 @@
-/* /forcreators — private pitch page. Scoped under .fc-root; piggybacks on
-   the .askmai-landing dark-editorial palette already defined in
-   _marketing/landing.css (--bg / --ink / --accent / etc.). */
+/* /forcreators page-scoped tweaks. Base layout comes from
+ * ../_marketing/landing.css; this file adds sections specific to the
+ * creator pitch (logo row, try-on frame, steps, close). */
 
 .fc-root {
-  position: relative;
-  min-height: 100dvh;
-  overflow-x: hidden;
-}
-/* Safety net — prevent any oversized descendant from giving the whole
-   page a horizontal scrollbar on mobile. The .fc-root rule above already
-   has it, but Next.js wraps the page in its own body / html elements,
-   so we belt-and-suspender at the root. */
-html, body {
-  overflow-x: hidden;
+  padding-bottom: 0;
 }
 
-/* ------------------------------------------------------------------ */
-/* HERO                                                                */
-/* ------------------------------------------------------------------ */
 .fc-hero {
-  position: relative;
-  z-index: 2;
-  padding: clamp(48px, 9vw, 120px) clamp(20px, 4vw, 56px)
-    clamp(56px, 8vw, 96px);
-  max-width: 1240px;
-  margin: 0 auto;
-}
-.fc-eyebrow {
-  font-size: 11px;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: var(--accent);
-  margin: 0 0 22px;
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-}
-.fc-eyebrow::before {
-  content: "";
-  width: 22px;
-  height: 1px;
-  background: var(--accent);
-  opacity: 0.7;
-}
-.fc-hero-h1 {
-  font-family: var(--font-display), Georgia, serif;
-  font-weight: 400;
-  font-size: clamp(44px, 7.4vw, 108px);
-  line-height: 0.96;
-  letter-spacing: -0.034em;
-  margin: 0 0 32px;
-  max-width: 14ch;
-}
-.fc-hero-h1 em {
-  font-style: italic;
-  color: var(--accent);
-}
-.fc-hero-body {
-  max-width: 56ch;
-  font-size: clamp(16px, 1.45vw, 19px);
-  line-height: 1.6;
-  color: var(--ink-soft);
-  font-weight: 300;
-  margin: 0 0 38px;
-}
-/* Hero CTA row — wraps "See your twin" + "Get early access" so they
-   sit side by side. Mobile media query at the bottom of the file
-   stacks them vertically so two pills don't get cramped at 375px. */
-.fc-hero-cta-row {
-  display: inline-flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 12px;
-}
-.fc-hero-cta {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  padding: 16px 26px;
-  font-size: 15px;
-  font-weight: 500;
-  border-radius: 999px;
-  background: var(--ink);
-  color: var(--bg);
-  text-decoration: none;
-  transition: transform 0.18s ease, background 0.2s, color 0.2s;
-}
-.fc-hero-cta:hover {
-  background: var(--accent);
-  color: var(--bg);
-  transform: translateY(-1px);
-}
-.fc-hero-cta .fc-arrow {
-  transition: transform 0.18s ease;
-}
-.fc-hero-cta:hover .fc-arrow {
-  transform: translateX(3px);
-}
-
-/* ------------------------------------------------------------------ */
-/* DEMO  — the centerpiece                                             */
-/* ------------------------------------------------------------------ */
-.fc-demo {
-  position: relative;
-  z-index: 2;
-  padding: clamp(72px, 12vw, 152px) clamp(20px, 4vw, 40px) clamp(56px, 9vw, 96px);
-  max-width: 1240px;
-  margin: 0 auto;
-  text-align: center;
-}
-.fc-demo-label {
-  font-family: var(--font-display), Georgia, serif;
-  font-style: italic;
-  font-weight: 400;
-  font-size: clamp(15px, 1.3vw, 18px);
-  color: var(--muted);
-  margin: 0 0 18px;
-  letter-spacing: -0.01em;
-}
-.fc-demo-h2 {
-  font-family: var(--font-display), Georgia, serif;
-  font-weight: 400;
-  font-size: clamp(30px, 4vw, 52px);
-  line-height: 1.05;
-  letter-spacing: -0.026em;
-  margin: 0 auto clamp(48px, 7vw, 80px);
-  max-width: 22ch;
-  color: var(--ink);
-}
-.fc-demo-h2 em {
-  font-style: italic;
-  color: var(--accent);
-}
-
-/* ------------------------------------------------------------------ */
-/* Carousel chrome — tabs above the phone, pips below                  */
-/* ------------------------------------------------------------------ */
-.fc-carousel {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-}
-
-.fc-tabs {
-  display: inline-flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  padding: 6px;
-  margin: 0 auto 0;
-  border-radius: 999px;
-  border: 1px solid var(--line);
-  background: rgba(241, 232, 216, 0.025);
-  backdrop-filter: blur(8px);
-  justify-content: center;
-  max-width: 100%;
-}
-.fc-tab {
-  position: relative;
-  appearance: none;
-  border: 0;
-  background: transparent;
-  cursor: pointer;
-  padding: 9px 18px;
-  border-radius: 999px;
-  font-size: 11.5px;
-  font-weight: 500;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--muted);
-  transition: color 0.2s, background 0.2s;
-  font-family: inherit;
-}
-.fc-tab:hover {
-  color: var(--ink-soft);
-}
-.fc-tab-active {
-  background: var(--ink);
-  color: var(--bg);
-}
-.fc-tab-active:hover {
-  color: var(--bg);
-}
-
-.fc-pips {
-  display: inline-flex;
-  gap: 8px;
-  margin-top: 18px;
-}
-.fc-pip {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--muted-dim);
-  transition: background 0.3s, transform 0.3s, width 0.3s;
-}
-.fc-pip-active {
-  background: var(--accent);
-  width: 22px;
-  border-radius: 999px;
-}
-
-/* The phone holds N slides stacked; only the active one is rendered
-   visible via opacity + transform. The CSS grid trick (single cell,
-   all slides on top of each other) means the phone height naturally
-   matches whichever slide is tallest, so cross-fading doesn't cause
-   layout shift. */
-.fc-phone-chat {
-  flex: 1;
-  display: grid;
-  grid-template-columns: 1fr;
-  padding: 40px 16px 18px;
-  overflow: hidden;
-}
-.fc-slide {
-  grid-area: 1 / 1;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  opacity: 0;
-  transform: translateY(8px);
-  pointer-events: none;
-  transition: opacity 0.5s ease, transform 0.5s ease;
-}
-.fc-slide-active {
-  opacity: 1;
-  transform: translateY(0);
-  pointer-events: auto;
-}
-
-/* Action label color variants — Reserve uses accent (primary
-   transactional action); Directions is muted; View is for hotels —
-   secondary, muted-ish so it never reads as a checkout. */
-.fc-place-action-reserve {
-  color: var(--accent);
-  border-color: var(--accent);
-}
-.fc-place-action-directions,
-.fc-place-action-view {
-  color: var(--ink-soft);
-  border-color: var(--line-strong);
-}
-
-/* 3- and 4-finisher variants on the bottom grid */
-.fc-board-finishers-2 {
-  grid-template-columns: 1fr 1fr;
-}
-.fc-board-finishers-3 {
-  grid-template-columns: 1fr 1fr 1fr;
-}
-.fc-board-finishers-4 {
-  grid-template-columns: 1fr 1fr;
-}
-
-/* Phone framing — visually framed; not a perfect device chrome
-   replica, but reads as a phone screen at a glance. */
-.fc-phone-wrap {
-  position: relative;
-  display: flex;
-  justify-content: center;
-  padding: 32px 0 56px;
-  /* pan-y so the page can still vertically scroll when fingers land
-     on the phone, while our own swipe-left/right handlers in
-     DemoCarousel.tsx own the horizontal gesture. Without this, iOS
-     Safari sometimes treats the horizontal swipe as a back-gesture
-     edge-pull, or hijacks it for its own scroll. */
-  touch-action: pan-y;
-}
-.fc-phone-aura {
-  position: absolute;
-  inset: -40px;
-  background: radial-gradient(
-    ellipse at center,
-    rgba(200, 152, 99, 0.28) 0%,
-    rgba(200, 152, 99, 0) 60%
-  );
-  filter: blur(60px);
-  pointer-events: none;
-  z-index: 0;
-}
-.fc-phone {
-  position: relative;
-  z-index: 1;
-  width: min(380px, 88vw);
-  border-radius: 54px;
-  padding: 14px;
-  background: linear-gradient(
-    160deg,
-    #2a2218 0%,
-    #14110c 38%,
-    #0c0a07 100%
-  );
-  box-shadow: 0 1px 0 rgba(241, 232, 216, 0.08) inset,
-    0 40px 80px -20px rgba(0, 0, 0, 0.7),
-    0 16px 32px -8px rgba(200, 152, 99, 0.18);
-}
-.fc-phone-screen {
-  position: relative;
-  border-radius: 42px;
-  background: #0a0805;
-  overflow: hidden;
-  aspect-ratio: 9 / 19.5;
-  display: flex;
-  flex-direction: column;
-}
-.fc-phone-island {
-  position: absolute;
-  top: 14px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 96px;
-  height: 26px;
-  background: #000;
-  border-radius: 14px;
-  z-index: 3;
-}
-.fc-phone-statusbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 18px 28px 0;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--ink);
-  letter-spacing: -0.01em;
-  z-index: 2;
-}
-.fc-phone-statusbar .fc-status-icons {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 11px;
-  color: var(--ink-soft);
-}
-.fc-phone-statusbar svg {
-  display: block;
-}
-/* .fc-phone-chat layout is redefined in the carousel block above to use
-   CSS grid (single cell, slides stack on top of each other for cross-
-   fade). The flex variant was the pre-carousel single-slide layout. */
-.fc-msg-user {
-  align-self: flex-end;
-  max-width: 86%;
-  padding: 11px 16px;
-  border-radius: 22px 22px 8px 22px;
-  background: var(--accent);
-  color: #1a160f;
-  font-size: 13.5px;
-  line-height: 1.4;
-  font-weight: 500;
-  letter-spacing: -0.005em;
-}
-.fc-msg-twin {
-  align-self: flex-start;
-  max-width: 96%;
-  width: 100%;
-  background: rgba(241, 232, 216, 0.06);
-  border: 1px solid rgba(241, 232, 216, 0.07);
-  border-radius: 22px 22px 22px 8px;
-  padding: 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-.fc-twin-prose {
-  font-size: 12.5px;
-  line-height: 1.55;
-  color: var(--ink-soft);
-  letter-spacing: -0.005em;
-}
-.fc-twin-prose em {
-  font-style: italic;
-  color: var(--accent);
-  font-feature-settings: "ss01", "ss02";
-}
-.fc-section-label {
-  font-size: 9.5px;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: var(--muted);
-  margin: 6px 0 2px;
-}
-.fc-place-stack {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.fc-place {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 12px;
-  background: rgba(0, 0, 0, 0.32);
-  border: 1px solid rgba(241, 232, 216, 0.06);
-  border-radius: 14px;
-}
-/* Variant with a real photo on the left. Photo + meta + action sit in a
-   horizontal row; the photo crops to a fixed square so different image
-   aspect ratios all read consistent. The photos are local static assets
-   under /public/demo/<slide>/ — never live Bing thumbnails. */
-.fc-place-photo {
-  gap: 10px;
-  padding: 8px 10px 8px 8px;
-}
-.fc-place-imgwrap {
-  width: 48px;
-  height: 48px;
-  flex-shrink: 0;
-  border-radius: 10px;
-  overflow: hidden;
-  background: #1a160f;
-}
-.fc-place-imgwrap img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
-}
-.fc-place-photo .fc-place-meta {
-  flex: 1;
-  min-width: 0;
-}
-.fc-place-meta {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-.fc-place-name {
-  font-size: 12.5px;
-  font-weight: 500;
-  color: var(--ink);
-  letter-spacing: -0.005em;
-}
-.fc-place-loc {
-  font-size: 10.5px;
-  color: var(--muted);
-  letter-spacing: 0.01em;
-}
-.fc-place-action {
-  font-size: 10.5px;
-  font-weight: 500;
-  color: var(--accent);
-  border: 1px solid var(--accent);
-  padding: 4px 10px;
-  border-radius: 999px;
-  flex-shrink: 0;
-}
-.fc-board-hero {
-  position: relative;
-  border-radius: 16px;
-  overflow: hidden;
-  background: #1a160f;
-  aspect-ratio: 4 / 5;
-}
-.fc-board-hero img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
-}
-.fc-board-hero-overlay {
-  position: absolute;
-  inset: auto 0 0;
-  padding: 12px 14px 12px;
-  background: linear-gradient(to top, rgba(0, 0, 0, 0.82), rgba(0, 0, 0, 0));
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 10px;
-}
-.fc-board-hero-meta {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-.fc-board-hero-brand {
-  font-size: 10px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--ink-soft);
-  margin-bottom: 2px;
-}
-.fc-board-hero-name {
-  font-family: var(--font-display), Georgia, serif;
-  font-size: 14px;
-  color: var(--ink);
-  line-height: 1.15;
-  letter-spacing: -0.01em;
-  margin: 0 0 4px;
-}
-.fc-board-hero-price {
-  font-size: 11px;
-  color: var(--accent);
-  font-weight: 500;
-}
-.fc-board-shop {
-  font-size: 10px;
-  font-weight: 500;
-  color: var(--bg);
-  background: var(--accent);
-  padding: 5px 11px;
-  border-radius: 999px;
-  flex-shrink: 0;
-  align-self: flex-end;
-}
-.fc-board-finishers {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-}
-.fc-board-fin {
-  background: rgba(0, 0, 0, 0.34);
-  border: 1px solid rgba(241, 232, 216, 0.06);
-  border-radius: 14px;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-}
-.fc-board-fin-imgwrap {
-  aspect-ratio: 1 / 1;
-  background: #1a160f;
-}
-.fc-board-fin-imgwrap img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
-}
-.fc-board-fin-meta {
-  padding: 8px 9px 9px;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.fc-board-fin-brand {
-  font-size: 9px;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
-  color: var(--muted);
-}
-.fc-board-fin-name {
-  font-size: 10.5px;
-  color: var(--ink);
-  line-height: 1.15;
-  letter-spacing: -0.005em;
-  margin: 0;
-  font-weight: 400;
-}
-.fc-board-fin-price {
-  font-size: 10px;
-  color: var(--accent);
-  font-weight: 500;
-  margin-top: 3px;
-}
-.fc-demo-caption {
-  font-size: clamp(14px, 1.25vw, 17px);
-  line-height: 1.55;
-  color: var(--ink-soft);
-  max-width: 60ch;
-  margin: clamp(24px, 4vw, 40px) auto 0;
-  font-weight: 300;
-}
-.fc-demo-caption em {
-  color: var(--accent);
-  font-style: italic;
-}
-
-/* ------------------------------------------------------------------ */
-/* SHIFT — three contrasts                                             */
-/* ------------------------------------------------------------------ */
-.fc-shift {
-  position: relative;
-  z-index: 2;
-  padding: clamp(72px, 12vw, 128px) clamp(20px, 4vw, 56px);
-  max-width: 1100px;
-  margin: 0 auto;
-  border-top: 1px solid var(--line);
-}
-.fc-shift-eyebrow {
-  font-size: 11px;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: var(--muted);
-  margin: 0 0 18px;
-}
-.fc-shift-h2 {
-  font-family: var(--font-display), Georgia, serif;
-  font-weight: 400;
-  font-size: clamp(32px, 4.6vw, 60px);
-  line-height: 1.04;
-  letter-spacing: -0.024em;
-  margin: 0 0 clamp(48px, 7vw, 88px);
-  max-width: 18ch;
-}
-.fc-shift-h2 em {
-  color: var(--accent);
-  font-style: italic;
-}
-.fc-contrasts {
-  display: flex;
-  flex-direction: column;
-  gap: clamp(48px, 6vw, 88px);
-}
-.fc-contrast {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
-  gap: clamp(24px, 4vw, 64px);
   align-items: start;
-  padding-top: clamp(20px, 3vw, 36px);
-  border-top: 1px solid var(--line);
-}
-.fc-contrast:first-child {
-  border-top: 0;
-  padding-top: 0;
-}
-.fc-contrast-h3 {
-  font-family: var(--font-display), Georgia, serif;
-  font-weight: 400;
-  font-size: clamp(24px, 2.8vw, 36px);
-  line-height: 1.12;
-  letter-spacing: -0.018em;
-  margin: 0;
-  color: var(--ink);
-}
-.fc-contrast-h3 em {
-  color: var(--accent);
-  font-style: italic;
-}
-.fc-contrast-body {
-  font-size: clamp(15px, 1.3vw, 18px);
-  line-height: 1.6;
-  color: var(--ink-soft);
-  font-weight: 300;
-  margin: 0;
-  max-width: 60ch;
-}
-@media (max-width: 720px) {
-  .fc-contrast {
-    grid-template-columns: 1fr;
-    gap: 16px;
-  }
 }
 
-/* ------------------------------------------------------------------ */
-/* MONEY                                                               */
-/* ------------------------------------------------------------------ */
-.fc-money {
+/* Try-on conversion visual. Same placeholder pattern as the hero
+ * render: real screenshot drops in as /public/marketing/*.png. */
+.fc-tryon-frame {
   position: relative;
-  z-index: 2;
-  padding: clamp(96px, 14vw, 168px) clamp(20px, 4vw, 56px);
-  max-width: 1100px;
-  margin: 0 auto;
-  border-top: 1px solid var(--line);
+  max-width: 720px;
+  margin: 20px auto 0;
+  aspect-ratio: 4 / 3;
+  border-radius: 24px;
+  overflow: hidden;
+  box-shadow: 0 24px 60px -30px rgba(24, 20, 14, 0.35);
+  background: var(--lp-surface);
 }
-.fc-money-eyebrow {
-  font-size: 11px;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  /* Muted (was accent) so the section reads as calm/factual rather
-     than as the page's monetization peak. Matches the "The shift" and
-     "How it works" eyebrow style. */
-  color: var(--muted);
-  margin: 0 0 22px;
+.fc-tryon-frame-plate {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    135deg,
+    #f1ede4 0%,
+    #efebe1 45%,
+    #e6dfd0 100%
+  );
 }
-.fc-money-h2 {
-  font-family: var(--font-display), Georgia, serif;
-  font-weight: 400;
-  font-size: clamp(36px, 5.6vw, 76px);
-  line-height: 1.02;
-  letter-spacing: -0.028em;
-  margin: 0 0 clamp(28px, 4vw, 48px);
-  max-width: 16ch;
-}
-.fc-money-h2 em {
-  color: var(--accent);
-  font-style: italic;
-}
-.fc-money-body {
-  font-size: clamp(16px, 1.4vw, 19px);
-  line-height: 1.65;
-  color: var(--ink-soft);
-  font-weight: 300;
-  max-width: 60ch;
-  margin: 0 0 26px;
-}
-.fc-money-punch {
-  font-family: var(--font-display), Georgia, serif;
-  font-weight: 400;
-  font-style: italic;
-  font-size: clamp(20px, 2.4vw, 30px);
-  line-height: 1.35;
-  letter-spacing: -0.012em;
-  color: var(--ink);
-  margin: clamp(36px, 5vw, 56px) 0 0;
-  max-width: 28ch;
-}
-.fc-money-punch em {
-  color: var(--accent);
+.fc-tryon-frame-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: opacity 200ms ease;
 }
 
-/* ------------------------------------------------------------------ */
-/* HOW IT WORKS                                                        */
-/* ------------------------------------------------------------------ */
-.fc-how {
-  position: relative;
-  z-index: 2;
-  padding: clamp(72px, 12vw, 128px) clamp(20px, 4vw, 56px);
-  max-width: 1100px;
-  margin: 0 auto;
-  border-top: 1px solid var(--line);
-}
-.fc-how-eyebrow {
-  font-size: 11px;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: var(--muted);
-  margin: 0 0 18px;
-}
-.fc-how-h2 {
-  font-family: var(--font-display), Georgia, serif;
-  font-weight: 400;
-  font-size: clamp(32px, 4.4vw, 56px);
-  line-height: 1.04;
-  letter-spacing: -0.024em;
-  margin: 0 0 clamp(40px, 6vw, 72px);
-  max-width: 18ch;
-}
-.fc-steps {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: clamp(20px, 3vw, 48px);
-  counter-reset: fc-step;
-}
-.fc-step {
+/* Logo row for supported networks */
+.fc-logo-row {
+  list-style: none;
+  padding: 0;
+  margin: 24px 0 0;
   display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding-top: 22px;
-  border-top: 1px solid var(--line-strong);
+  flex-wrap: wrap;
+  gap: 8px;
 }
-.fc-step::before {
-  counter-increment: fc-step;
-  content: counter(fc-step, decimal-leading-zero);
-  font-family: var(--font-display), Georgia, serif;
-  font-style: italic;
-  font-size: 28px;
-  color: var(--accent);
-  letter-spacing: -0.01em;
-}
-.fc-step-body {
-  font-size: clamp(15px, 1.3vw, 18px);
-  line-height: 1.55;
-  color: var(--ink-soft);
-  font-weight: 300;
-  margin: 0;
-}
-.fc-step-body strong {
-  color: var(--ink);
+.fc-logo {
+  display: inline-flex;
+  align-items: center;
+  padding: 10px 16px;
+  border: 1px solid var(--lp-line-strong);
+  border-radius: 999px;
+  background: var(--lp-surface);
+  font-size: 14px;
   font-weight: 500;
+  color: var(--lp-ink);
 }
-@media (max-width: 720px) {
+.fc-logo-soon {
+  color: var(--lp-muted);
+  font-weight: 400;
+  border-style: dashed;
+}
+
+/* Place-card icon used in the DMs mockup */
+.fc-place-icon {
+  width: 84px;
+  height: 84px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  background: #f1ede4;
+  font-size: 32px;
+}
+
+/* Steps */
+.fc-steps {
+  list-style: none;
+  padding: 0;
+  margin: 24px 0 0;
+  display: grid;
+  gap: 20px;
+}
+@media (min-width: 720px) {
   .fc-steps {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(3, 1fr);
     gap: 24px;
   }
 }
-
-/* ------------------------------------------------------------------ */
-/* CLOSE                                                               */
-/* ------------------------------------------------------------------ */
-.fc-close {
-  position: relative;
-  z-index: 2;
-  padding: clamp(112px, 16vw, 200px) clamp(20px, 4vw, 56px)
-    clamp(80px, 10vw, 112px);
-  max-width: 1100px;
-  margin: 0 auto;
-  border-top: 1px solid var(--line);
+.fc-step {
+  background: var(--lp-surface);
+  border: 1px solid var(--lp-line);
+  border-radius: 20px;
+  padding: 22px 20px;
+  display: grid;
+  grid-template-columns: 40px 1fr;
+  gap: 14px;
+  align-items: start;
 }
-.fc-close-h2 {
-  font-family: var(--font-display), Georgia, serif;
-  font-weight: 400;
-  font-size: clamp(40px, 6.4vw, 84px);
-  line-height: 1.02;
-  letter-spacing: -0.028em;
-  margin: 0 0 36px;
-  max-width: 16ch;
-}
-.fc-close-h2 em {
-  color: var(--accent);
-  font-style: italic;
-}
-.fc-close-cta {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  padding: 18px 30px;
-  font-size: 16px;
-  font-weight: 500;
+.fc-step-num {
+  width: 34px;
+  height: 34px;
   border-radius: 999px;
-  background: var(--accent);
-  color: var(--bg);
-  text-decoration: none;
-  letter-spacing: -0.005em;
-  transition: transform 0.18s ease, background 0.2s;
+  background: var(--lp-ink);
+  color: var(--lp-bg);
+  display: grid;
+  place-items: center;
+  font-family: var(--font-display), Georgia, serif;
+  font-weight: 500;
+  font-size: 16px;
 }
-.fc-close-cta:hover {
-  background: var(--accent-bright);
-  transform: translateY(-1px);
+.fc-step-body {
+  display: grid;
+  gap: 6px;
 }
-.fc-close-cta:hover .fc-arrow {
-  transform: translateX(3px);
+.fc-step-title {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0;
+  color: var(--lp-ink);
+}
+.fc-step-note {
+  font-size: 14px;
+  color: var(--lp-muted);
+  line-height: 1.45;
+  margin: 0;
+}
+
+/* Close */
+.fc-close {
+  text-align: center;
+}
+.fc-close .lp-h2 {
+  margin-inline: auto;
+  margin-bottom: 20px;
+}
+.fc-close .lp-btn-primary {
+  display: inline-flex;
+  padding: 14px 26px;
 }
 .fc-close-sub {
-  margin: 20px 0 0;
-  font-size: 13.5px;
-  color: var(--muted);
-  letter-spacing: -0.005em;
-}
-
-/* ------------------------------------------------------------------ */
-/* footer                                                              */
-/* ------------------------------------------------------------------ */
-.fc-footer {
-  position: relative;
-  z-index: 2;
-  padding: 32px clamp(20px, 4vw, 56px);
-  max-width: 1240px;
-  margin: 0 auto;
-  border-top: 1px solid var(--line);
-  font-size: 11.5px;
-  letter-spacing: 0.04em;
-  color: var(--muted);
-  text-transform: uppercase;
-}
-
-/* ---------- Mai-repositioning: shared section chrome ---------- */
-
-.fc-section-eyebrow {
-  font-family: Georgia, "Times New Roman", serif;
-  font-size: 14px;
-  letter-spacing: 6px;
-  color: var(--muted);
-  text-transform: uppercase;
-  margin: 0 0 20px;
-  text-align: center;
-}
-.fc-section-h2 {
-  font-family: var(--font-display), Georgia, serif;
-  font-weight: 300;
-  font-size: clamp(32px, 5vw, 56px);
-  line-height: 1.1;
-  letter-spacing: -0.018em;
-  text-align: center;
-  margin: 0 auto 24px;
-  max-width: 22ch;
-}
-.fc-section-h2 em {
-  color: var(--accent);
-  font-style: italic;
-  font-weight: 300;
-}
-.fc-section-body {
-  font-size: clamp(16px, 1.4vw, 19px);
-  line-height: 1.65;
-  color: var(--ink-soft);
-  max-width: 640px;
-  margin: 0 auto 32px;
-  text-align: center;
-  font-weight: 300;
-}
-.fc-section-caption {
-  font-size: 14px;
-  line-height: 1.6;
-  color: var(--muted);
-  max-width: 520px;
-  margin: 32px auto 0;
-  text-align: center;
-  font-style: italic;
-  font-weight: 300;
-}
-
-.fc-tryon,
-.fc-aggregate,
-.fc-mai,
-.fc-money,
-.fc-how {
-  position: relative;
-  z-index: 2;
-  padding: clamp(72px, 10vw, 120px) clamp(20px, 4vw, 56px);
-  max-width: 1200px;
-  margin: 0 auto;
-}
-.fc-tryon {
-  padding-top: clamp(48px, 8vw, 96px);
-}
-
-.fc-tryon-visual {
-  display: flex;
-  justify-content: center;
-  margin: 32px auto 0;
-}
-.fc-mockup-row {
-  display: flex;
-  align-items: center;
-  gap: clamp(12px, 3vw, 32px);
-  flex-wrap: wrap;
-  justify-content: center;
-}
-.fc-tryon-arrow {
-  font-size: 32px;
-  color: var(--accent);
-  opacity: 0.75;
-  padding: 0 4px;
-}
-@media (max-width: 700px) {
-  .fc-tryon-arrow {
-    transform: rotate(90deg);
-  }
-}
-
-.fc-phone {
-  width: 260px;
-  border-radius: 32px;
-  padding: 12px 10px;
-  background: #14100a;
-  box-shadow: 0 24px 60px -18px rgba(0, 0, 0, 0.55),
-    0 6px 18px rgba(0, 0, 0, 0.28);
-  position: relative;
-}
-.fc-phone-chat {
-  width: min(320px, 100%);
-}
-.fc-phone-notch {
-  position: absolute;
-  top: 12px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 74px;
-  height: 8px;
-  border-radius: 999px;
-  background: #050301;
-  z-index: 2;
-}
-.fc-phone-screen {
-  border-radius: 22px;
-  overflow: hidden;
-  min-height: 460px;
-  position: relative;
-}
-.fc-phone-screen-cream {
-  background: #fafaf7;
-  color: #18140e;
-  font-family: var(--font-sans);
-}
-
-.fc-mock-header {
-  padding: 26px 16px 12px;
-  text-align: center;
-}
-.fc-mock-eyebrow {
-  margin: 0;
-  font-size: 8.5px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: #6a6256;
-  font-weight: 600;
-}
-.fc-mock-title {
-  margin: 4px 0 8px;
-  font-family: var(--font-display), Georgia, serif;
-  font-size: 22px;
-  color: #18140e;
-  font-weight: 600;
-}
-.fc-mock-toggle {
-  display: inline-flex;
-  gap: 2px;
-  padding: 3px;
-  border-radius: 999px;
-  background: #fff;
-  border: 1px solid rgba(24, 20, 14, 0.1);
-}
-.fc-mock-toggle-btn {
-  padding: 4px 10px;
-  font-size: 10px;
-  font-weight: 600;
-  color: #7a6e63;
-  border-radius: 999px;
-  letter-spacing: 0.03em;
-}
-.fc-mock-toggle-btn-active {
-  background: #18140e;
-  color: #fff;
-}
-
-.fc-mock-card {
-  margin: 8px 10px;
-  background: #fff;
-  border: 1px solid rgba(24, 20, 14, 0.08);
-  border-radius: 14px;
-  overflow: hidden;
-}
-.fc-mock-card-image {
-  aspect-ratio: 1 / 1;
-  background: #f1ede4;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  position: relative;
-}
-.fc-mock-card-image-tag {
-  font-size: 44px;
-  opacity: 0.5;
-}
-.fc-mock-card-plus {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  width: 22px;
-  height: 22px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.92);
-  color: #18140e;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: 600;
+  color: var(--lp-muted);
   font-size: 13px;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
-}
-.fc-mock-card-meta {
-  padding: 8px 10px 4px;
-}
-.fc-mock-card-brand {
-  margin: 0;
-  font-size: 9px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: #6a6256;
-}
-.fc-mock-card-title {
-  margin: 2px 0 0;
-  font-size: 12px;
-  color: #18140e;
-  line-height: 1.3;
-}
-.fc-mock-card-price {
-  margin: 4px 0 0;
-  font-size: 11px;
-  font-weight: 500;
-  color: #18140e;
-}
-.fc-mock-card-actions {
-  display: flex;
-  gap: 4px;
-  padding: 6px 8px 10px;
-}
-.fc-mock-btn {
-  flex: 1;
-  padding: 6px 8px;
-  border-radius: 999px;
-  font-size: 10px;
-  font-weight: 600;
-  text-align: center;
-  letter-spacing: 0.02em;
-}
-.fc-mock-btn-primary {
-  background: #18140e;
-  color: #fafaf7;
-}
-.fc-mock-btn-secondary {
-  background: transparent;
-  color: #18140e;
-  border: 1px solid rgba(24, 20, 14, 0.15);
-}
-.fc-mock-btn-full {
-  flex: initial;
-  width: 100%;
-  padding: 10px 12px;
-  font-size: 12px;
-}
-.fc-mock-tryon-result {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding: 8px 10px 16px;
-}
-.fc-mock-tryon-figure {
-  aspect-ratio: 3 / 4;
-  background: linear-gradient(180deg, #d9ccb3 0%, #a48861 100%);
-  border-radius: 14px;
-  position: relative;
-  display: flex;
-  align-items: flex-end;
-  justify-content: center;
-  padding: 12px;
-}
-.fc-mock-tryon-tag {
-  background: rgba(255, 255, 255, 0.92);
-  color: #18140e;
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  padding: 4px 10px;
-  border-radius: 999px;
-  text-transform: uppercase;
-}
-.fc-mock-tryon-actions {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.fc-mock-tryon-caption {
-  margin: 0;
-  font-family: var(--font-display), Georgia, serif;
-  font-size: 15px;
-  color: #18140e;
-  text-align: center;
+  margin: 14px 0 0;
 }
 
-.fc-networks-row {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-  justify-content: center;
-  margin: 0 auto 40px;
-  max-width: 640px;
-}
-.fc-network-chip {
-  padding: 8px 16px;
-  border-radius: 999px;
-  background: rgba(241, 232, 216, 0.08);
-  border: 1px solid rgba(241, 232, 216, 0.15);
-  color: var(--ink-soft);
-  font-size: 13px;
-  font-weight: 500;
-  letter-spacing: 0.02em;
-}
-.fc-network-chip-soon {
-  color: var(--muted-dim);
-  border-color: rgba(241, 232, 216, 0.08);
-}
-.fc-shop-visual {
-  display: flex;
-  justify-content: center;
-  margin: 32px auto 0;
-  padding: 24px;
-  background: #fafaf7;
-  border-radius: 24px;
-  max-width: 640px;
-  box-shadow: 0 24px 60px -18px rgba(0, 0, 0, 0.4);
-}
-.fc-shop-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 12px;
-  width: 100%;
-  max-width: 460px;
-}
-.fc-mock-card-shop .fc-mock-card-image {
-  aspect-ratio: 1 / 1;
+/* Outcome section decorative rule */
+.fc-outcome .lp-lead-sub {
+  margin-bottom: 24px;
 }
 
-.fc-chat-visual {
-  display: flex;
-  justify-content: center;
-  margin: 32px auto 0;
-}
-.fc-mock-chat {
-  padding: 10px 12px 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.fc-mock-bubble {
-  max-width: 82%;
-  border-radius: 18px;
-  padding: 8px 12px;
-  font-size: 11.5px;
-  line-height: 1.5;
-  color: #18140e;
-}
-.fc-mock-bubble-user {
-  align-self: flex-end;
-  background: #a26a5a;
-  color: #fff;
-  border-bottom-right-radius: 6px;
-}
-.fc-mock-bubble-mai {
-  align-self: flex-start;
-  background: rgba(0, 0, 0, 0.045);
-  border-bottom-left-radius: 6px;
-}
-.fc-mock-card-place {
-  margin: 4px 0;
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  padding: 8px 10px;
-  border-radius: 12px;
-}
-.fc-mock-card-place-icon {
-  font-size: 22px;
-  width: 36px;
-  height: 36px;
-  border-radius: 10px;
-  background: #f1ede4;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.fc-mock-card-place-note {
-  margin: 2px 0 0;
-  font-size: 10px;
-  color: #6a6256;
-}
-
-/* ==================================================================== */
-/* MOBILE — 375–414px is the priority viewport                          */
-/*                                                                       */
-/* This page is opened almost entirely from phone DMs. Desktop is the   */
-/* secondary viewport; mobile fidelity is the whole point. Everything   */
-/* in this block targets ≤ 480px so the design at 375/390/414 is        */
-/* explicitly designed, not auto-shrunk.                                 */
-/* ==================================================================== */
+/* 390px */
 @media (max-width: 480px) {
-  /* HERO ----------------------------------------------------------- */
-  .fc-hero {
-    padding: 32px 20px 56px;
+  .fc-step {
+    grid-template-columns: 32px 1fr;
+    padding: 18px 16px;
   }
-  .fc-hero-h1 {
-    font-size: clamp(40px, 11vw, 60px);
-    margin-bottom: 24px;
-  }
-  .fc-hero-body {
-    font-size: 15px;
-    line-height: 1.55;
-    margin-bottom: 28px;
-  }
-  .fc-hero-cta-row {
-    /* Stack the two pills vertically on narrow viewports so neither
-       gets crowded out by the other. Fixed max-width keeps them from
-       getting too wide for a thumb tap. */
-    display: flex;
-    flex-direction: column;
-    align-items: stretch;
-    gap: 10px;
-    max-width: 320px;
-  }
-  .fc-hero-cta-row .fc-hero-cta,
-  .fc-hero-cta-row .fc-close-cta {
-    width: 100%;
-    justify-content: space-between;
-  }
-  .fc-hero-cta {
-    padding: 14px 22px;
-    font-size: 14px;
-    min-height: 44px; /* thumb target */
-  }
-
-  /* DEMO ----------------------------------------------------------- */
-  .fc-demo {
-    padding: 56px 16px 56px;
-  }
-  .fc-demo-label {
+  .fc-step-num {
+    width: 28px;
+    height: 28px;
     font-size: 14px;
   }
-  .fc-demo-h2 {
-    font-size: clamp(24px, 6.4vw, 32px);
-    margin-bottom: 36px;
-  }
-  .fc-demo-caption {
-    font-size: 14.5px;
-    line-height: 1.55;
-    margin-top: 28px;
-  }
-
-  /* TABS — four pills must fit one row at 375px ------------------- */
-  .fc-tabs {
-    width: 100%;
-    max-width: 100%;
-    box-sizing: border-box;
-    justify-content: space-between;
-    padding: 4px;
-    gap: 2px;
-    flex-wrap: nowrap;
-  }
-  .fc-tab {
-    /* flex-1 splits available width evenly across all 4 tabs so they
-       always fit on one row regardless of label length. min-height
-       44px gives a real thumb target. */
-    flex: 1 1 0;
-    min-width: 0;
-    min-height: 44px;
-    padding: 12px 8px;
-    font-size: 10.5px;
-    letter-spacing: 0.08em;
-    text-align: center;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-  }
-  .fc-tab > span {
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  /* PHONE FRAME --------------------------------------------------- */
-  .fc-phone-wrap {
-    padding: 24px 0 40px;
-  }
-  .fc-phone {
-    width: min(380px, 92vw);
-    padding: 10px;
-    border-radius: 44px;
-  }
-  .fc-phone-screen {
-    border-radius: 36px;
-  }
-  /* Allow vertical scroll inside the phone screen for slides whose
-     content (especially the TRAVEL slide with hero + 3 place cards)
-     exceeds the screen height. Scrollbar hidden for cleanliness. */
-  .fc-phone-chat {
-    overflow-y: auto;
-    overflow-x: hidden;
-    padding: 36px 14px 16px;
-    scrollbar-width: none;
-    -ms-overflow-style: none;
-  }
-  .fc-phone-chat::-webkit-scrollbar {
-    display: none;
-  }
-  /* Hero photo aspect — slightly squarer on mobile so more of the
-     slide is visible above the fold inside the phone. */
-  .fc-board-hero {
-    aspect-ratio: 4 / 4.4;
-  }
-  .fc-board-hero-name {
-    font-size: 13.5px;
-  }
-  .fc-board-shop {
-    padding: 6px 12px;
-    font-size: 10.5px;
-  }
-
-  /* PLACE CARDS --------------------------------------------------- */
-  .fc-place-action {
-    padding: 7px 13px;
-    font-size: 10.5px;
-  }
-
-  /* SHIFT (three contrasts) --------------------------------------- */
-  .fc-shift {
-    padding: 56px 20px;
-  }
-  .fc-shift-h2 {
-    font-size: clamp(26px, 7vw, 36px);
-    margin-bottom: 48px;
-  }
-  .fc-contrast-h3 {
-    font-size: clamp(22px, 5.6vw, 28px);
-  }
-  .fc-contrast-body {
-    font-size: 15px;
-  }
-
-  /* MONEY --------------------------------------------------------- */
-  .fc-money {
-    padding: 72px 20px;
-  }
-  .fc-money-h2 {
-    font-size: clamp(30px, 7.8vw, 44px);
-  }
-  .fc-money-body {
-    font-size: 15.5px;
-  }
-  .fc-money-punch {
-    font-size: clamp(18px, 5.2vw, 24px);
-  }
-
-  /* HOW IT WORKS -------------------------------------------------- */
-  .fc-how {
-    padding: 56px 20px;
-  }
-  .fc-how-h2 {
-    font-size: clamp(26px, 6.4vw, 36px);
-  }
-  .fc-step-body {
-    font-size: 15px;
-  }
-
-  /* CLOSE / final CTA -------------------------------------------- */
-  .fc-close {
-    padding: 80px 20px 64px;
-  }
-  .fc-close-h2 {
-    font-size: clamp(32px, 8vw, 48px);
-  }
-  .fc-close-cta {
-    padding: 15px 24px;
-    font-size: 15px;
-    min-height: 44px; /* thumb target */
-  }
-  .fc-close-sub {
-    font-size: 13px;
-  }
+  .fc-logo { padding: 8px 12px; font-size: 13px; }
 }

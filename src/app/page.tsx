@@ -16,10 +16,27 @@ const manrope = Manrope({
   variable: "--font-body",
 });
 
+const OG_TITLE = "AskMai";
+const OG_DESC =
+  "Try on your favorite creator's actual closet. See it on you before you buy.";
+const OG_IMAGE = "/og/home.png";
+
 export const metadata: Metadata = {
-  title: "AskMai",
-  description:
-    "Every creator's voice, taste, and real picks in one chat. With real shoppable links.",
+  title: OG_TITLE,
+  description: OG_DESC,
+  openGraph: {
+    title: OG_TITLE,
+    description: OG_DESC,
+    url: "https://www.askmai.co/",
+    type: "website",
+    images: [{ url: OG_IMAGE, width: 1200, height: 630, alt: OG_TITLE }],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: OG_TITLE,
+    description: OG_DESC,
+    images: [OG_IMAGE],
+  },
 };
 
 // The page reads the auth cookie via getServerSession so the nav
