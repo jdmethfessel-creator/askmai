@@ -122,6 +122,11 @@ export type BuildMaiPromptArgs = {
   recentlyShownText: string;
   catalogRelaxLevel: "exact" | "soft_relaxed" | "type_relaxed" | "broad";
   requestedTypes: string[];
+  /** Compact fit context: viewer's fit profile summary + per-product
+   *  model reference / fit note pulled from product_fit. Empty when
+   *  the viewer is anonymous or nothing is available. Mai uses this
+   *  to answer "what size" without inventing. */
+  fitContext?: string;
 };
 
 export function buildMaiPrompt(args: BuildMaiPromptArgs): string {
@@ -135,10 +140,26 @@ export function buildMaiPrompt(args: BuildMaiPromptArgs): string {
     recentlyShownText,
     catalogRelaxLevel,
     requestedTypes,
+    fitContext,
   } = args;
   const first = creatorFirstName;
 
-  return `${renderIdentity(first)}
+  const fitBlock = fitContext && fitContext.trim().length > 0
+    ? `
+
+FIT CONTEXT (use for sizing questions only; never guess beyond it):
+${fitContext.trim()}
+
+SIZING RULE: when the user asks what size to get in a specific piece, answer using ONLY the FIT CONTEXT block above.
+- If a model reference is listed for that piece ("Model is 5'9 in S"), quote it verbatim.
+- If the viewer's own height + usual size are listed, combine them mechanically with fit_run ("runs small" -> step up, "runs large" -> step down, "true" -> keep).
+- Speak to fit + proportion only: how the cut runs, where a hem sits. Never body judgment. Never "flattering" or "slimming".
+- If the FIT CONTEXT block has nothing for that piece, say "I don't have model or fit info for this one" and offer to check a similar piece that does.
+- Never invent a recommended size. Never invent a model height.
+`
+    : "";
+
+  return `${renderIdentity(first)}${fitBlock}
 
 CURRENT PAGE: you are answering on ${creatorFullName}'s (${first}'s) AskMai page.
 

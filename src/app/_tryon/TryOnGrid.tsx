@@ -51,6 +51,7 @@ import {
   removeItem as removeItemFromRoom,
 } from "./dressingRoomStore";
 import { REASON_COPY, ResultActions, type BlockReason } from "./renderShared";
+import FitRecPanel from "./FitRecPanel";
 import { ProductCard, type Product } from "./ProductCard";
 
 // `Product` type lives in ./ProductCard so the Ask chat can adapt
@@ -651,6 +652,15 @@ function TryOnModal({
               shareTitle={`${state.product.brand ? state.product.brand + " " : ""}${state.product.product_title} · askmai.co`}
               shopUrl={state.product.affiliate_url}
               shopLabel="Shop the piece"
+            />
+            <FitRecPanel
+              items={[
+                {
+                  id: state.product.id,
+                  name: state.product.product_title,
+                  brand: state.product.brand,
+                },
+              ]}
             />
           </div>
         ) : null}

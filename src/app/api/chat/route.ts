@@ -25,6 +25,8 @@ import {
   derivePreferredBrands,
   loadContentChunks,
 } from "@/lib/mai/context";
+import { loadUserFitProfile } from "@/lib/fit";
+import { buildFitContextBlock } from "@/lib/mai/fitContext";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -189,6 +191,40 @@ export async function POST(request: Request) {
   const budgetCeiling = budgetCeilingPrefetch;
   const productRequest = isProductRequest(message);
   const creatorFirstName = creator.name.trim().split(/\s+/)[0];
+
+  // Assemble the FIT CONTEXT block (P1c/P1d). Best-effort: any
+  // failure here logs and drops fitContext to undefined so the
+  // prompt just skips the block. Only wire it in when the user is
+  // asking a sizing-adjacent question OR the viewer has a profile;
+  // otherwise it's dead tokens.
+  let fitContext: string | undefined = undefined;
+  try {
+    const sizingIntent =
+      /\b(size|sizing|small|large|fit|fits|runs|hem|inseam|petite|tall)\b/i.test(
+        message
+      );
+    const fitProfile = session ? await loadUserFitProfile(session.userId) : null;
+    if (sizingIntent || (fitProfile && fitProfile.height_cm != null)) {
+      const labels = new Map<string, string>();
+      for (const p of catalog.slice(0, 40)) {
+        labels.set(
+          p.id,
+          `${p.brand ? p.brand + " " : ""}${p.name}`.slice(0, 80)
+        );
+      }
+      fitContext = await buildFitContextBlock({
+        profile: fitProfile,
+        productIds: Array.from(labels.keys()),
+        productLabels: labels,
+      });
+    }
+  } catch (err) {
+    console.warn(
+      "[chat] fit context assembly failed:",
+      err instanceof Error ? err.message : String(err)
+    );
+  }
+
   const systemPrompt = buildMaiPrompt({
     creatorFirstName,
     creatorFullName: creator.name,
@@ -199,6 +235,7 @@ export async function POST(request: Request) {
     recentlyShownText,
     catalogRelaxLevel: catalogSelection.relaxLevel,
     requestedTypes: catalogSelection.requestedTypes,
+    fitContext,
   });
   const history = sanitizeHistory(rawHistory);
 

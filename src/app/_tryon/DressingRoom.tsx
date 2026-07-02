@@ -34,6 +34,7 @@ import SignInModal from "../_components/SignInModal";
 import RenderLoadingState from "./RenderLoadingState";
 import BeforeAfterReveal from "./BeforeAfterReveal";
 import FitProfileDialog from "./FitProfileDialog";
+import FitRecPanel from "./FitRecPanel";
 import {
   addLook,
   loadDressingRoom,
@@ -718,6 +719,13 @@ function RenderModal({
               shareTitle={`${titleList} · askmai.co`}
               shopUrl={null}
               shopLabel={null}
+            />
+            <FitRecPanel
+              items={state.items.map((p) => ({
+                id: p.id,
+                name: p.name,
+                brand: p.brand,
+              }))}
             />
             <p className="tryon-room-saved-note">Saved to My looks.</p>
           </div>
