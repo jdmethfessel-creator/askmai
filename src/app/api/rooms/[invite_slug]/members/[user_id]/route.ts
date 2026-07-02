@@ -19,7 +19,7 @@
 
 import { getServerSession } from "@/lib/session";
 import { supabaseAdmin } from "@/lib/supabase";
-import { loadRoomBySlug } from "@/lib/rooms";
+import { broadcastRoomChange, loadRoomBySlug } from "@/lib/rooms";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -66,6 +66,8 @@ export async function DELETE(_request: Request, ctx: { params: Params }) {
     console.error("[rooms] remove member failed:", upd.error.message);
     return Response.json({ error: "remove_failed" }, { status: 500 });
   }
+
+  await broadcastRoomChange(room.invite_slug);
 
   return Response.json({ ok: true });
 }

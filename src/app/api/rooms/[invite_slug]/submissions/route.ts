@@ -35,6 +35,7 @@ import { getServerSession } from "@/lib/session";
 import { supabaseAdmin } from "@/lib/supabase";
 import {
   CAPTION_MAX,
+  broadcastRoomChange,
   loadActiveMembership,
   loadRoomBySlug,
 } from "@/lib/rooms";
@@ -139,6 +140,8 @@ export async function POST(request: Request, ctx: { params: Params }) {
     console.error("[rooms] submission insert failed:", ins.error?.message);
     return Response.json({ error: "submit_failed" }, { status: 500 });
   }
+
+  await broadcastRoomChange(room.invite_slug);
 
   return Response.json({
     ok: true,

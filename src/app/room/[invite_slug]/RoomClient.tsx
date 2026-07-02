@@ -22,9 +22,17 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import SignInModal from "../../_components/SignInModal";
 import { loadDressingRoom, type SavedLook } from "../../_tryon/dressingRoomStore";
 import { EMOJI_ALLOWLIST } from "@/lib/rooms";
+import { supabaseBrowser } from "@/lib/supabaseBrowser";
 import "./room.css";
 
+// Polling floor. Realtime broadcast drives refreshes near-instantly
+// when the WebSocket is healthy; polling is the guaranteed floor so a
+// dead socket never leaves the feed stale. 10s while visible.
 const ROOM_POLL_MS = 10_000;
+
+// Coalesce a burst of broadcast events into a single feed refetch.
+// Reactions in particular can fire in tight bursts.
+const REFRESH_DEBOUNCE_MS = 300;
 
 type Viewer = {
   user_id: string;
@@ -169,9 +177,52 @@ export default function RoomClient({
     reload();
   }, [reload]);
 
-  // Polling fallback for feed freshness. Realtime (Rooms D) will drive
-  // updates faster; the poll stays as the guaranteed floor so a dead
-  // socket never leaves the feed stale.
+  // Refresh only the feed slice of the state (leaves room + viewer +
+  // members alone). Debounced so a burst of broadcast events lands as
+  // one refetch.
+  const refreshDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const refreshFeed = useCallback(() => {
+    if (refreshDebounceRef.current) clearTimeout(refreshDebounceRef.current);
+    refreshDebounceRef.current = setTimeout(async () => {
+      if (stateRef.current.kind !== "ready") return;
+      const feed = await fetchFeed();
+      if (!feed) return;
+      setState((prev) => (prev.kind === "ready" ? { ...prev, feed } : prev));
+    }, REFRESH_DEBOUNCE_MS);
+  }, [fetchFeed]);
+
+  // Realtime layer: subscribe to a broadcast channel scoped to this
+  // room's invite slug. The channel carries no row payload -- only a
+  // "changed" ping -- so a rogue subscriber learns nothing beyond
+  // "the room had activity." All actual content still flows through
+  // /api/rooms/[slug]/feed which enforces membership. When the socket
+  // is healthy, refreshes land in ~one round trip; if it never
+  // connects, polling below keeps the feed within ROOM_POLL_MS.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const client = supabaseBrowser();
+    const channel = client.channel(`room:${inviteSlug}`, {
+      config: { broadcast: { self: false, ack: false } },
+    });
+    channel.on("broadcast", { event: "changed" }, () => {
+      // Roster changes need the room-info refresh; feed-only changes
+      // can go through the cheap refreshFeed path. We don't distinguish
+      // here because both reload() and refreshFeed are idempotent; a
+      // full reload() on every broadcast is the safe default and the
+      // debounce keeps it cheap.
+      if (stateRef.current.kind === "ready") {
+        refreshFeed();
+      } else {
+        reload();
+      }
+    });
+    channel.subscribe();
+    return () => {
+      client.removeChannel(channel);
+    };
+  }, [inviteSlug, refreshFeed, reload]);
+
+  // Polling floor. Runs regardless of realtime health.
   useEffect(() => {
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;

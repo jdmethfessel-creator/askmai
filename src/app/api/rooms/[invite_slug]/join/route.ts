@@ -26,7 +26,7 @@
 
 import { getServerSession } from "@/lib/session";
 import { supabaseAdmin } from "@/lib/supabase";
-import { loadRoomBySlug } from "@/lib/rooms";
+import { broadcastRoomChange, loadRoomBySlug } from "@/lib/rooms";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -89,6 +89,8 @@ export async function POST(_request: Request, ctx: { params: Params }) {
     console.error("[rooms] join insert failed:", ins.error?.message);
     return Response.json({ error: "join_failed" }, { status: 500 });
   }
+
+  await broadcastRoomChange(room.invite_slug);
 
   return Response.json({
     ok: true,

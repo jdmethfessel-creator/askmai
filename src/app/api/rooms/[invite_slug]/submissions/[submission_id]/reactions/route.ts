@@ -25,6 +25,7 @@
 import { getServerSession } from "@/lib/session";
 import { supabaseAdmin } from "@/lib/supabase";
 import {
+  broadcastRoomChange,
   loadActiveMembership,
   loadRoomBySlug,
   normalizeReactionKind,
@@ -100,6 +101,7 @@ export async function POST(request: Request, ctx: { params: Params }) {
       console.error("[rooms] reaction remove failed:", del.error.message);
       return Response.json({ error: "reaction_failed" }, { status: 500 });
     }
+    await broadcastRoomChange(room.invite_slug);
     return Response.json({ ok: true, state: "removed" });
   }
 
@@ -116,5 +118,6 @@ export async function POST(request: Request, ctx: { params: Params }) {
       return Response.json({ error: "reaction_failed" }, { status: 500 });
     }
   }
+  await broadcastRoomChange(room.invite_slug);
   return Response.json({ ok: true, state: "added" });
 }

@@ -130,6 +130,39 @@ export function normalizeReactionKind(raw: string): string | null {
   return null;
 }
 
+/**
+ * Broadcast a "something changed" ping to the room's Realtime channel
+ * so any subscribed member fires a fresh /feed fetch. We use Broadcast
+ * (not postgres_changes) deliberately: the row payload never leaves
+ * the server, so a non-member listener learns nothing beyond "the room
+ * had activity." Members re-fetch through the authenticated /feed
+ * route which enforces membership + resigns URLs; that's where policy
+ * lives.
+ *
+ * Fire-and-forget: a failure here does not roll back the write that
+ * caused it. Polling is the guaranteed floor for feed freshness.
+ */
+export async function broadcastRoomChange(inviteSlug: string): Promise<void> {
+  try {
+    const sb = supabaseAdmin();
+    const channel = sb.channel(`room:${inviteSlug}`, {
+      config: { broadcast: { self: false, ack: false } },
+    });
+    await channel.send({
+      type: "broadcast",
+      event: "changed",
+      payload: { at: Date.now() },
+    });
+    await sb.removeChannel(channel);
+  } catch (err) {
+    console.warn(
+      "[rooms] broadcast failed for",
+      inviteSlug,
+      err instanceof Error ? err.message : String(err)
+    );
+  }
+}
+
 // Structural limits. Enforced at the API layer, not in the schema, so
 // a limit change ships as a code deploy without a migration.
 export const ROOM_NAME_MAX = 80;
