@@ -3,7 +3,7 @@ import Link from "next/link";
 import { Fraunces, Manrope } from "next/font/google";
 import { supabaseAdmin } from "@/lib/supabase";
 import { CreatorAvatar } from "../_components/CreatorAvatar";
-import "../_marketing/landing.css";
+import "../_pullsheet/tokens.css";
 import "./creators.css";
 
 const fraunces = Fraunces({

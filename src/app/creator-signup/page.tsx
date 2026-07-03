@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { Fraunces, Manrope } from "next/font/google";
 import Link from "next/link";
-import "../_marketing/landing.css";
+import "../_pullsheet/tokens.css";
 import "./signup.css";
 import { SignupForm } from "./SignupForm";
 

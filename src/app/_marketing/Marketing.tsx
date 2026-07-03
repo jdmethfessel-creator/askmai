@@ -1,237 +1,202 @@
-"use client";
-
-/**
- * Homepage - follower-facing.
- *
- * Structure:
- *   1. Hero (try-on lead, placeholder for a real render)
- *   2. Shop preview (real product screenshots in a grid)
- *   3. Mai concierge shown via a question + answer, no explainer copy
- *   4. Fitting Rooms deferred slot (layout only, no content yet)
- *   5. Footer
- *
- * Copy rules honored: no digital twin / your voice / trained on your
- * taste / impersonating language; no em dashes; no parallel-fragment
- * cadence. Cream/tan palette. Real product images, not gradient
- * blobs.
- */
-
 import Link from "next/link";
-import NavAuth from "../_components/NavAuth";
-import "./landing.css";
+import { supabaseAdmin } from "@/lib/supabase";
+import "../_pullsheet/tokens.css";
+import "./homepage.css";
 
-// Real catalog imagery reused from the demo assets and the shopmy
-// CDN via the existing image proxy. These are the same pieces the
-// live catalog renders, so what the homepage previews is what the
-// creator page actually produces.
-const SHOP_TILES = [
-  {
-    brand: "Reformation",
-    name: "Amara Linen Midi",
-    price: "$218",
-    image: "/demo/packing/reformation-amara.jpg",
-  },
-  {
-    brand: "Frankies Bikinis",
-    name: "Reversible String Set",
-    price: "$130",
-    image: "/demo/packing/frankies-bikini.jpg",
-  },
-  {
-    brand: "Cult Gaia",
-    name: "Hera Bag",
-    price: "$598",
-    image: "/demo/packing/cult-gaia-hera.jpg",
-  },
-  {
-    brand: "Reformation",
-    name: "Balia Linen Dress",
-    price: "$258",
-    image:
-      "/api/img?url=" +
-      encodeURIComponent(
-        "https://static.shopmy.us/uploads/img-product-1751903970581"
-      ),
-  },
-];
-
-const MAI_ANSWER_TILE = {
-  brand: "Rhode Skin",
-  name: "Glazing Milk Ceramide Essence",
-  price: "$32",
-  image:
-    "/api/img?url=" +
-    encodeURIComponent(
-      "https://static.shopmy.us/uploads/9eb95c13-f6b8-4c98-9d43-f90d53719e76_download-2026-05-16T163952.524.png"
-    ),
+type CreatorCard = {
+  slug: string;
+  name: string;
+  count: number;
 };
 
-export default function Marketing({ signedIn }: { signedIn: boolean }) {
+async function loadFeaturedCreators(): Promise<CreatorCard[]> {
+  try {
+    const sb = supabaseAdmin();
+    const cr = await sb
+      .from("creators")
+      .select("id, slug, name, hidden")
+      .order("created_at", { ascending: false });
+    let creators = ((cr.data as { id: string; slug: string; name: string; hidden: boolean | null }[]) ?? [])
+      .filter((c) => !c.hidden);
+    if (creators.length === 0) {
+      const fallback = await sb
+        .from("creators")
+        .select("id, slug, name")
+        .order("created_at", { ascending: false });
+      creators = ((fallback.data as { id: string; slug: string; name: string }[]) ?? []).map((c) => ({
+        ...c,
+        hidden: false,
+      }));
+    }
+    const results: CreatorCard[] = [];
+    for (const c of creators.slice(0, 8)) {
+      const { count } = await sb
+        .from("creator_products")
+        .select("id", { count: "exact", head: true })
+        .eq("creator_id", c.id);
+      results.push({ slug: c.slug, name: c.name, count: count ?? 0 });
+    }
+    return results;
+  } catch {
+    return [];
+  }
+}
+
+export default async function Marketing() {
+  const creators = await loadFeaturedCreators();
+
   return (
-    <main className="lp-root">
-      <header className="lp-nav">
-        <span className="lp-wordmark">
-          ask<em>mai</em>
-        </span>
-        <nav className="lp-nav-right">
-          <NavAuth
-            signedIn={signedIn}
-            className="lp-nav-link"
-            signedInClassName="lp-nav-signedin"
-            modalAccent="#a26a5a"
-          />
-          <Link href="/forcreators" className="lp-nav-cta">
+    <main className="hp-root">
+      <header className="hp-nav">
+        <Link href="/" className="hp-wordmark">
+          ASKMAI
+        </Link>
+        <nav className="hp-nav-right">
+          <Link href="/forcreators" className="hp-nav-link">
             For creators
+          </Link>
+          <Link href="/creators" className="ps-btn ps-btn-primary">
+            Browse creators
           </Link>
         </nav>
       </header>
 
-      {/* ---------- HERO: try-on ---------- */}
-      <section className="lp-hero">
-        <div className="lp-hero-copy">
-          <p className="lp-eyebrow">Try it on</p>
-          <h1 className="lp-h1">
-            See it on you <em>before</em> you buy.
-          </h1>
-          <p className="lp-lead">
-            One photo of you, every look your favorite creator wears,
-            rendered on your body in seconds.
-          </p>
-          <div className="lp-cta-row">
-            <Link href="/janesmith" className="lp-btn lp-btn-primary">
-              Try on Jane&apos;s closet
-            </Link>
-            <Link href="/madisonwaller" className="lp-btn lp-btn-ghost">
-              Or Madison&apos;s
-            </Link>
-          </div>
-        </div>
-        <div className="lp-hero-visual">
-          {/*
-            Placeholder for a real try-on render. Drop a file at
-            /public/marketing/tryon-hero.png (portrait, 9:16) and
-            it renders here automatically. Falls back to a neutral
-            plate so the layout doesn't collapse pre-asset.
-          */}
-          <div className="lp-hero-render">
-            <div className="lp-hero-render-plate" aria-hidden />
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src="/marketing/tryon-hero.png"
-              alt=""
-              className="lp-hero-render-img"
-              onError={(e) => {
-                (e.currentTarget as HTMLImageElement).style.opacity = "0";
-              }}
-            />
-          </div>
-        </div>
-      </section>
-
-      {/* ---------- SHOP ---------- */}
-      <section className="lp-section">
-        <p className="lp-eyebrow">Shop the closet</p>
-        <h2 className="lp-h2">
-          Their whole affiliate wardrobe, in a single grid you can
-          actually shop.
-        </h2>
-        <p className="lp-lead lp-lead-sub">
-          Real prices, filtered by category, searchable by piece. No
-          more scrolling their bio for the right link.
+      <section className="hp-hero">
+        <p className="ps-masthead-eyebrow">ASKMAI</p>
+        <h1 className="hp-hero-h1">The closet is open.</h1>
+        <p className="hp-hero-sub">
+          Shop every piece your favorite creator actually wears, ask Mai
+          anything about it, and see the look on you before you buy.
         </p>
-        <ul className="lp-shop-grid">
-          {SHOP_TILES.map((t) => (
-            <li key={t.name} className="lp-shop-tile">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={t.image}
-                alt=""
-                loading="lazy"
-                decoding="async"
-                className="lp-shop-tile-img"
-              />
-              <div className="lp-shop-tile-meta">
-                <span className="lp-shop-tile-brand">{t.brand}</span>
-                <span className="lp-shop-tile-name">{t.name}</span>
-                <span className="lp-shop-tile-price">{t.price}</span>
-              </div>
-            </li>
-          ))}
-        </ul>
+        <div className="hp-hero-cta">
+          <Link href="#closets" className="ps-btn ps-btn-primary" scroll>
+            Find your creator
+          </Link>
+        </div>
+        <p className="hp-hero-tinylink">
+          Are you a creator?{" "}
+          <Link href="/forcreators">Get your own storefront.</Link>
+        </p>
       </section>
 
-      {/* ---------- MAI: shown via one Q+A, never explained ---------- */}
-      <section className="lp-section lp-section-tight">
-        <div className="lp-chat">
-          <div className="lp-chat-user">
-            what would she wear to a wedding in Napa in October?
+      <section className="hp-section hp-closets" id="closets">
+        <h2 className="hp-section-h2">Open now.</h2>
+        {creators.length > 0 ? (
+          <ul className="hp-closets-grid">
+            {creators.map((c) => (
+              <li key={c.slug} className="hp-closet">
+                <p className="ps-masthead-eyebrow">ASKMAI</p>
+                <h3 className="hp-closet-name">{c.name}</h3>
+                <p className="hp-closet-sub">
+                  {c.count > 0
+                    ? `${c.count.toLocaleString()} piece${c.count === 1 ? "" : "s"} · styled by Mai`
+                    : "styled by Mai"}
+                </p>
+                <Link
+                  href={`/${c.slug}`}
+                  className="hp-closet-cta"
+                >
+                  Step inside →
+                </Link>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="hp-empty">Closets open soon.</p>
+        )}
+      </section>
+
+      <section className="hp-section hp-rooms">
+        <div className="hp-room">
+          <p className="ps-masthead-eyebrow">ROOM 01</p>
+          <h3 className="hp-room-h3">Every piece, tagged.</h3>
+          <p className="hp-room-body">
+            Their whole closet in one place, pulled from the shops they
+            actually use. Every tag links straight to the retailer, and
+            the creator&apos;s notes are written right on the tag.
+          </p>
+        </div>
+        <div className="hp-room">
+          <p className="ps-masthead-eyebrow">ROOM 02</p>
+          <h3 className="hp-room-h3">A stylist who knows the closet cold.</h3>
+          <p className="hp-room-body">
+            Ask Mai how your creator would style it, whether the linen
+            set runs small, or what goes with the gold hoops. Mai only
+            answers from what the creator actually owns, and says so
+            when she doesn&apos;t.
+          </p>
+        </div>
+        <div className="hp-room">
+          <p className="ps-masthead-eyebrow">ROOM 03</p>
+          <h3 className="hp-room-h3">The fitting room is your camera roll.</h3>
+          <p className="hp-room-body">
+            Upload one photo and see the look on you, not on a model.
+            Build the outfit piece by piece before you spend a dollar.
+          </p>
+        </div>
+      </section>
+
+      <section className="hp-section hp-band">
+        <h2 className="hp-section-h2">The look for less, from their own closet.</h2>
+        <p className="hp-band-body">
+          Love the piece, not the price? Mai pulls the closest thing they
+          actually own at a friendlier number. And if something
+          you&apos;re watching goes on sale, you&apos;ll hear about it
+          first.
+        </p>
+      </section>
+
+      <section className="hp-section hp-look">
+        <h2 className="hp-section-h2">Every outfit becomes a pull sheet.</h2>
+        <p className="hp-look-body">
+          Save a look and Mai lays it out the way a stylist would,
+          itemized, priced, and ready to send to the group chat.
+        </p>
+        <div className="hp-look-sample" aria-hidden>
+          <div className="hp-look-sample-eyebrow">
+            <span>PULL SHEET</span>
+            <span>LOOK Nº 042</span>
           </div>
-          <div className="lp-chat-mai">
-            <p className="lp-chat-mai-body">
-              The Balia linen in her closet reads as evening in Napa
-              without trying too hard, and she pairs it with the Cult
-              Gaia Hera when the light drops.
-            </p>
-            <div className="lp-chat-card">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src="/api/img?url=https%3A%2F%2Fstatic.shopmy.us%2Fuploads%2Fimg-product-1751903970581"
-                alt=""
-                className="lp-chat-card-img"
-              />
-              <div className="lp-chat-card-meta">
-                <span className="lp-chat-card-brand">Reformation</span>
-                <span className="lp-chat-card-name">Balia Linen Dress</span>
-                <span className="lp-chat-card-price">$258</span>
-              </div>
+          <div className="hp-look-sample-rows">
+            <div className="hp-look-sample-row">
+              <span>Linen slip dress</span>
+              <span>$258</span>
+            </div>
+            <div className="hp-look-sample-row">
+              <span>Woven mule</span>
+              <span>$185</span>
+            </div>
+            <div className="hp-look-sample-row">
+              <span>Small woven pouch</span>
+              <span>$78</span>
             </div>
           </div>
-          <div className="lp-chat-user">
-            skincare, walk me through a simple routine
-          </div>
-          <div className="lp-chat-mai">
-            <p className="lp-chat-mai-body">
-              She keeps it to four steps. Vitamin C in the morning, this
-              essence to hydrate, moisturize, and a repair serum at
-              night.
-            </p>
-            <div className="lp-chat-card">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={MAI_ANSWER_TILE.image}
-                alt=""
-                className="lp-chat-card-img"
-              />
-              <div className="lp-chat-card-meta">
-                <span className="lp-chat-card-brand">
-                  {MAI_ANSWER_TILE.brand}
-                </span>
-                <span className="lp-chat-card-name">
-                  {MAI_ANSWER_TILE.name}
-                </span>
-                <span className="lp-chat-card-price">
-                  {MAI_ANSWER_TILE.price}
-                </span>
-              </div>
-            </div>
+          <div className="hp-look-sample-total">
+            <span>Total</span>
+            <strong>$521</strong>
           </div>
         </div>
       </section>
 
-      {/* ---------- FITTING ROOMS: layout slot, no content yet ---------- */}
-      <section className="lp-section lp-rooms-slot">
-        <p className="lp-eyebrow">Coming soon</p>
-        <h2 className="lp-h2">Fitting rooms</h2>
-        {/* Intentionally empty; layout slot for the shared-fitting-
-            rooms surface once Rooms Phase 1 opens up. */}
-        <div className="lp-rooms-placeholder" aria-hidden />
+      <section className="hp-section hp-trust">
+        <p className="hp-trust-line">
+          Every tag links to where they actually shop. Commissions go to
+          the creator, always.
+        </p>
+        <p className="hp-trust-row">Revolve · Shopbop · FWRD · ShopMy</p>
       </section>
 
-      <footer className="lp-footer">
-        <span className="lp-wordmark lp-wordmark-sm">
-          ask<em>mai</em>
-        </span>
-        <a href="mailto:hi@askmai.co" className="lp-footer-link">
+      <section className="hp-section hp-close">
+        <h2 className="hp-section-h2">Find your closet.</h2>
+        <Link href="/creators" className="ps-btn ps-btn-primary">
+          Browse creators
+        </Link>
+        <p className="hp-close-scrawl">hope this helps, x Mai</p>
+      </section>
+
+      <footer className="hp-footer">
+        <span className="hp-wordmark hp-wordmark-sm">ASKMAI</span>
+        <a href="mailto:hi@askmai.co" className="hp-footer-link">
           hi@askmai.co
         </a>
       </footer>

@@ -1,32 +1,11 @@
-/**
- * /forcreators - creator-facing pitch page. Outcomes only, no
- * mechanism labels ("digital twin", "your voice"). Cream/tan
- * palette matching the actual product surface.
- *
- * Structure:
- *   1. Hero (outcome + placeholder for a real render)
- *   2. Try-on conversion (the make-or-break feature)
- *   3. One-page aggregation (with a real logo-row of the networks
- *      we support today)
- *   4. Engagement + DMs shown via a chat exchange, not explained
- *   5. 100% commissions
- *   6. Fitting Rooms deferred slot (layout only, no content yet)
- *   7. How it works (3 steps)
- *   8. Closing CTA
- *
- * The page stays unlisted (robots noindex).
- */
-
 import Link from "next/link";
 import type { Metadata } from "next";
-import HeroImage from "../_marketing/HeroImage";
-import "../_marketing/landing.css";
+import "../_pullsheet/tokens.css";
 import "./forcreators.css";
 
 const OG_TITLE = "AskMai for creators";
 const OG_DESC =
-  "The one link where your followers actually buy. Try-on, one-page aggregation, and every commission still yours.";
-const OG_URL = "https://www.askmai.co/forcreators";
+  "Your followers have questions. Your closet now answers. AskMai turns your links into a storefront with a stylist inside.";
 const OG_IMAGE = "/og/forcreators.png";
 
 export const metadata: Metadata = {
@@ -36,7 +15,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: OG_TITLE,
     description: OG_DESC,
-    url: OG_URL,
+    url: "https://www.askmai.co/forcreators",
     type: "website",
     images: [
       { url: OG_IMAGE, width: 1200, height: 630, alt: OG_TITLE },
@@ -50,219 +29,131 @@ export const metadata: Metadata = {
   },
 };
 
+const REQUEST_URL = "/creator-signup";
+
 export default function ForCreatorsPage() {
   return (
-    <main className="askmai-landing fc-root">
-      <header className="lp-nav">
-        <span className="lp-wordmark">
-          ask<em>mai</em>
-        </span>
-        <nav className="lp-nav-right">
-          <Link href="/" className="lp-nav-link">
-            Home
-          </Link>
-          <Link href="/creator-signup" className="lp-nav-cta">
-            Get early access
+    <main className="fc-root">
+      <header className="fc-nav">
+        <Link href="/" className="fc-wordmark">ASKMAI</Link>
+        <nav className="fc-nav-right">
+          <Link href="/" className="fc-nav-link">Home</Link>
+          <Link href={REQUEST_URL} className="ps-btn ps-btn-primary">
+            Request your storefront
           </Link>
         </nav>
       </header>
 
-      {/* ---------- HERO ---------- */}
-      <section className="lp-hero fc-hero">
-        <div className="lp-hero-copy">
-          <p className="lp-eyebrow">For creators</p>
-          <h1 className="lp-h1">
-            The one link where your followers <em>actually buy.</em>
-          </h1>
-          <p className="lp-lead">
-            Try-on turns screenshots into checkouts. Every network you
-            already use lands on one page. Every commission stays
-            yours.
-          </p>
-          <div className="lp-cta-row">
-            <Link href="/creator-signup" className="lp-btn lp-btn-primary">
-              Get early access
-            </Link>
-          </div>
-        </div>
-        <div className="lp-hero-visual">
-          <div className="lp-hero-render">
-            <div className="lp-hero-render-plate" aria-hidden />
-            <HeroImage
-              src="/marketing/forcreators-hero.png"
-              className="lp-hero-render-img"
-            />
-          </div>
-        </div>
-      </section>
-
-      {/* ---------- TRY-ON CONVERSION ---------- */}
-      <section className="lp-section fc-outcome">
-        <p className="lp-eyebrow">Conversion</p>
-        <h2 className="lp-h2">
-          Your fits, rendered on the person about to shop them.
-        </h2>
-        <p className="lp-lead lp-lead-sub">
-          A follower opens your closet, taps a piece, and sees it on
-          themselves. That&apos;s the moment a double-tap turns into
-          Add to Cart.
+      <section className="fc-hero">
+        <p className="ps-masthead-eyebrow">ASKMAI FOR CREATORS</p>
+        <h1 className="fc-hero-h1">
+          Your followers have questions. Your closet now answers.
+        </h1>
+        <p className="fc-hero-sub">
+          AskMai turns your links into a storefront with a stylist
+          inside, trained on your closet, your notes, and your taste.
+          It answers the questions sitting in your DMs and puts your
+          paid links in every reply.
         </p>
-        <div className="fc-tryon-frame">
-          <HeroImage
-            src="/marketing/forcreators-conversion.png"
-            className="fc-tryon-frame-img"
-          />
-          <div className="fc-tryon-frame-plate" aria-hidden />
+        <div className="fc-hero-cta">
+          <Link href={REQUEST_URL} className="ps-btn ps-btn-primary">
+            Request your storefront
+          </Link>
         </div>
       </section>
 
-      {/* ---------- AGGREGATION ---------- */}
-      <section className="lp-section fc-aggregate">
-        <p className="lp-eyebrow">One page</p>
-        <h2 className="lp-h2">
-          ShopMy, Shopbop, Revolve, and FWRD in a single grid.
-        </h2>
-        <p className="lp-lead lp-lead-sub">
-          We pull your entire catalog automatically, keep every
-          affiliate URL byte-for-byte, and hand your followers one
-          filterable grid instead of a scavenger hunt across your bio.
+      <section className="fc-section">
+        <p className="ps-masthead-eyebrow">THE PROBLEM</p>
+        <h2 className="fc-h2">The link page was never the store.</h2>
+        <p className="fc-body">
+          The store is your comment section. It&apos;s the girl asking
+          if the dress wrinkles, what size you took, and what she
+          should wear it with. When those questions go unanswered, she
+          googles the item, buys it somewhere unattributed, and you
+          make nothing on a sale you created.
         </p>
-        <ul className="fc-logo-row">
-          <li className="fc-logo">ShopMy</li>
-          <li className="fc-logo">Shopbop</li>
-          <li className="fc-logo">Revolve</li>
-          <li className="fc-logo">FWRD</li>
-          <li className="fc-logo fc-logo-soon">LTK (soon)</li>
-        </ul>
       </section>
 
-      {/* ---------- ENGAGEMENT / DMs (shown, never explained) ---------- */}
-      <section className="lp-section lp-section-tight">
-        <p className="lp-eyebrow">Engagement</p>
-        <h2 className="lp-h2">The DMs you can&apos;t keep up with.</h2>
-        <div className="lp-chat">
-          <div className="lp-chat-user">
-            what&apos;s her tulum hotel?
-          </div>
-          <div className="lp-chat-mai">
-            <p className="lp-chat-mai-body">
-              She stayed at Hotel Esencia, quiet beach on the north
-              end, and wrote about the food being the reason to book
-              it.
+      <section className="fc-section">
+        <p className="ps-masthead-eyebrow">WHAT YOU GET</p>
+        <div className="fc-rows">
+          <div className="fc-row">
+            <h3 className="fc-row-h">A storefront that sounds like you.</h3>
+            <p className="fc-body">
+              Your own page at askmai.co/you with your whole closet on
+              it. Mai learns your sizing notes, your styling rules, and
+              your voice from content you&apos;ve already made. You add
+              nothing to your plate.
             </p>
-            <div className="lp-chat-card">
-              <div className="fc-place-icon" aria-hidden>
-                🏝
-              </div>
-              <div className="lp-chat-card-meta">
-                <span className="lp-chat-card-brand">Hotel</span>
-                <span className="lp-chat-card-name">Hotel Esencia</span>
-                <span className="lp-chat-card-price">Tulum, Mexico</span>
-              </div>
-            </div>
           </div>
-          <div className="lp-chat-user">
-            gold hoops, budget under $200
-          </div>
-          <div className="lp-chat-mai">
-            <p className="lp-chat-mai-body">
-              She doesn&apos;t have hoops in her closet right now, but
-              she wears these Aureum studs constantly, same warm gold,
-              size range close.
+          <div className="fc-row">
+            <h3 className="fc-row-h">Answers with your links inside.</h3>
+            <p className="fc-body">
+              When a follower asks what to wear with the gold hoops,
+              Mai answers the way you would and tags the pieces with
+              your links. Every answer is a shoppable moment you
+              didn&apos;t have to type.
             </p>
-            <div className="lp-chat-card">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src="/api/img?url=https%3A%2F%2Fstatic.shopmy.us%2Fuploads%2Fpretty-prod-1753495753677"
-                alt=""
-                className="lp-chat-card-img"
-              />
-              <div className="lp-chat-card-meta">
-                <span className="lp-chat-card-brand">Uncommon James</span>
-                <span className="lp-chat-card-name">
-                  Seeing Double Studs
-                </span>
-                <span className="lp-chat-card-price">$48</span>
-              </div>
-            </div>
+          </div>
+          <div className="fc-row">
+            <h3 className="fc-row-h">A fitting room for your audience.</h3>
+            <p className="fc-body">
+              Followers try your looks on their own photo before they
+              buy. Confidence at checkout means fewer abandoned carts
+              and fewer returns on your recommendations.
+            </p>
+          </div>
+          <div className="fc-row">
+            <h3 className="fc-row-h">Budget followers stay in your closet.</h3>
+            <p className="fc-body">
+              When the $400 piece is out of reach, Mai offers the
+              closest thing you actually own at a lower price, from
+              your own links. The commission that used to leak to a
+              dupe search stays yours.
+            </p>
           </div>
         </div>
       </section>
 
-      {/* ---------- 100% COMMISSIONS ---------- */}
-      <section className="lp-section fc-money">
-        <p className="lp-eyebrow">Your money</p>
-        <h2 className="lp-h2">You keep 100%.</h2>
-        <p className="lp-lead">
-          Every affiliate URL is stored exactly as you wrote it. We
-          take zero, no percentage, no spread, no revenue share.
+      <section className="fc-money">
+        <p className="ps-masthead-eyebrow">THE MONEY</p>
+        <h2 className="fc-h2">Your links, untouched.</h2>
+        <p className="fc-body">
+          We never swap, wrap, or strip your affiliate links. Your
+          rates and your relationships stay exactly as they are, and
+          sale alerts bring followers back through your links when
+          prices drop. Mai also never invents a recommendation. If you
+          don&apos;t own it, she says so, because your credibility is
+          the whole business.
         </p>
       </section>
 
-      {/* ---------- FITTING ROOMS: layout slot, no content yet ---------- */}
-      <section className="lp-section lp-rooms-slot">
-        <p className="lp-eyebrow">Coming soon</p>
-        <h2 className="lp-h2">Fitting rooms</h2>
-        {/* Intentional layout slot; wired up when Rooms Phase 1 ships
-            to the marketing surface. */}
-        <div className="lp-rooms-placeholder" aria-hidden />
-      </section>
-
-      {/* ---------- HOW IT WORKS ---------- */}
-      <section className="lp-section fc-how">
-        <p className="lp-eyebrow">How it works</p>
-        <h2 className="lp-h2">Five minutes on your end.</h2>
-        <ol className="fc-steps">
-          <li className="fc-step">
-            <span className="fc-step-num">1</span>
-            <div className="fc-step-body">
-              <h3 className="fc-step-title">Paste your affiliate links.</h3>
-              <p className="fc-step-note">
-                ShopMy, Shopbop, Revolve, FWRD. We pull the catalog and
-                keep the URLs byte-for-byte.
-              </p>
-            </div>
-          </li>
-          <li className="fc-step">
-            <span className="fc-step-num">2</span>
-            <div className="fc-step-body">
-              <h3 className="fc-step-title">Connect your blog.</h3>
-              <p className="fc-step-note">
-                Everything you&apos;ve already written stays
-                answerable, from Tulum hotels to skincare routines.
-              </p>
-            </div>
-          </li>
-          <li className="fc-step">
-            <span className="fc-step-num">3</span>
-            <div className="fc-step-body">
-              <h3 className="fc-step-title">
-                Share askmai.co/yourhandle.
-              </h3>
-              <p className="fc-step-note">
-                One link in bio. Followers do the rest.
-              </p>
-            </div>
-          </li>
-        </ol>
-      </section>
-
-      {/* ---------- CLOSE ---------- */}
-      <section className="lp-section fc-close">
-        <h2 className="lp-h2">Ready when you are.</h2>
-        <Link href="/creator-signup" className="lp-btn lp-btn-primary">
-          Get early access
-        </Link>
-        <p className="fc-close-sub">
-          Small group of creators onboarding now.
+      <section className="fc-section">
+        <p className="ps-masthead-eyebrow">SETUP</p>
+        <h2 className="fc-h2">Live in days, not quarters.</h2>
+        <p className="fc-body">
+          Send us your ShopMy or LTK link and we build the storefront
+          from what&apos;s already there. You approve it, post it once,
+          and it works every day after.
         </p>
       </section>
 
-      <footer className="lp-footer">
-        <span className="lp-wordmark lp-wordmark-sm">
-          ask<em>mai</em>
-        </span>
-        <a href="mailto:hi@askmai.co" className="lp-footer-link">
+      <section className="fc-close">
+        <p className="ps-masthead-eyebrow">FIRST CLOSETS</p>
+        <h2 className="fc-h2">The first closets are open.</h2>
+        <p className="fc-body">
+          We&apos;re onboarding a small number of creators by hand.
+        </p>
+        <div className="fc-hero-cta">
+          <Link href={REQUEST_URL} className="ps-btn ps-btn-primary">
+            Request your storefront
+          </Link>
+        </div>
+      </section>
+
+      <footer className="fc-footer">
+        <span className="fc-wordmark fc-wordmark-sm">ASKMAI</span>
+        <a href="mailto:hi@askmai.co" className="fc-footer-link">
           hi@askmai.co
         </a>
       </footer>
