@@ -36,6 +36,7 @@ import BeforeAfterReveal from "./BeforeAfterReveal";
 import FitProfileDialog from "./FitProfileDialog";
 import FitRecPanel from "./FitRecPanel";
 import ForLessBand from "../_pullsheet/ForLessBand";
+import ShareTheLook from "../_pullsheet/ShareTheLook";
 import {
   addLook,
   loadDressingRoom,
@@ -379,7 +380,11 @@ export default function DressingRoom({
       ) : null}
 
       {render.state !== "idle" ? (
-        <RenderModal state={render} onClose={() => setRender({ state: "idle" })} />
+        <RenderModal
+          state={render}
+          onClose={() => setRender({ state: "idle" })}
+          creatorSlug={creatorSlug}
+        />
       ) : null}
 
       {showSignIn ? (
@@ -667,9 +672,11 @@ function LookCard({
 function RenderModal({
   state,
   onClose,
+  creatorSlug,
 }: {
   state: Exclude<RenderState, { state: "idle" }>;
   onClose: () => void;
+  creatorSlug: string;
 }) {
   const titleList = state.items
     .map((p) => `${p.brand ? p.brand + " " : ""}${p.name}`)
@@ -731,6 +738,20 @@ function RenderModal({
             {state.items.length === 1 ? (
               <ForLessBand productId={state.items[0].id} />
             ) : null}
+            <div style={{ marginTop: 10, display: "flex", justifyContent: "center" }}>
+              <ShareTheLook
+                creatorSlug={creatorSlug}
+                title={titleList || null}
+                items={state.items.map((p) => ({
+                  id: p.id,
+                  name: p.name,
+                  brand: p.brand ?? null,
+                  price_display: p.priceDisplay ?? null,
+                  image_url: p.imageUrl,
+                  affiliate_url: p.affiliateUrl,
+                }))}
+              />
+            </div>
             <p className="tryon-room-saved-note">Saved to My looks.</p>
           </div>
         ) : null}
