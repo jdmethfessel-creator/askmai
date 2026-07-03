@@ -233,3 +233,138 @@
 .creator-page-title,
 .creator-page-sources { display: none !important; }
 .creator-page-body { padding-top: 4px !important; }
+
+/* ---------- Ask chat re-skin ---------- */
+
+/* Chat product grid becomes hang-tag columns */
+.chat-product-grid {
+  gap: 16px !important;
+}
+
+/* User bubble (has `text-white rounded-br-lg` and the accent bg via
+ * inline style). Force ink background regardless of the inline
+ * accent. */
+.chat-user-bubble,
+li > div.ml-auto.text-white {
+  background: var(--ink) !important;
+  color: var(--ivory) !important;
+  border-radius: 16px 16px 3px 16px !important;
+  font-family: var(--font-body) !important;
+}
+/* Mai bubble (has `mr-auto rounded-bl-lg`) */
+li > div.mr-auto.rounded-bl-lg {
+  background: var(--card) !important;
+  color: var(--ink) !important;
+  border: 1px solid var(--line) !important;
+  border-radius: 16px 16px 16px 3px !important;
+  font-family: var(--font-body) !important;
+  position: relative;
+  padding-top: 22px !important;
+}
+li > div.mr-auto.rounded-bl-lg::before {
+  content: "MAI";
+  position: absolute;
+  top: 10px;
+  left: 14px;
+  font-family: var(--font-body);
+  font-size: 8px;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--bronze-deep);
+  font-weight: 600;
+}
+
+/* Greeting Mai bubble (opens the chat) also gets the treatment */
+div.mr-auto.max-w-\[88\%\].rounded-3xl.rounded-bl-lg {
+  background: var(--card) !important;
+  border: 1px solid var(--line) !important;
+  color: var(--ink) !important;
+  border-radius: 16px 16px 16px 3px !important;
+  padding-top: 22px !important;
+  position: relative;
+}
+div.mr-auto.max-w-\[88\%\].rounded-3xl.rounded-bl-lg::before {
+  content: "MAI";
+  position: absolute;
+  top: 10px;
+  left: 14px;
+  font-family: var(--font-body);
+  font-size: 8px;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--bronze-deep);
+  font-weight: 600;
+}
+
+/* ---------- Try On result modal Polaroid ---------- */
+
+.tryon-modal {
+  background: var(--ivory) !important;
+  border: 1.5px solid var(--ink) !important;
+  border-radius: 0 !important;
+  padding: 16px !important;
+}
+.tryon-modal-body {
+  padding: 8px 0 !important;
+}
+.tryon-modal-caption {
+  font-family: var(--font-display) !important;
+  font-style: italic !important;
+  color: var(--ink) !important;
+  text-align: center;
+}
+.tryon-reveal,
+.tryon-modal-image {
+  background: transparent !important;
+}
+.tryon-modal-image-reveal,
+.tryon-reveal-done > .tryon-modal-image {
+  background: #ffffff;
+  padding: 12px 12px 40px;
+  box-shadow: 0 8px 24px -12px rgba(22, 19, 14, 0.35);
+  transform: rotate(-1.5deg);
+  border: 0;
+}
+.tryon-modal-actions .tryon-btn {
+  font-family: var(--font-body) !important;
+  font-size: 10px !important;
+  letter-spacing: 0.18em !important;
+  text-transform: uppercase !important;
+  border-radius: 0 !important;
+  border: 1.5px solid var(--ink) !important;
+}
+
+/* Outfit slots on the tray */
+.tryon-outfit-tray {
+  background: var(--ivory) !important;
+  border-top: 1.5px solid var(--ink) !important;
+}
+.tryon-outfit-thumb {
+  border: 1.5px dashed var(--ink-soft) !important;
+  background: #ffffff;
+  border-radius: 0 !important;
+}
+.tryon-outfit-thumb.is-selected,
+.tryon-outfit-thumb-selected {
+  border-style: solid !important;
+  border-color: var(--ink) !important;
+}
+.tryon-outfit-thumb-x {
+  background: var(--ink) !important;
+  color: var(--ivory) !important;
+  border-radius: 999px;
+}
+
+/* Room "Start a fitting room" bar restyle to token colors */
+.tryon-room-startbar-sub,
+.tryon-startroom-sub {
+  color: var(--ink-soft) !important;
+}
+.tryon-startroom-title,
+.tryon-room-section-title {
+  font-family: var(--font-display) !important;
+  color: var(--ink) !important;
+}
+.tryon-room-section-count {
+  color: var(--bronze-deep) !important;
+}
