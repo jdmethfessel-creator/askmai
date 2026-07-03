@@ -35,6 +35,7 @@ import RenderLoadingState from "./RenderLoadingState";
 import BeforeAfterReveal from "./BeforeAfterReveal";
 import FitProfileDialog from "./FitProfileDialog";
 import FitRecPanel from "./FitRecPanel";
+import ForLessBand from "../_pullsheet/ForLessBand";
 import {
   addLook,
   loadDressingRoom,
@@ -727,6 +728,9 @@ function RenderModal({
                 brand: p.brand,
               }))}
             />
+            {state.items.length === 1 ? (
+              <ForLessBand productId={state.items[0].id} />
+            ) : null}
             <p className="tryon-room-saved-note">Saved to My looks.</p>
           </div>
         ) : null}

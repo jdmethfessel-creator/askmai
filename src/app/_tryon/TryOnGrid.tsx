@@ -52,6 +52,7 @@ import {
 } from "./dressingRoomStore";
 import { REASON_COPY, ResultActions, type BlockReason } from "./renderShared";
 import FitRecPanel from "./FitRecPanel";
+import ForLessBand from "../_pullsheet/ForLessBand";
 import { ProductCard, type Product } from "./ProductCard";
 
 // `Product` type lives in ./ProductCard so the Ask chat can adapt
@@ -662,6 +663,7 @@ function TryOnModal({
                 },
               ]}
             />
+            <ForLessBand productId={state.product.id} />
           </div>
         ) : null}
         {state.state === "blocked" ? (

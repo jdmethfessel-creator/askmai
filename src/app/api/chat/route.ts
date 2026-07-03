@@ -27,6 +27,7 @@ import {
 } from "@/lib/mai/context";
 import { loadUserFitProfile } from "@/lib/fit";
 import { buildFitContextBlock } from "@/lib/mai/fitContext";
+import { hasCheaperIntent, logForLessEvent } from "@/lib/forLess";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -223,6 +224,25 @@ export async function POST(request: Request) {
       "[chat] fit context assembly failed:",
       err instanceof Error ? err.message : String(err)
     );
+  }
+
+  // Cheaper-intent hook. If the user's message reads as a "for less"
+  // / dupe / budget request, we append a small directive to the fit
+  // context block (or start one) telling Mai to pull the closest
+  // qualifying piece from the SAME creator's catalog only. Never
+  // invent a dupe and never pull off-creator.
+  const cheaperIntent = hasCheaperIntent(message);
+  if (cheaperIntent) {
+    const directive =
+      "CHEAPER-INTENT DIRECTIVE: the user is asking for a more affordable option. If a piece is currently in context, offer the closest cheaper alternative from the SAME creator's own catalog only (visible above). Never invent a dupe, never reference an off-catalog brand as a suggestion. If nothing in the creator's catalog qualifies at a meaningfully lower price (roughly two-thirds or less of the anchor), say so plainly in the honesty-rule style and offer the closest thing she actually owns.";
+    fitContext = fitContext
+      ? `${fitContext}\n\n${directive}`
+      : directive;
+    logForLessEvent("cheaper_intent_asked", {
+      creatorId: creator.id,
+      productId: "",
+      price: null,
+    }).catch(() => undefined);
   }
 
   const systemPrompt = buildMaiPrompt({
