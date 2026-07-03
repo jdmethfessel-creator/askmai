@@ -42,6 +42,9 @@ export type Product = {
   product_category: string | null;
   product_subcategory: string | null;
   featured: boolean | null;
+  on_sale?: boolean | null;
+  compare_at_price?: number | null;
+  mai_note?: string | null;
 };
 
 export type ProductCardProps = {
@@ -139,13 +142,38 @@ export function ProductCard({
           onError={() => setImageFailed(true)}
         />
       </div>
+      {product.on_sale ? (
+        <span className="ps-hang-corner ps-hang-corner-sale">on sale</span>
+      ) : null}
       <div className="tryon-card-meta">
         {product.brand ? (
           <div className="tryon-card-brand">{product.brand}</div>
         ) : null}
         <div className="tryon-card-title">{product.product_title}</div>
-        {product.price_display ? (
-          <div className="tryon-card-price">{product.price_display}</div>
+        {product.price_display || product.price != null ? (
+          <div className="tryon-card-price">
+            {product.on_sale &&
+            typeof product.compare_at_price === "number" &&
+            product.price != null &&
+            product.compare_at_price > product.price ? (
+              <span
+                style={{
+                  textDecoration: "line-through",
+                  color: "var(--ink-soft)",
+                  marginRight: 6,
+                  fontWeight: 500,
+                  fontSize: 11,
+                }}
+              >
+                ${Math.round(product.compare_at_price)}
+              </span>
+            ) : null}
+            {product.price_display ??
+              (product.price != null ? `$${Math.round(product.price)}` : "")}
+          </div>
+        ) : null}
+        {product.mai_note ? (
+          <p className="ps-mai-note">{product.mai_note}</p>
         ) : null}
       </div>
       <div className="tryon-card-actions">

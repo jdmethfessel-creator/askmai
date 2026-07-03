@@ -53,6 +53,8 @@ import {
 import { REASON_COPY, ResultActions, type BlockReason } from "./renderShared";
 import FitRecPanel from "./FitRecPanel";
 import ForLessBand from "../_pullsheet/ForLessBand";
+import WatchToggle from "../_pullsheet/WatchToggle";
+import OnSaleRail from "../_pullsheet/OnSaleRail";
 import { ProductCard, type Product } from "./ProductCard";
 
 // `Product` type lives in ./ProductCard so the Ask chat can adapt
@@ -426,9 +428,33 @@ export default function TryOnGrid({
           next.add(product.id);
           return next;
         });
+        // Auto-watch for logged-in users when they save to Try On.
+        // Best-effort: unauthenticated callers or missing-table
+        // endpoints just no-op.
+        if (signedIn) {
+          fetch("/api/watch", {
+            method: "POST",
+            credentials: "same-origin",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ productId: product.id }),
+          })
+            .then((r) => {
+              if (r.ok) {
+                try {
+                  window.localStorage.setItem(
+                    `askmai:watching:${product.id}`,
+                    "1"
+                  );
+                } catch {
+                  /* silent */
+                }
+              }
+            })
+            .catch(() => undefined);
+        }
       }
     },
-    [creatorSlug, savedIds]
+    [creatorSlug, savedIds, signedIn]
   );
 
   // ------------------------- featured toggle (Phase 1 edit mode) ----
@@ -544,6 +570,21 @@ export default function TryOnGrid({
         </div>
       ) : null}
 
+      <OnSaleRail
+        items={products
+          .filter((p) => Boolean(p.on_sale))
+          .slice(0, 12)
+          .map((p) => ({
+            id: p.id,
+            source_network: p.source_network,
+            product_title: p.product_title,
+            image_url: p.image_url,
+            affiliate_url: p.affiliate_url,
+            price: p.price,
+            compare_at_price: p.compare_at_price ?? null,
+          }))}
+      />
+
       <main className="tryon-grid">
         {products.map((p) => (
           <ProductCard
@@ -589,7 +630,11 @@ export default function TryOnGrid({
       </form>
 
       {render.state !== "idle" ? (
-        <TryOnModal state={render} onClose={() => setRender({ state: "idle" })} />
+        <TryOnModal
+          state={render}
+          onClose={() => setRender({ state: "idle" })}
+          signedIn={signedIn}
+        />
       ) : null}
 
       {showSignIn ? (
@@ -606,9 +651,11 @@ export default function TryOnGrid({
 function TryOnModal({
   state,
   onClose,
+  signedIn,
 }: {
   state: Exclude<RenderResult, { state: "idle" }>;
   onClose: () => void;
+  signedIn: boolean;
 }) {
   return (
     <div className="tryon-modal-scrim" role="dialog" aria-modal="true" onClick={onClose}>
@@ -664,6 +711,9 @@ function TryOnModal({
               ]}
             />
             <ForLessBand productId={state.product.id} />
+            <div style={{ marginTop: 8, display: "flex", justifyContent: "center" }}>
+              <WatchToggle productId={state.product.id} signedIn={signedIn} />
+            </div>
           </div>
         ) : null}
         {state.state === "blocked" ? (

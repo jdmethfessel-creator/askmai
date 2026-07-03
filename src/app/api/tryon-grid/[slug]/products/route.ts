@@ -357,6 +357,8 @@ type NetworkCursor = { ts: string; id: string };
 type InterleaveCursor = Partial<Record<Network, NetworkCursor>>;
 
 const SELECT_COLS =
+  "id, source_network, product_title, brand, price, price_display, image_url, affiliate_url, product_category, product_subcategory, featured, on_sale, compare_at_price, mai_note, created_at";
+const SELECT_COLS_NO_SALE =
   "id, source_network, product_title, brand, price, price_display, image_url, affiliate_url, product_category, product_subcategory, featured, created_at";
 // Fallback select used when the `featured` column hasn't been migrated
 // onto the deployed DB yet. Same pattern as the column-tolerant
@@ -587,14 +589,20 @@ async function fetchOneNetwork(args: {
   };
 
   let { data, error } = await buildQuery(SELECT_COLS);
-  // 42703 = "column does not exist". The only optional column in
-  // SELECT_COLS is `featured` (added in migration 009); if it hasn't
-  // been deployed yet, retry without it.
+  // 42703 = "column does not exist". Optional cols are `featured`
+  // (migration 009) and `on_sale`/`compare_at_price`/`mai_note`
+  // (sale-alerts migration). Fall back in tiers.
   if (error?.code === "42703") {
     console.warn(
-      `[tryon-grid/products] ${args.network} retrying without featured column (run migration 009)`
+      `[tryon-grid/products] ${args.network} retrying without sale columns`
     );
-    ({ data, error } = await buildQuery(SELECT_COLS_NO_FEATURED));
+    ({ data, error } = await buildQuery(SELECT_COLS_NO_SALE));
+    if (error?.code === "42703") {
+      console.warn(
+        `[tryon-grid/products] ${args.network} retrying without featured column (run migration 009)`
+      );
+      ({ data, error } = await buildQuery(SELECT_COLS_NO_FEATURED));
+    }
   }
   if (error) {
     console.error(

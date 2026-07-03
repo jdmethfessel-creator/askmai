@@ -160,4 +160,44 @@ async function upsertRows({ creatorSlug, rows }) {
     }
   }
   console.log(`[apply] upserted ${withId.length} + inserted ${withoutId.length}`);
+
+  // Snapshot prices for sale-drop detection. Best-effort; a missing
+  // price_snapshots table (unmigrated env) just skips silently.
+  try {
+    const priced = payload.filter(
+      (r) => r.source_external_id && r.price != null && r.price > 0
+    );
+    if (priced.length === 0) return;
+    const ids = await sb
+      .from("creator_products")
+      .select("id, source_network, source_external_id, price")
+      .eq("creator_id", creator.id)
+      .in(
+        "source_external_id",
+        priced.map((r) => r.source_external_id)
+      );
+    const twelveHoursAgo = new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString();
+    const idRows = ids.data ?? [];
+    const snapshotBatch = [];
+    for (const row of idRows) {
+      const { data: recent } = await sb
+        .from("price_snapshots")
+        .select("id")
+        .eq("product_id", row.id)
+        .gte("captured_at", twelveHoursAgo)
+        .limit(1);
+      if (Array.isArray(recent) && recent.length > 0) continue;
+      snapshotBatch.push({ product_id: row.id, price: row.price });
+    }
+    if (snapshotBatch.length > 0) {
+      const { error } = await sb.from("price_snapshots").insert(snapshotBatch);
+      if (!error) {
+        console.log(`[apply] snapshotted ${snapshotBatch.length} prices`);
+      }
+    }
+  } catch (err) {
+    console.log(
+      `[apply] price snapshot skipped (${err instanceof Error ? err.message : String(err)})`
+    );
+  }
 }
