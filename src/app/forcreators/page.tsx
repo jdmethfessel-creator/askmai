@@ -1,11 +1,17 @@
 import Link from "next/link";
 import type { Metadata } from "next";
+import {
+  VignetteAsk,
+  VignetteForLess,
+  VignetteStorefront,
+  VignetteTryOn,
+} from "../_pullsheet/DemoVignettes";
 import "../_pullsheet/tokens.css";
 import "./forcreators.css";
 
 const OG_TITLE = "AskMai for creators";
 const OG_DESC =
-  "Your followers have questions. Your closet now answers. AskMai turns your links into a storefront with a stylist inside.";
+  "Your followers have questions. Your closet answers. A storefront with your closet in it, a stylist trained on your taste, and your links in every answer.";
 const OG_IMAGE = "/og/forcreators.png";
 
 export const metadata: Metadata = {
@@ -17,9 +23,7 @@ export const metadata: Metadata = {
     description: OG_DESC,
     url: "https://www.askmai.co/forcreators",
     type: "website",
-    images: [
-      { url: OG_IMAGE, width: 1200, height: 630, alt: OG_TITLE },
-    ],
+    images: [{ url: OG_IMAGE, width: 1200, height: 630, alt: OG_TITLE }],
   },
   twitter: {
     card: "summary_large_image",
@@ -47,13 +51,11 @@ export default function ForCreatorsPage() {
       <section className="fc-hero">
         <p className="ps-masthead-eyebrow">ASKMAI FOR CREATORS</p>
         <h1 className="fc-hero-h1">
-          Your followers have questions. Your closet now answers.
+          Your followers have questions. Your closet answers.
         </h1>
         <p className="fc-hero-sub">
-          AskMai turns your links into a storefront with a stylist
-          inside, trained on your closet, your notes, and your taste.
-          It answers the questions sitting in your DMs and puts your
-          paid links in every reply.
+          A storefront with your whole closet in it, a stylist trained
+          on your taste, and your links in every answer.
         </p>
         <div className="fc-hero-cta">
           <Link href={REQUEST_URL} className="ps-btn ps-btn-primary">
@@ -62,87 +64,32 @@ export default function ForCreatorsPage() {
         </div>
       </section>
 
-      <section className="fc-section">
-        <p className="ps-masthead-eyebrow">THE PROBLEM</p>
-        <h2 className="fc-h2">The link page was never the store.</h2>
-        <p className="fc-body">
-          The store is your comment section. It&apos;s the girl asking
-          if the dress wrinkles, what size you took, and what she
-          should wear it with. When those questions go unanswered, she
-          googles the item, buys it somewhere unattributed, and you
-          make nothing on a sale you created.
+      <section className="fc-problem">
+        <p className="fc-problem-line">
+          Every &ldquo;what size did you get?&rdquo; that goes
+          unanswered is a sale you created and someone else attributed.
         </p>
       </section>
 
-      <section className="fc-section">
-        <p className="ps-masthead-eyebrow">WHAT YOU GET</p>
-        <div className="fc-rows">
-          <div className="fc-row">
-            <h3 className="fc-row-h">A storefront that sounds like you.</h3>
-            <p className="fc-body">
-              Your own page at askmai.co/you with your whole closet on
-              it. Mai learns your sizing notes, your styling rules, and
-              your voice from content you&apos;ve already made. You add
-              nothing to your plate.
-            </p>
-          </div>
-          <div className="fc-row">
-            <h3 className="fc-row-h">Answers with your links inside.</h3>
-            <p className="fc-body">
-              When a follower asks what to wear with the gold hoops,
-              Mai answers the way you would and tags the pieces with
-              your links. Every answer is a shoppable moment you
-              didn&apos;t have to type.
-            </p>
-          </div>
-          <div className="fc-row">
-            <h3 className="fc-row-h">A fitting room for your audience.</h3>
-            <p className="fc-body">
-              Followers try your looks on their own photo before they
-              buy. Confidence at checkout means fewer abandoned carts
-              and fewer returns on your recommendations.
-            </p>
-          </div>
-          <div className="fc-row">
-            <h3 className="fc-row-h">Budget followers stay in your closet.</h3>
-            <p className="fc-body">
-              When the $400 piece is out of reach, Mai offers the
-              closest thing you actually own at a lower price, from
-              your own links. The commission that used to leak to a
-              dupe search stays yours.
-            </p>
-          </div>
-        </div>
-      </section>
+      <Row line="Everything you've shared, one link." vignette={<VignetteStorefront />} align="left" />
+      <Row line="Mai answers like you would, with your links inside." vignette={<VignetteAsk />} align="right" />
+      <Row line="Followers see your looks on themselves, then buy with confidence." vignette={<VignetteTryOn />} align="left" />
+      <Row line="Budget followers stay in your closet instead of googling a dupe." vignette={<VignetteForLess />} align="right" />
 
       <section className="fc-money">
         <p className="ps-masthead-eyebrow">THE MONEY</p>
         <h2 className="fc-h2">Your links, untouched.</h2>
         <p className="fc-body">
-          We never swap, wrap, or strip your affiliate links. Your
-          rates and your relationships stay exactly as they are, and
-          sale alerts bring followers back through your links when
-          prices drop. Mai also never invents a recommendation. If you
-          don&apos;t own it, she says so, because your credibility is
-          the whole business.
+          We never swap, wrap, or strip your affiliate links, and Mai
+          never invents a recommendation. Your credibility is the
+          whole business.
         </p>
       </section>
 
-      <section className="fc-section">
-        <p className="ps-masthead-eyebrow">SETUP</p>
-        <h2 className="fc-h2">Live in days, not quarters.</h2>
-        <p className="fc-body">
-          Send us your ShopMy or LTK link and we build the storefront
-          from what&apos;s already there. You approve it, post it once,
-          and it works every day after.
-        </p>
-      </section>
-
-      <section className="fc-close">
-        <p className="ps-masthead-eyebrow">FIRST CLOSETS</p>
-        <h2 className="fc-h2">The first closets are open.</h2>
-        <p className="fc-body">
-          We&apos;re onboarding a small number of creators by hand.
+      <section className="fc-setup">
+        <p className="fc-setup-line">
+          Send your ShopMy or LTK link. Live in days. Works with
+          ShopMy, LTK, Shopbop, Revolve, and FWRD.
         </p>
         <div className="fc-hero-cta">
           <Link href={REQUEST_URL} className="ps-btn ps-btn-primary">
@@ -153,10 +100,25 @@ export default function ForCreatorsPage() {
 
       <footer className="fc-footer">
         <span className="fc-wordmark fc-wordmark-sm">ASKMAI</span>
-        <a href="mailto:hi@askmai.co" className="fc-footer-link">
-          hi@askmai.co
-        </a>
+        <a href="mailto:hi@askmai.co" className="fc-footer-link">hi@askmai.co</a>
       </footer>
     </main>
+  );
+}
+
+function Row({
+  line,
+  vignette,
+  align,
+}: {
+  line: string;
+  vignette: React.ReactNode;
+  align: "left" | "right";
+}) {
+  return (
+    <section className={`fc-row fc-row-${align}`}>
+      <p className="fc-row-line">{line}</p>
+      <div className="fc-row-vig">{vignette}</div>
+    </section>
   );
 }
