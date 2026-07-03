@@ -14,7 +14,9 @@
     "seed:avatars": "node --env-file=.env.local scripts/ingest-creator-avatars.mjs",
     "ingest": "node --env-file=.env.local scripts/ingest.mjs",
     "reingest:images": "node --env-file=.env.local scripts/reingest-images.mjs",
-    "ingest:fit": "node --env-file=.env.local scripts/ingest-fit.mjs"
+    "ingest:fit": "node --env-file=.env.local scripts/ingest-fit.mjs",
+    "enrich": "node --env-file=.env.local scripts/enrich-catalog.mjs",
+    "search:eval": "node --env-file=.env.local scripts/search-eval.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.99.0",

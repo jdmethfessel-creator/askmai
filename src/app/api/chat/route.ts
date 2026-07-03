@@ -28,6 +28,7 @@ import {
 import { loadUserFitProfile } from "@/lib/fit";
 import { buildFitContextBlock } from "@/lib/mai/fitContext";
 import { hasCheaperIntent, logForLessEvent } from "@/lib/forLess";
+import { parseQuery as parseAttrQuery, searchProducts } from "@/lib/search";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -167,7 +168,49 @@ export async function POST(request: Request) {
     budgetCeilingPrefetch,
     recentlyShown.ids
   );
-  const catalog = catalogSelection.rows;
+  let catalog = catalogSelection.rows;
+
+  // Structured filter pass. When parseQuery pulls a category, colors,
+  // or price out of the user's message, replace the freetext-scoped
+  // catalog with the hard-filtered searchProducts result so Mai only
+  // ever sees rows that survive the constraints. When strict filters
+  // land < 3 rows, the relaxed pass is included and Mai is told to
+  // apply the honesty rule (see fitContext directive below).
+  const parsedIntent = parseAttrQuery(message);
+  let structuredIsRelaxed = false;
+  if (parsedIntent.category || parsedIntent.colors.length > 0 || parsedIntent.priceMax != null) {
+    try {
+      const rows = await searchProducts({
+        creatorSlug: creator.slug,
+        category: parsedIntent.category,
+        colors: parsedIntent.colors,
+        priceMax: parsedIntent.priceMax,
+        freeText: parsedIntent.freeText,
+        limit: 40,
+      });
+      const exact = rows.filter((r) => !r.nearest);
+      structuredIsRelaxed = exact.length < 3 && rows.length > exact.length;
+      if (rows.length > 0) {
+        catalog = rows.map((r) => ({
+          id: r.id,
+          brand: r.brand,
+          name: r.product_title,
+          category: r.product_category ?? null,
+          subcategory: r.product_subcategory ?? null,
+          price: r.price,
+          price_display: r.price_display,
+          image_url: r.image_url,
+          affiliate_url: r.affiliate_url,
+          source_network: r.source_network,
+        })) as typeof catalog;
+      }
+    } catch (err) {
+      console.warn(
+        "[chat] structured search fallback (kept freetext catalog):",
+        err instanceof Error ? err.message : String(err)
+      );
+    }
+  }
   // Content chunks from the creator's blog / travel / dining
   // posts. Mai reads these for non-fashion answers. Table-tolerant
   // when migration 013 hasn't run yet -- returns [].
@@ -224,6 +267,19 @@ export async function POST(request: Request) {
       "[chat] fit context assembly failed:",
       err instanceof Error ? err.message : String(err)
     );
+  }
+
+  // Honesty rule when the structured search relaxed. Prepend a
+  // directive so Mai says the closet lacks an exact match before
+  // offering any nearest alternative. Retrieval enforces the rule
+  // structurally; this line makes Mai narrate it.
+  if (structuredIsRelaxed) {
+    const bits: string[] = [];
+    if (parsedIntent.colors.length > 0) bits.push(parsedIntent.colors.join(" "));
+    if (parsedIntent.category) bits.push(parsedIntent.category);
+    const label = bits.join(" ") || parsedIntent.freeText || "that";
+    const directive = `RELAXED-RETRIEVAL DIRECTIVE: the strict filter for "${label}" returned fewer than 3 matches in this creator's closet. Mai must say plainly that the closet does not have an exact match before offering any of the returned pieces. Never present the alternative as the exact ask.`;
+    fitContext = fitContext ? `${directive}\n\n${fitContext}` : directive;
   }
 
   // Cheaper-intent hook. If the user's message reads as a "for less"

@@ -55,6 +55,8 @@ import FitRecPanel from "./FitRecPanel";
 import ForLessBand from "../_pullsheet/ForLessBand";
 import WatchToggle from "../_pullsheet/WatchToggle";
 import OnSaleRail from "../_pullsheet/OnSaleRail";
+import SearchFilters, { type ActiveFilters } from "../_pullsheet/SearchFilters";
+import { parseQuery } from "@/lib/search";
 import { ProductCard, type Product } from "./ProductCard";
 
 // `Product` type lives in ./ProductCard so the Ask chat can adapt
@@ -568,6 +570,35 @@ export default function TryOnGrid({
             </span>
           ) : null}
         </div>
+      ) : null}
+
+      {appliedQuery ? (
+        <SearchFilters
+          filters={((): ActiveFilters => {
+            const p = parseQuery(appliedQuery);
+            return {
+              category: p.category,
+              colors: p.colors,
+              priceMax: p.priceMax,
+            };
+          })()}
+          onRemove={(kind, value) => {
+            const p = parseQuery(appliedQuery);
+            const bits: string[] = [];
+            if (kind !== "category" && p.category) bits.push(p.category);
+            for (const c of p.colors) {
+              if (kind === "color" && c === value) continue;
+              bits.push(c);
+            }
+            if (kind !== "price" && p.priceMax != null) {
+              bits.push(`under $${p.priceMax}`);
+            }
+            if (p.freeText) bits.push(p.freeText);
+            const next = bits.join(" ").trim();
+            setSearchQuery(next);
+            setAppliedQuery(next);
+          }}
+        />
       ) : null}
 
       <OnSaleRail
