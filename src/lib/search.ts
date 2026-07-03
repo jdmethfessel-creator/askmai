@@ -1,16 +1,21 @@
 /**
- * Retrieval core (B3).
+ * Retrieval core (B3, fixed).
  *
  * parseQuery: deterministic query parser. No model call, no I/O.
- *   Extracts colors, category, price ceiling from raw text using the
- *   fixed taxonomies in ./taxonomy. Remaining words become freeText.
- *
  * searchProducts: hard-filtered SQL against creator_products.
- *   Structured attributes are HARD filters (creator, category, colors,
- *   price). Text similarity only ranks what survives the filters.
- *   When strict filters return fewer than 3 results, a relaxed pass
- *   (category kept, color dropped) is run and its rows come back
- *   flagged nearest: true. Exact and nearest are never silently mixed.
+ *   Structured attributes are HARD filters. Text similarity only
+ *   ranks what survives.
+ *
+ * Load-bearing fix from the previous version: when the attributes
+ * column doesn't exist yet OR any structured filter (category,
+ * colors, priceMax) is set, we NEVER silently drop the filter and
+ * fall back to a filter-less scan. That was returning the whole
+ * catalog for a "jeans" query. The new fallback:
+ *   - If attributes column missing AND caller passed structured
+ *     filters, return empty exact (honest: we cannot honor the
+ *     ask), so callers render the "no true X in this closet" copy.
+ *   - Only fall back to unfiltered text search when the caller
+ *     asked for freeText-only with no structured filters.
  */
 
 import { supabaseAdmin } from "./supabase";
@@ -50,14 +55,6 @@ function normalizeToken(t: string): string {
   return t.toLowerCase().replace(/[^a-z0-9-]/g, "");
 }
 
-/**
- * Parse a raw user query into hard filters + freeText. Deterministic.
- *
- * The denim/dark-wash rule: if either token appears WITHOUT a jeans-
- * category token, the parser still promotes it into the blue family
- * so a search like "denim jacket" filters correctly on jacket +
- * blue; when jeans is present it counts as color=blue.
- */
 export function parseQuery(raw: string): ParsedQuery {
   const q = String(raw ?? "").trim();
   let remaining = q;
@@ -72,7 +69,6 @@ export function parseQuery(raw: string): ParsedQuery {
     }
   }
 
-  // Category detection: scan multi-word synonyms first, then singles.
   let category: Category | null = null;
   const lower = remaining.toLowerCase();
   const multiWordSynonyms = Object.keys(CATEGORY_SYNONYMS)
@@ -112,16 +108,9 @@ export function parseQuery(raw: string): ParsedQuery {
     }
   }
 
-  // Denim/dark-wash special-case: whether or not category was set,
-  // ensure blue-family coverage sits in the color filter.
   const rawLower = q.toLowerCase();
   if (/\bdenim\b/.test(rawLower) || /\bdark[-\s]?wash\b/.test(rawLower)) {
     for (const c of BLUE_FAMILY) colors.add(c);
-    // Denim implies jeans only when no other category was identified.
-    if (!category && /\bdenim\b/.test(rawLower)) {
-      // If jeans wasn't the token, keep category null so the caller
-      // can still see freeText contributions.
-    }
   }
 
   const freeText = tokens
@@ -159,7 +148,21 @@ export type SearchProduct = {
   } | null;
 };
 
+export type AppliedFilters = {
+  category: Category | null;
+  colors: Color[];
+  priceMax: number | null;
+};
+
 export type SearchResult = SearchProduct & { nearest?: boolean };
+
+export type SearchResponse = {
+  exact: SearchResult[];
+  nearest: SearchResult[];
+  applied: AppliedFilters;
+  is_relaxed: boolean;
+  attributes_available: boolean;
+};
 
 export type SearchArgs = {
   creatorSlug: string;
@@ -171,56 +174,145 @@ export type SearchArgs = {
 };
 
 /**
- * Hard-filtered search against creator_products. Falls back to a
- * relaxed pass (color dropped, category kept) when the strict pass
- * returns fewer than 3 rows.
- *
- * Degrades gracefully:
- *   - If the `attributes` column doesn't exist, retries without the
- *     color/category filters and returns text-similarity results
- *     scoped only by creator and price. Rows still come back valid.
- *   - If search_text tsvector doesn't exist, ILIKE fallback covers
- *     the freeText term.
+ * Hard-filtered search. Returns SearchResponse so the caller can
+ * render chips for the filters actually APPLIED (which is category
+ * on exact, plus color when the strict pass produced >= 3, and
+ * priceMax always), and knows whether the closet has an attributes
+ * column at all.
  */
-export async function searchProducts(args: SearchArgs): Promise<SearchResult[]> {
+export async function searchProducts(args: SearchArgs): Promise<SearchResponse> {
   const sb = supabaseAdmin();
   const creator = await sb
     .from("creators")
     .select("id")
     .eq("slug", args.creatorSlug)
     .maybeSingle();
-  if (!creator.data) return [];
+  const requestedFilters: AppliedFilters = {
+    category: args.category ?? null,
+    colors: args.colors ?? [],
+    priceMax: args.priceMax ?? null,
+  };
+  if (!creator.data) {
+    return {
+      exact: [],
+      nearest: [],
+      applied: requestedFilters,
+      is_relaxed: false,
+      attributes_available: false,
+    };
+  }
   const creatorId = creator.data.id;
-
   const limit = args.limit ?? 40;
 
-  const runStrict = async (dropColors: boolean) => {
-    const rows = await runQuery({
+  const hasStructured = Boolean(
+    args.category || (args.colors && args.colors.length > 0)
+  );
+
+  const attributesAvailable = await probeAttributes(sb, creatorId);
+
+  if (!attributesAvailable) {
+    if (hasStructured) {
+      return {
+        exact: [],
+        nearest: [],
+        applied: requestedFilters,
+        is_relaxed: false,
+        attributes_available: false,
+      };
+    }
+    const rows = await runTextOnly({
       sb,
       creatorId,
-      category: args.category ?? null,
-      colors: dropColors ? [] : args.colors ?? [],
       priceMax: args.priceMax ?? null,
       freeText: args.freeText ?? "",
       limit,
     });
-    return rows;
-  };
-
-  const exact = await runStrict(false);
-  if (exact.length >= 3 || !(args.colors && args.colors.length > 0)) {
-    return exact.map((r) => ({ ...r, nearest: false }));
+    return {
+      exact: rows.map((r) => ({ ...r, nearest: false })),
+      nearest: [],
+      applied: {
+        category: null,
+        colors: [],
+        priceMax: args.priceMax ?? null,
+      },
+      is_relaxed: false,
+      attributes_available: false,
+    };
   }
 
-  const relaxed = await runStrict(true);
-  const nearest = relaxed.filter((r) => !exact.find((e) => e.id === r.id));
-  return [
-    ...exact.map((r) => ({ ...r, nearest: false })),
-    ...nearest.map((r) => ({ ...r, nearest: true })),
-  ];
+  const exactRows = await runStructured({
+    sb,
+    creatorId,
+    category: args.category ?? null,
+    colors: args.colors ?? [],
+    priceMax: args.priceMax ?? null,
+    freeText: args.freeText ?? "",
+    limit,
+  });
+
+  const strictSufficient = exactRows.length >= 3;
+  if (strictSufficient || !(args.colors && args.colors.length > 0)) {
+    return {
+      exact: exactRows.map((r) => ({ ...r, nearest: false })),
+      nearest: [],
+      applied: requestedFilters,
+      is_relaxed: false,
+      attributes_available: true,
+    };
+  }
+
+  const relaxedRows = await runStructured({
+    sb,
+    creatorId,
+    category: args.category ?? null,
+    colors: [],
+    priceMax: args.priceMax ?? null,
+    freeText: args.freeText ?? "",
+    limit,
+  });
+  const nearest = relaxedRows.filter(
+    (r) => !exactRows.find((e) => e.id === r.id)
+  );
+
+  return {
+    exact: exactRows.map((r) => ({ ...r, nearest: false })),
+    nearest: nearest.map((r) => ({ ...r, nearest: true })),
+    applied: {
+      category: args.category ?? null,
+      colors: [],
+      priceMax: args.priceMax ?? null,
+    },
+    is_relaxed: true,
+    attributes_available: true,
+  };
 }
 
-type RunQueryArgs = {
+const BASE_COLS =
+  "id, creator_id, source_network, product_title, brand, price, price_display, image_url, affiliate_url, product_category, product_subcategory";
+const ATTR_COLS = `${BASE_COLS}, attributes`;
+
+const attributesCache = new Map<string, boolean>();
+
+async function probeAttributes(
+  sb: ReturnType<typeof supabaseAdmin>,
+  creatorId: string
+): Promise<boolean> {
+  const cached = attributesCache.get(creatorId);
+  if (typeof cached === "boolean") return cached;
+  const { error } = await sb
+    .from("creator_products")
+    .select("attributes")
+    .eq("creator_id", creatorId)
+    .limit(1);
+  const ok = !error;
+  if (!ok && (error as { code?: string }).code !== "42703") {
+    console.warn("[search] attribute probe error:", error?.message);
+  }
+  attributesCache.set(creatorId, ok);
+  return ok;
+}
+
+type StructuredArgs = {
   sb: ReturnType<typeof supabaseAdmin>;
   creatorId: string;
   category: Category | null;
@@ -230,58 +322,12 @@ type RunQueryArgs = {
   limit: number;
 };
 
-const BASE_COLS =
-  "id, creator_id, source_network, product_title, brand, price, price_display, image_url, affiliate_url, product_category, product_subcategory";
-const ATTR_COLS = `${BASE_COLS}, attributes`;
-
-async function runQuery(args: RunQueryArgs): Promise<SearchProduct[]> {
-  const { sb, creatorId, category, colors, priceMax, freeText, limit } = args;
-
-  const primary = await tryQuery(sb, {
-    cols: ATTR_COLS,
-    creatorId,
-    category,
-    colors,
-    priceMax,
-    freeText,
-    limit,
-  });
-  if (primary.ok) return primary.rows;
-
-  // Attribute columns missing (fresh env). Fall back to a text-only
-  // scoped search.
-  const fallback = await tryQuery(sb, {
-    cols: BASE_COLS,
-    creatorId,
-    category: null,
-    colors: [],
-    priceMax,
-    freeText,
-    limit,
-  });
-  return fallback.rows;
-}
-
-type TryArgs = {
-  cols: string;
-  creatorId: string;
-  category: Category | null;
-  colors: Color[];
-  priceMax: number | null;
-  freeText: string;
-  limit: number;
-};
-
-async function tryQuery(
-  sb: ReturnType<typeof supabaseAdmin>,
-  args: TryArgs
-): Promise<{ ok: boolean; rows: SearchProduct[] }> {
-  let q = sb
+async function runStructured(args: StructuredArgs): Promise<SearchProduct[]> {
+  let q = args.sb
     .from("creator_products")
-    .select(args.cols)
+    .select(ATTR_COLS)
     .eq("creator_id", args.creatorId)
     .limit(args.limit);
-
   if (args.category) {
     q = q.eq("attributes->>category", args.category);
   }
@@ -292,22 +338,42 @@ async function tryQuery(
     q = q.lte("price", args.priceMax);
   }
   if (args.freeText) {
-    // ILIKE on product_title. Cheap, robust, doesn't require the
-    // tsvector column to exist yet. Once search_text is populated the
-    // caller-side ranking is stable enough.
     q = q.ilike("product_title", `%${args.freeText}%`);
   }
   q = q.order("created_at", { ascending: false });
   const { data, error } = await q;
   if (error) {
-    if ((error as { code?: string }).code === "42703") {
-      return { ok: false, rows: [] };
-    }
-    console.warn("[search] query error:", error.message);
-    return { ok: true, rows: [] };
+    console.warn("[search] structured query error:", error.message);
+    return [];
   }
-  return {
-    ok: true,
-    rows: (data as unknown as SearchProduct[] | null) ?? [],
-  };
+  return (data as unknown as SearchProduct[] | null) ?? [];
+}
+
+type TextOnlyArgs = {
+  sb: ReturnType<typeof supabaseAdmin>;
+  creatorId: string;
+  priceMax: number | null;
+  freeText: string;
+  limit: number;
+};
+
+async function runTextOnly(args: TextOnlyArgs): Promise<SearchProduct[]> {
+  let q = args.sb
+    .from("creator_products")
+    .select(BASE_COLS)
+    .eq("creator_id", args.creatorId)
+    .limit(args.limit);
+  if (args.priceMax != null) {
+    q = q.lte("price", args.priceMax);
+  }
+  if (args.freeText) {
+    q = q.ilike("product_title", `%${args.freeText}%`);
+  }
+  q = q.order("created_at", { ascending: false });
+  const { data, error } = await q;
+  if (error) {
+    console.warn("[search] text-only query error:", error.message);
+    return [];
+  }
+  return (data as unknown as SearchProduct[] | null) ?? [];
 }

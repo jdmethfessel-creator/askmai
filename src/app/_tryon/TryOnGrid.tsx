@@ -140,6 +140,17 @@ export default function TryOnGrid({
   const [render, setRender] = useState<RenderResult>({ state: "idle" });
   const [showSignIn, setShowSignIn] = useState(false);
   const [interpreted, setInterpreted] = useState<Interpreted | null>(null);
+  // When a typed query is running, this holds the /api/search response
+  // shape so the UI can render honest empty state, applied filter
+  // chips, and the "closest she owns" band.
+  const [searchState, setSearchState] = useState<{
+    query: string;
+    applied: { category: string | null; colors: string[]; priceMax: number | null };
+    exact: Product[];
+    nearest: Product[];
+    is_relaxed: boolean;
+    attributes_available: boolean;
+  } | null>(null);
   // Set of product ids currently saved to this creator's Dressing
   // Room. Hydrated from localStorage on mount and kept in sync with
   // every + tap. The cross-tab `storage` event mirror means saving
@@ -229,21 +240,87 @@ export default function TryOnGrid({
   }, [creatorSlug]);
 
   // ------------------------- page fetch ------------------------------
+  //
+  // Two paths:
+  //   1) Typed query (appliedQuery non-empty) -> /api/search/[slug].
+  //      Structured attribute filters. Ignores the browse pill so a
+  //      user typing "jeans" never gets mapped to the merchant
+  //      subcategory "bottoms". Non-paginated: the search endpoint
+  //      returns up to 40 hits + up to 40 nearest.
+  //   2) Browse (no typed query) -> the existing /api/tryon-grid path
+  //      with cursor pagination + merchant subcategory pills.
   const fetchPage = useCallback(
     async (opts: { reset: boolean }) => {
       const token = ++fetchTokenRef.current;
       setLoadingPage(true);
       try {
+        if (appliedQuery) {
+          const params = new URLSearchParams();
+          params.set("q", appliedQuery);
+          const res = await fetch(
+            `/api/search/${creatorSlug}?${params.toString()}`
+          );
+          if (token !== fetchTokenRef.current) return;
+          if (!res.ok) {
+            setSearchState({
+              query: appliedQuery,
+              applied: { category: null, colors: [], priceMax: null },
+              exact: [],
+              nearest: [],
+              is_relaxed: false,
+              attributes_available: false,
+            });
+            setProducts([]);
+            setHasMore(false);
+            setInterpreted(null);
+            return;
+          }
+          const j = await res.json();
+          const exact: Product[] = Array.isArray(j.exact) ? j.exact : [];
+          const nearest: Product[] = Array.isArray(j.nearest) ? j.nearest : [];
+          const nextSearchState = {
+            query: appliedQuery,
+            applied: j.applied ?? {
+              category: null,
+              colors: [],
+              priceMax: null,
+            },
+            exact,
+            nearest,
+            is_relaxed: Boolean(j.is_relaxed),
+            attributes_available: Boolean(j.attributes_available),
+          };
+          setSearchState(nextSearchState);
+          setProducts([...exact, ...nearest]);
+          setHasMore(false);
+          setCursor(null);
+          // Interpreted banner: echo the raw query verbatim so the
+          // user always sees what the retrieval acted on.
+          setInterpreted({
+            subcategory: null,
+            maxPrice: null,
+            descriptors: [],
+            relaxed: nextSearchState.is_relaxed ? "type" : "none",
+            caption: appliedQuery,
+            wanted: {
+              subcategory: null,
+              maxPrice: null,
+              descriptors: [],
+            },
+          } as Interpreted);
+          return;
+        }
+
+        setSearchState(null);
         const params = new URLSearchParams();
         params.set("limit", String(PAGE_SIZE));
         if (!opts.reset && cursor) params.set("cursor", cursor);
         if (activeCategory !== "all") params.set("subcategory", activeCategory);
-        if (appliedQuery) params.set("q", appliedQuery);
         if (recent) params.set("recent", "1");
         const res = await fetch(
           `/api/tryon-grid/${creatorSlug}/products?${params.toString()}`
         );
-        if (token !== fetchTokenRef.current) return; // stale
+        if (token !== fetchTokenRef.current) return;
         if (!res.ok) {
           setHasMore(false);
           return;
@@ -253,8 +330,6 @@ export default function TryOnGrid({
         setProducts((prev) => (opts.reset ? incoming : [...prev, ...incoming]));
         setCursor(j.nextCursor ?? null);
         setHasMore(Boolean(j.nextCursor));
-        // Only update interpreted on a reset fetch; subsequent
-        // pagination fetches reuse the same interpretation.
         if (opts.reset) {
           setInterpreted(j.interpreted ?? null);
         }
@@ -562,26 +637,20 @@ export default function TryOnGrid({
 
       {interpreted && interpreted.caption ? (
         <div className="tryon-interpreted" role="status" aria-live="polite">
-          <span className="tryon-interpreted-label">Showing</span>
+          <span className="tryon-interpreted-label">Showing:</span>
           <strong>{interpreted.caption}</strong>
-          {interpreted.relaxed !== "none" && interpreted.relaxed !== "all" ? (
-            <span className="tryon-interpreted-relaxed">
-              (broadened from your search)
-            </span>
-          ) : null}
         </div>
       ) : null}
 
-      {appliedQuery ? (
+      {appliedQuery && searchState ? (
         <SearchFilters
-          filters={((): ActiveFilters => {
-            const p = parseQuery(appliedQuery);
-            return {
-              category: p.category,
-              colors: p.colors,
-              priceMax: p.priceMax,
-            };
-          })()}
+          filters={
+            {
+              category: searchState.applied.category,
+              colors: searchState.applied.colors,
+              priceMax: searchState.applied.priceMax,
+            } as ActiveFilters
+          }
           onRemove={(kind, value) => {
             const p = parseQuery(appliedQuery);
             const bits: string[] = [];
@@ -600,6 +669,28 @@ export default function TryOnGrid({
           }}
         />
       ) : null}
+
+      {appliedQuery && searchState && searchState.exact.length === 0
+        ? (
+            <p
+              className="tryon-honest-empty"
+              role="status"
+              aria-live="polite"
+              style={{
+                margin: "12px 12px 4px",
+                fontFamily: "var(--font-display)",
+                fontStyle: "italic",
+                fontSize: 15,
+                color: "var(--ink)",
+                borderLeft: "3px solid var(--bronze)",
+                paddingLeft: 10,
+              }}
+            >
+              No true {appliedQuery} in this closet.
+              {searchState.nearest.length > 0 ? " Closest she owns:" : ""}
+            </p>
+          )
+        : null}
 
       <OnSaleRail
         items={products

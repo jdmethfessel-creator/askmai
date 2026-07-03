@@ -180,7 +180,7 @@ export async function POST(request: Request) {
   let structuredIsRelaxed = false;
   if (parsedIntent.category || parsedIntent.colors.length > 0 || parsedIntent.priceMax != null) {
     try {
-      const rows = await searchProducts({
+      const res = await searchProducts({
         creatorSlug: creator.slug,
         category: parsedIntent.category,
         colors: parsedIntent.colors,
@@ -188,10 +188,10 @@ export async function POST(request: Request) {
         freeText: parsedIntent.freeText,
         limit: 40,
       });
-      const exact = rows.filter((r) => !r.nearest);
-      structuredIsRelaxed = exact.length < 3 && rows.length > exact.length;
-      if (rows.length > 0) {
-        catalog = rows.map((r) => ({
+      structuredIsRelaxed = res.is_relaxed;
+      const combined = [...res.exact, ...res.nearest];
+      if (combined.length > 0) {
+        catalog = combined.map((r) => ({
           id: r.id,
           brand: r.brand,
           name: r.product_title,
@@ -203,6 +203,17 @@ export async function POST(request: Request) {
           affiliate_url: r.affiliate_url,
           source_network: r.source_network,
         })) as typeof catalog;
+      } else if (!res.attributes_available) {
+        // Attributes column not present. Keep the freetext catalog
+        // (Mai still needs SOMETHING to answer from) but flag as
+        // relaxed so the honesty directive fires.
+        structuredIsRelaxed = true;
+      } else {
+        // Closet genuinely lacks any match, even relaxed. Empty
+        // catalog for this reply; the honesty directive tells Mai
+        // to say so plainly.
+        catalog = [] as typeof catalog;
+        structuredIsRelaxed = true;
       }
     } catch (err) {
       console.warn(

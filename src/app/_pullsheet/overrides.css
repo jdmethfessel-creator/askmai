@@ -93,25 +93,49 @@
   font-style: italic;
 }
 
-/* Grid becomes a hang-tag grid */
+/* Grid becomes a hang-tag grid. minmax(0, 1fr) prevents grid items
+ * from refusing to shrink below intrinsic content width, so a wide
+ * title or a two-word CTA can never push the second column past the
+ * viewport edge at 390px. Bottom padding clears the sticky
+ * .tryon-asker (a ~52px pill sitting at bottom:14px, plus safe-area
+ * on notched devices). */
 .tryon-grid {
-  grid-template-columns: repeat(2, 1fr) !important;
-  gap: 24px !important;
-  padding: 20px 12px 60px !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  gap: 16px !important;
+  padding: 20px 12px calc(120px + env(safe-area-inset-bottom, 0px)) !important;
+  overflow-x: hidden !important;
+  max-width: 100% !important;
+  box-sizing: border-box !important;
 }
 @media (min-width: 640px) {
   .tryon-grid {
-    grid-template-columns: repeat(3, 1fr) !important;
-    padding: 24px 20px 60px !important;
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    padding: 24px 20px calc(120px + env(safe-area-inset-bottom, 0px)) !important;
+    gap: 24px !important;
   }
 }
 @media (min-width: 1024px) {
   .tryon-grid {
-    grid-template-columns: repeat(4, 1fr) !important;
+    grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
   }
 }
 
-/* Rewrite the card as a hang tag */
+/* Every viewport ancestor of the grid must not create horizontal
+ * overflow at 390px. tryon-page holds the header, category pills,
+ * and the sticky asker; tryon-root is the outermost container. */
+.tryon-root,
+.tryon-page {
+  overflow-x: hidden !important;
+  max-width: 100% !important;
+  box-sizing: border-box !important;
+}
+
+/* Rewrite the card as a hang tag. min-width: 0 lets the grid track
+ * squeeze the card down without content-based expansion pushing the
+ * second column off the viewport at 390px. Decorations (hole and
+ * string) are absolute, positioned at top:-22px / top:-5.5px, so
+ * they never add layout width; the card itself stays inside the
+ * track. */
 .tryon-card {
   background: #ffffff !important;
   border: 1px solid var(--ink) !important;
@@ -124,6 +148,23 @@
   display: flex !important;
   flex-direction: column !important;
   gap: 8px !important;
+  min-width: 0 !important;
+  max-width: 100% !important;
+  box-sizing: border-box !important;
+}
+.tryon-card-title {
+  word-break: break-word !important;
+  overflow-wrap: anywhere !important;
+}
+.tryon-card-actions {
+  min-width: 0 !important;
+  flex-wrap: nowrap !important;
+}
+.tryon-card-actions .tryon-btn {
+  flex: 1 1 0 !important;
+  min-width: 0 !important;
+  padding: 9px 4px !important;
+  white-space: nowrap !important;
 }
 .tryon-card::before {
   content: "";

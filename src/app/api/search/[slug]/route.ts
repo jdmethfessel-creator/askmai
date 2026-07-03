@@ -1,19 +1,15 @@
 /**
  * GET /api/search/[slug]?q=blue jeans under 150
  *
- * Runs the deterministic parseQuery + hard-filtered searchProducts
- * over the given creator's catalog. Returns the parsed filters, the
- * matching rows, and, when strict filters returned fewer than 3
- * results, the "nearest" fallback rows explicitly flagged.
+ * Runs parseQuery + hard-filtered searchProducts on the creator's
+ * catalog. Returns the parsed intent, the filters actually applied
+ * to the returned rows (which may differ from parsed when the
+ * relaxed pass dropped color), exact hits, and nearest fallback.
  *
- * Response:
- *   200 {
- *     ok: true,
- *     parsed: { category, colors, priceMax, freeText },
- *     exact: [SearchResult],
- *     nearest: [SearchResult],
- *     is_relaxed: boolean
- *   }
+ * When attributes column isn't present in the catalog and the query
+ * carries structured intent, the response returns exact = [] and
+ * nearest = [] with attributes_available: false so the client can
+ * render the honest "no true X in this closet" copy.
  */
 
 import { parseQuery, searchProducts } from "@/lib/search";
@@ -28,25 +24,26 @@ export async function GET(request: Request, ctx: { params: Promise<Params> }) {
   const url = new URL(request.url);
   const q = url.searchParams.get("q") ?? "";
   const parsed = parseQuery(q);
-  const rows = await searchProducts({
+  const res = await searchProducts({
     creatorSlug: slug,
     category: parsed.category,
     colors: parsed.colors,
     priceMax: parsed.priceMax,
     freeText: parsed.freeText,
   });
-  const exact = rows.filter((r) => !r.nearest);
-  const nearest = rows.filter((r) => r.nearest);
   return Response.json({
     ok: true,
+    query: q.trim(),
     parsed: {
       category: parsed.category,
       colors: parsed.colors,
       priceMax: parsed.priceMax,
       freeText: parsed.freeText,
     },
-    exact,
-    nearest,
-    is_relaxed: nearest.length > 0 && exact.length < 3,
+    applied: res.applied,
+    exact: res.exact,
+    nearest: res.nearest,
+    is_relaxed: res.is_relaxed,
+    attributes_available: res.attributes_available,
   });
 }
