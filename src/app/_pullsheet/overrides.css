@@ -1,0 +1,235 @@
+/* Pull-sheet overrides for existing tryon-* classes so the Shop grid,
+ * outfit tray, and result modal read as pull-sheet without a full
+ * rewrite of _tryon/tryon.css. Loaded AFTER tryon.css in the creator
+ * page + tryon surfaces. */
+
+.tryon-root,
+.tryon-page {
+  background: var(--ivory);
+  color: var(--ink);
+  font-family: var(--font-body);
+}
+
+/* Category pills as pull-sheet chips */
+.tryon-pills {
+  gap: 6px !important;
+  padding: 12px 12px 4px !important;
+}
+.tryon-pill {
+  font-family: var(--font-body) !important;
+  font-size: 10px !important;
+  letter-spacing: 0.14em !important;
+  text-transform: uppercase !important;
+  border: 1px solid var(--line) !important;
+  background: transparent !important;
+  color: var(--ink-soft) !important;
+  padding: 6px 12px !important;
+  border-radius: 999px !important;
+  font-weight: 500 !important;
+}
+.tryon-pill.is-active {
+  background: var(--ink) !important;
+  color: var(--ivory) !important;
+  border-color: var(--ink) !important;
+}
+.tryon-pill-count {
+  color: inherit !important;
+  opacity: 0.7;
+}
+
+/* Scope banner */
+.tryon-scope-banner {
+  background: transparent !important;
+  border-top: 1.5px solid var(--ink) !important;
+  border-bottom: 1px solid var(--line) !important;
+  padding: 10px 16px !important;
+  margin: 12px 0 0 !important;
+  font-family: var(--font-body);
+}
+.tryon-scope-label {
+  font-family: var(--font-display) !important;
+  font-style: italic !important;
+  color: var(--ink) !important;
+  font-size: 14px !important;
+}
+.tryon-scope-toggle {
+  font-family: var(--font-body) !important;
+  font-size: 10px !important;
+  letter-spacing: 0.14em !important;
+  text-transform: uppercase !important;
+  color: var(--bronze-deep) !important;
+  background: transparent !important;
+  border: 0 !important;
+  padding: 4px 8px !important;
+  cursor: pointer;
+  font-weight: 600 !important;
+}
+.tryon-scope-toggle:hover {
+  color: var(--ink) !important;
+}
+.tryon-scope-edit-tag {
+  color: var(--bronze) !important;
+  font-weight: 600 !important;
+}
+
+/* Interpreted search caption */
+.tryon-interpreted {
+  background: var(--card) !important;
+  border: 1px solid var(--line) !important;
+  border-radius: 0 !important;
+  padding: 10px 14px !important;
+  font-family: var(--font-body) !important;
+  color: var(--ink) !important;
+  margin: 12px 12px 0 !important;
+}
+.tryon-interpreted-label {
+  font-size: 9px !important;
+  letter-spacing: 0.28em !important;
+  text-transform: uppercase !important;
+  color: var(--bronze-deep) !important;
+}
+.tryon-interpreted-relaxed {
+  color: var(--ink-soft) !important;
+  font-style: italic;
+}
+
+/* Grid becomes a hang-tag grid */
+.tryon-grid {
+  grid-template-columns: repeat(2, 1fr) !important;
+  gap: 24px !important;
+  padding: 20px 12px 60px !important;
+}
+@media (min-width: 640px) {
+  .tryon-grid {
+    grid-template-columns: repeat(3, 1fr) !important;
+    padding: 24px 20px 60px !important;
+  }
+}
+@media (min-width: 1024px) {
+  .tryon-grid {
+    grid-template-columns: repeat(4, 1fr) !important;
+  }
+}
+
+/* Rewrite the card as a hang tag */
+.tryon-card {
+  background: #ffffff !important;
+  border: 1px solid var(--ink) !important;
+  border-radius: 0 !important;
+  padding: 14px 12px 12px !important;
+  box-shadow: 2.5px 2.5px 0 var(--taupe) !important;
+  position: relative !important;
+  margin-top: 18px !important;
+  overflow: visible !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 8px !important;
+}
+.tryon-card::before {
+  content: "";
+  position: absolute;
+  top: -22px;
+  left: 50%;
+  width: 1px;
+  height: 22px;
+  background: var(--ink);
+  transform-origin: bottom center;
+  transform: translateX(-50%) rotate(14deg);
+  z-index: 0;
+}
+.tryon-card::after {
+  content: "";
+  position: absolute;
+  top: -5.5px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 11px;
+  height: 11px;
+  background: var(--ivory);
+  border: 1.5px solid var(--ink);
+  border-radius: 50%;
+  z-index: 1;
+}
+.tryon-card-image-wrap {
+  aspect-ratio: 3 / 4;
+  background: var(--card) !important;
+  border-radius: 0 !important;
+  border: 0 !important;
+  overflow: hidden;
+}
+.tryon-card-image {
+  border-radius: 0 !important;
+}
+.tryon-card-meta {
+  padding: 0 !important;
+  gap: 4px !important;
+}
+.tryon-card-brand {
+  font-family: var(--font-body) !important;
+  font-size: 8px !important;
+  letter-spacing: 0.14em !important;
+  text-transform: uppercase !important;
+  color: var(--bronze-deep) !important;
+  font-weight: 600 !important;
+}
+.tryon-card-title {
+  font-family: var(--font-display) !important;
+  font-weight: 700 !important;
+  font-size: 12.5px !important;
+  line-height: 1.25 !important;
+  color: var(--ink) !important;
+  min-height: 32px;
+}
+.tryon-card-price {
+  font-family: var(--font-body) !important;
+  font-weight: 700 !important;
+  font-size: 13px !important;
+  color: var(--ink) !important;
+  letter-spacing: -0.005em !important;
+}
+.tryon-card-actions {
+  gap: 6px !important;
+  padding: 0 !important;
+}
+.tryon-btn {
+  font-family: var(--font-body) !important;
+  font-size: 10px !important;
+  letter-spacing: 0.18em !important;
+  text-transform: uppercase !important;
+  font-weight: 600 !important;
+  border-radius: 0 !important;
+  padding: 9px 10px !important;
+  border: 1.5px solid var(--ink) !important;
+}
+.tryon-btn-primary {
+  background: var(--ink) !important;
+  color: var(--ivory) !important;
+}
+.tryon-btn-secondary {
+  background: #ffffff !important;
+  color: var(--ink) !important;
+}
+.tryon-card-select {
+  background: #ffffff !important;
+  border: 1.5px solid var(--ink) !important;
+  color: var(--ink) !important;
+  border-radius: 4px !important;
+  width: 30px !important;
+  height: 30px !important;
+}
+.tryon-card-select.is-selected {
+  background: var(--ink) !important;
+  color: var(--ivory) !important;
+}
+.tryon-card.is-in-outfit {
+  outline: 2px solid var(--bronze) !important;
+  outline-offset: 3px;
+}
+
+/* Legacy creator-page-header + wrap classes (fallback for any
+ * lingering render path). Neutralize so masthead flows cleanly. */
+.creator-page-header,
+.creator-page-eyebrow,
+.creator-page-title,
+.creator-page-sources { display: none !important; }
+.creator-page-body { padding-top: 4px !important; }

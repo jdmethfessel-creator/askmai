@@ -27,29 +27,20 @@
  */
 
 import type { Metadata } from "next";
-import { Fraunces, Manrope } from "next/font/google";
 import { notFound } from "next/navigation";
 import { cookies } from "next/headers";
 import { supabaseAdmin } from "@/lib/supabase";
 import { getServerSession } from "@/lib/session";
 import TryOnGrid from "../_tryon/TryOnGrid";
 import DressingRoom from "../_tryon/DressingRoom";
-import ModeToggle, { type Mode } from "../_tryon/ModeToggle";
+import type { Mode } from "../_tryon/ModeToggle";
+import Masthead from "../_pullsheet/Masthead";
+import PullSheetTabs from "../_pullsheet/PullSheetTabs";
 import Chat from "./Chat";
 import type { Creator } from "@/lib/types";
 import "../_tryon/tryon.css";
-
-const fraunces = Fraunces({
-  subsets: ["latin"],
-  display: "swap",
-  axes: ["SOFT", "WONK", "opsz"],
-  variable: "--font-display",
-});
-const manrope = Manrope({
-  subsets: ["latin"],
-  display: "swap",
-  variable: "--font-body",
-});
+import "../_pullsheet/tokens.css";
+import "../_pullsheet/overrides.css";
 
 const DEFAULT_ACCENT = "#a26a5a";
 
@@ -171,12 +162,20 @@ export default async function CreatorPage({
       ? SUBTITLE_ROOM
       : SUBTITLE_SHOP;
 
-  // Attribution line: "{First}'s picks from Revolve · FWRD · ..."
-  // pulled from the actual source_network distribution in this
-  // creator's creator_products rows. Dynamic per creator so a
-  // creator with only ShopMy reads accurately as "ShopMy" alone,
-  // and any new creator picks up automatically.
+  // Attribution + piece count for the masthead subline.
+  // "1,209 pieces · styled by Mai" style; falls back to just
+  // "styled by Mai" if the count query fails.
+  let pieceCount = 0;
   let shopSources: string[] = [];
+  try {
+    const { count } = await admin
+      .from("creator_products")
+      .select("id", { count: "exact", head: true })
+      .eq("creator_id", creator.id);
+    pieceCount = count ?? 0;
+  } catch {
+    pieceCount = 0;
+  }
   if (mode === "shop") {
     const { data: rows } = await admin
       .from("creator_products")
@@ -193,31 +192,39 @@ export default async function CreatorPage({
     shopSources = Array.from(seen).sort((a, b) => a.localeCompare(b));
   }
 
+  const mastheadSub =
+    pieceCount > 0
+      ? `${pieceCount.toLocaleString()} piece${pieceCount === 1 ? "" : "s"} · styled by Mai`
+      : "styled by Mai";
+  // subtitle drives the mode-scoped eyebrow line under the tabs on
+  // Shop; Ask + Try On carry their own chrome so we surface it only
+  // in Shop mode.
+  void subtitle;
+  void accent;
+
   return (
-    <div className={`${fraunces.variable} ${manrope.variable} tryon-root`}>
-      {/* Shared header. Same DOM in every mode so the eyebrow, creator
-          name, and toggle stay put across mode flips. */}
-      <header className="creator-page-header">
-        <div className="creator-page-eyebrow" key={mode}>
-          {subtitle}
-        </div>
-        <h1 className="creator-page-title">{creator.name}</h1>
-        <ModeToggle current={mode} />
-        {mode === "shop" && shopSources.length > 0 ? (
-          <p className="creator-page-sources">
-            {creatorFirstName}&apos;s picks from {shopSources.join(" · ")}
-          </p>
-        ) : null}
-      </header>
+    <div className="tryon-root">
+      <Masthead name={creator.name} sub={mastheadSub} />
+      <PullSheetTabs current={mode} />
       <main className="creator-page-body">
         {mode === "shop" ? (
-          <TryOnGrid
-            creatorSlug={creator.slug}
-            creatorFirstName={creatorFirstName}
-            signedIn={Boolean(session)}
-            editMode={editMode}
-            initialRecent={recent}
-          />
+          <>
+            {shopSources.length > 0 ? (
+              <p
+                className="ps-masthead-sub"
+                style={{ textAlign: "center", marginTop: 10 }}
+              >
+                {creatorFirstName}&apos;s picks from {shopSources.join(" · ")}
+              </p>
+            ) : null}
+            <TryOnGrid
+              creatorSlug={creator.slug}
+              creatorFirstName={creatorFirstName}
+              signedIn={Boolean(session)}
+              editMode={editMode}
+              initialRecent={recent}
+            />
+          </>
         ) : mode === "room" ? (
           <DressingRoom creatorSlug={creator.slug} />
         ) : (

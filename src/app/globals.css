@@ -3,31 +3,41 @@
 @tailwind utilities;
 
 :root {
-  --bg: #faf7f2;
+  /* Pull-sheet tokens */
+  --ivory: #FAF7F1;
+  --card: #F1EBE0;
+  --taupe: #E6DCCC;
+  --ink: #16130E;
+  --ink-soft: #5C5546;
+  --bronze: #A0793E;
+  --bronze-deep: #7C5C2C;
+  --graphite: #3E3A33;
+  --line: #D8CDB9;
+
+  /* Legacy aliases kept so existing tryon.css continues to render.
+     They point at the new tokens so the tabs cohabit until every
+     surface is fully restyled. */
+  --bg: var(--ivory);
   --surface: #ffffff;
-  --ink: #1c1a17;
-  --muted: #6b6660;
-  --accent: #b8746a;
-  --font-sans: ui-sans-serif, system-ui, -apple-system, "Helvetica Neue", Arial,
-    sans-serif;
-  --font-serif: "Iowan Old Style", "Apple Garamond", Georgia, serif;
+  --muted: var(--ink-soft);
+  --accent: var(--bronze);
+  --t-bg: var(--ivory);
+  --t-ink: var(--ink);
+  --t-muted: var(--ink-soft);
+  --t-line: var(--line);
+
+  --font-sans: var(--font-body), ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-serif: var(--font-display), "Iowan Old Style", Georgia, serif;
 }
 
 html,
 body {
-  background: var(--bg);
+  background: var(--ivory);
   color: var(--ink);
   -webkit-font-smoothing: antialiased;
-  font-family: var(--font-sans);
+  font-family: var(--font-body), ui-sans-serif, system-ui, sans-serif;
 }
 
-/* Defensive: body must fill the viewport horizontally. Tailwind
- * preflight already sets body { margin: 0 } but does not set width
- * or display, and some Tailwind utility class interactions on
- * mobile Safari can leave the body shrink-wrapped to content.
- * Asserting width here guarantees the .tryon-root (and every
- * descendant) has a full-viewport box to fill. !important defends
- * against any stale cached rule. */
 html {
   width: 100% !important;
 }
